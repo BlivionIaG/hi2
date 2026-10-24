@@ -37,9 +37,15 @@ class ColumnStats:
         self.S += other.S.to(self.S.device)
         self.n += other.n
 
-    def diag(self, flags: torch.Tensor | None = None) -> torch.Tensor:
-        """``E[x_j^2]`` per column, in the rotated basis where ``flags`` is set."""
+    def diag(
+        self, flags: torch.Tensor | None = None, inv_scale: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """``E[x_j^2]`` per column of the activation ``x * inv_scale`` (smoothed), in
+        the rotated basis where ``flags`` is set."""
         s = self.S / max(self.n, 1)
+        if inv_scale is not None:
+            inv = inv_scale.to(s.device, s.dtype).reshape(-1, GROUP)
+            s = s * inv[:, :, None] * inv[:, None, :]
         plain = torch.diagonal(s, dim1=1, dim2=2)
         if flags is None:
             return plain.reshape(-1).float()

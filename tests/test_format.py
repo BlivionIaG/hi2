@@ -157,3 +157,23 @@ def test_bit_accounting():
     assert (
         metadata_bits(mixed, torch.tensor([32, 64, 32, 32]), torch.ones(8)) == 1 + 1 + 8
     )
+
+
+def test_col_scale_reference_linear_and_bpw():
+    torch.manual_seed(5)
+    r, k = 8, 128
+    s = (torch.rand(k) * 3 + 0.2).to(torch.float16)
+    w = torch.randn(r, k)
+    ws = w.float() * s.float()
+    t = _quantize(ws, 2, 32, torch.ones(k // 16, dtype=torch.uint8))
+    t.col_scale = s
+    x = torch.randn(5, k, dtype=torch.float64)
+    # kernel-style path (x / s, rotate, contract) equals x @ dequantize(t).T
+    assert torch.allclose(
+        reference_linear(x, t), x @ dequantize(t).T, atol=1e-8, rtol=1e-8
+    )
+    # the product is close to the unquantised one, and s costs 16 bits per column
+    ref = x @ w.double().T
+    assert ((reference_linear(x, t) - ref).norm() / ref.norm()) < 0.9
+    t2 = _quantize(ws, 2, 32, torch.ones(k // 16, dtype=torch.uint8))
+    assert tensor_bpw(t) - tensor_bpw(t2) == pytest.approx(16 / r)

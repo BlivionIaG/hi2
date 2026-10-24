@@ -135,3 +135,39 @@ def test_rotation_modes_round_trip(tiny, tmp_path, mode):
     assert any(r["rotated_groups"] > 0 for r in rep.values()) or mode == "auto"
     err = _logits_err(tiny[1], load_dequantized(rc.dst), tiny[2])
     assert err < 0.6
+
+
+def test_smoothing_and_rotation_round_trip(tiny, tmp_path):
+    rc = _rc(
+        tiny,
+        tmp_path,
+        "smooth",
+        cfg=Config(effort="fast", rotation="on", smooth=0.5),
+    )
+    run(rc, log=lambda *_: None)
+    rep = json.loads((rc.dst / "hi2_report.json").read_text())["tensors"]
+    assert all(r["rotated_groups"] == r["groups"] for r in rep.values())
+    cfgj = json.loads((rc.dst / "config.json").read_text())
+    assert verify_checkpoint(rc.src, rc.dst, 4, log=lambda *_: None)["checked"] == 4
+    err = _logits_err(tiny[1], load_dequantized(rc.dst), tiny[2])
+    assert err < 0.5
+    assert cfgj["quantization_config"]["version"] == "3.2"
+
+
+def test_resolver_maps_text_model_names_to_multimodal_checkpoint():
+    from hi2.checkpoint import make_resolver
+
+    wmap = {
+        "model.language_model.layers.0.mlp.down_proj.weight": "a",
+        "mtp.layers.0.mlp.down_proj.weight": "a",
+        "model.visual.blocks.0.attn.qkv.weight": "a",
+        "model.layers.2.self_attn.q_proj.weight": "a",
+    }
+    r = make_resolver(wmap)
+    assert r("model.layers.0.mlp.down_proj.weight") == (
+        "model.language_model.layers.0.mlp.down_proj.weight"
+    )
+    assert r("model.layers.2.self_attn.q_proj.weight") == (
+        "model.layers.2.self_attn.q_proj.weight"
+    )
+    assert r("model.layers.7.mlp.down_proj.weight") is None

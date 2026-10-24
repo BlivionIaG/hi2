@@ -37,12 +37,28 @@ without loading the model.
 "Several GPUs" is row-sharded quantization plus data-parallel calibration, not a
 tensor-parallel forward pass (a single layer fits one GPU).
 
-## Notes
+## Commands
 
-* `--rotation` is **off** by default: with calibration data it measured worse end to
-  end (spec 4.5). `auto`/`on` exist for data-free use and experiments.
+| Command | What it does |
+| --- | --- |
+| `quantize SRC DST` | HF checkpoint to HI2 flex checkpoint (see below) |
+| `verify SRC DST` | reload quantized tensors and compare with the source weights |
+| `eval SRC DST --text T --skip-tokens N` | perplexity of original and quantized model, KL(original to quantized), top-1 agreement, on held-out text |
+| `export-dense SRC DST OUT` | write the dequantized model as a plain fp16 HF directory, e.g. to score it in llama.cpp |
+
+## Defaults and what they are based on
+
+* `--rotation on --smooth 0.5`: smoothing the activation channels and then rotating
+  was the best setting at every bit width measured on Qwen2.5-0.5B (perplexity
+  -30% at 2.5 bpw, -8% at 3.0 bpw). Rotation alone hurts a calibrated encoder, so do
+  not turn on `--rotation` with `--smooth 0` and `--calib`. Without `--calib`
+  (data-free) smoothing is skipped and rotation helps a lot. Evidence:
+  `docs/rdna2/hadamard-int2-design-notes.md`.
+* The smoothing vector costs `16/R` bits per weight per tensor, and the global
+  allocation accounts for it.
 * `--bits` / `--blocks` restrict the candidate set (for example `--bits 4 --blocks 64`
-  for a uniform INT4/B64 reference). `--effort fast|normal|max`.
+  for a uniform INT4/B64 reference). `--effort fast|normal|max`; more effort did not
+  improve quality in our runs.
 * Activations are propagated from the unquantized model (the final configuration is
   unknown until the global allocation), so there is no quantized-propagation mode.
 * `workdir` (default `<out>.work`) holds tables, statistics and shard markers;
@@ -51,4 +67,12 @@ tensor-parallel forward pass (a single layer fits one GPU).
   that is not in the calibration region (`--skip-tokens`).
 * `eval` dequantizes back to dense weights and runs the original architecture: it
   checks the format numerically, it is not a kernel test.
-* Tests: `cd tools/hi2 && pytest tests`.
+
+## Experiments
+
+`experiments/` holds the scripts behind the spec's numbers (scale systems, scope,
+rotation and smoothing, GGUF baselines, llama.cpp scoring of HI2 checkpoints, the
+gfx1030 instruction probes) and `experiments/results/` their raw output. They were
+run on a gfx1030 box; paths inside the shell scripts are that box's.
+
+Tests: `cd tools/hi2 && pytest tests`.

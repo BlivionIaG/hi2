@@ -111,6 +111,9 @@ class HI2Tensor:
     row_block: torch.Tensor  # uint8 [R]
     had: torch.Tensor  # uint8 [K/16]
     shape: tuple[int, int]
+    # Optional smoothing vector s (fp16 [K]): the stored basis is H(W * s) and the
+    # runtime activation is H(x / s). None means no smoothing.
+    col_scale: torch.Tensor | None = None
 
     def nbytes(self) -> int:
         return sum(
@@ -146,6 +149,7 @@ def assemble(
     row_block: torch.Tensor,
     had: torch.Tensor,
     k: int,
+    col_scale: torch.Tensor | None = None,
 ) -> HI2Tensor:
     """Build flat buffers from per-config row groups.
 
@@ -184,6 +188,7 @@ def assemble(
         row_block=row_block.to(torch.uint8),
         had=had.to(torch.uint8).reshape(-1),
         shape=(r, k),
+        col_scale=col_scale,
     )
 
 
@@ -217,14 +222,22 @@ def dequantize_stored(t: HI2Tensor) -> torch.Tensor:
 
 
 def dequantize(t: HI2Tensor) -> torch.Tensor:
-    """Reconstruction in the original basis (the transform is its own inverse)."""
-    return fwht_groups(dequantize_stored(t), t.had)
+    """Reconstruction in the original basis (the transform is its own inverse; the
+    smoothing vector, if any, is divided back out)."""
+    w = fwht_groups(dequantize_stored(t), t.had)
+    if t.col_scale is not None:
+        w = w / t.col_scale.double()
+    return w
 
 
 def reference_linear(x: torch.Tensor, t: HI2Tensor) -> torch.Tensor:
     """``x[M, K] @ W.T`` as a kernel computes it: transform the activation with the
-    same flags, then contract against the stored-basis reconstruction."""
-    return fwht_groups(x.double(), t.had) @ dequantize_stored(t).T
+    same flags (after dividing by the smoothing vector, if any), then contract
+    against the stored-basis reconstruction."""
+    xd = x.double()
+    if t.col_scale is not None:
+        xd = xd / t.col_scale.double()
+    return fwht_groups(xd, t.had) @ dequantize_stored(t).T
 
 
 # ---- accounting (2.5) ---------------------------------------------------------
@@ -253,4 +266,5 @@ def tensor_bpw(t: HI2Tensor) -> float:
     bl = t.row_block.to(torch.float64)
     row_bits = (nb * k + 16 * k / bl).sum().item()
     meta = metadata_bits(t.row_nbits, t.row_block, t.had)
-    return (row_bits + 48 * r + meta) / (r * k)
+    extra = 16 * k if t.col_scale is not None else 0
+    return (row_bits + 48 * r + meta + extra) / (r * k)

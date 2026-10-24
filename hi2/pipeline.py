@@ -15,6 +15,7 @@ from .calibrate import Config, TensorTable, build_table
 from .checkpoint import (
     DEFAULT_EXCLUDE,
     is_eligible,
+    make_resolver,
     weight_map,
     write_checkpoint,
 )
@@ -78,10 +79,19 @@ def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTab
     model = AutoModelForCausalLM.from_pretrained(
         rc.src, dtype=getattr(torch, rc.compute_dtype), low_cpu_mem_usage=True
     ).eval()
-    tables = calibrate_layerwise(
-        model, ids, rc.cfg, ex, rc.workdir, inc, exc, rc.limit_layers, log
-    )
     wmap = weight_map(rc.src)
+    tables = calibrate_layerwise(
+        model,
+        ids,
+        rc.cfg,
+        ex,
+        rc.workdir,
+        inc,
+        exc,
+        rc.limit_layers,
+        log,
+        make_resolver(wmap),
+    )
     missing = [n for n in tables if n not in wmap]
     if missing:
         raise SystemExit(f"module names not found in the checkpoint: {missing[:3]}")

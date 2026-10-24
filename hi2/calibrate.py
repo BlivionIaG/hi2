@@ -35,9 +35,14 @@ class Config:
     candidates: list[tuple[int, int]] = field(
         default_factory=lambda: list(ALL_CANDIDATES)
     )
-    # off | auto | on. Off by default: with calibration data, rotation measured worse
-    # end to end (Qwen2.5-0.5B: auto +4% perplexity, on +53%). See the v3.2 spec.
-    rotation: str = "off"
+    # on | auto | off. Rotation alone hurts once an activation-aware encoder is used
+    # (it mixes the channel scales the encoder exploits), but rotation after smoothing
+    # helps at every bit width, and rotation helps a data-free encoder a lot
+    # (Qwen2.5-0.5B, see the v3.2 spec).
+    rotation: str = "on"
+    # Smoothing exponent alpha: s = (E[x^2] / geomean) ** (alpha / 2), W -> W * s,
+    # x -> x / s before the rotation. 0 disables it; needs calibration statistics.
+    smooth: float = 0.5
     effort: str = "normal"  # fast | normal | max
 
 
@@ -50,20 +55,41 @@ class TensorTable:
     candidates: list[tuple[int, int]]
     energy: float  # weighted energy sum(d * w^2) in the stored basis
     n_tokens: int  # calibration tokens behind the weights (0 = data-free)
+    col_scale: torch.Tensor | None = None  # fp16 [K] smoothing vector, or None
 
 
 def candidate_row_bits(nbits: int, block: int, k: int) -> float:
     return nbits * k + 16 * k / block
 
 
-def _weights(stats: ColumnStats | None, k: int, flags, device) -> torch.Tensor:
+def _weights(
+    stats: ColumnStats | None, k: int, flags, device, inv_scale=None
+) -> torch.Tensor:
     if stats is None:
         return torch.ones(k, device=device)
-    return stats.diag(flags).to(device)
+    return stats.diag(flags, inv_scale).to(device)
+
+
+def smoothing_scale(stats: ColumnStats | None, alpha: float) -> torch.Tensor | None:
+    """fp16 smoothing vector ``s`` (or None): ``s_j = (d_j / geomean(d)) ** (alpha/2)``
+    with ``d_j = E[x_j^2]``; rounded to fp16 so offline and device agree."""
+    if alpha <= 0 or stats is None or stats.n == 0:
+        return None
+    d = stats.diag().clamp_min(1e-12)
+    s = (d / d.log().mean().exp()).pow(alpha / 2).clamp(0.05, 20.0)
+    return s.to(torch.float16).cpu()
+
+
+def _smoothed(w: torch.Tensor, s: torch.Tensor | None):
+    """``(W * s, 1 / s)``; both unchanged/None without smoothing."""
+    if s is None:
+        return w, None
+    sf = s.float()
+    return w.float() * sf, 1.0 / sf
 
 
 def choose_rotation(
-    w: torch.Tensor, stats: ColumnStats | None, cfg: Config, device
+    w: torch.Tensor, stats: ColumnStats | None, cfg: Config, device, inv_scale=None
 ) -> torch.Tensor:
     """Per-64-column-chunk flags ``[K/16]`` uint8 (uniform across rows)."""
     k = w.shape[1]
@@ -79,7 +105,7 @@ def choose_rotation(
     for rot in (0, 1):
         fl = torch.full((ng,), rot, dtype=torch.uint8)
         wt = fwht_groups(ws, fl) if rot else ws
-        d = _weights(stats, k, fl, device)
+        d = _weights(stats, k, fl, device, inv_scale)
         enc = encode_rows(wt, d, 2, 64, "fast")
         # encode_rows only returns the total per row; recompute per chunk
         rec_err = _chunk_errors(wt, d, enc, 2, 64)
@@ -116,12 +142,14 @@ def build_table(
     ex: Executor,
 ) -> TensorTable:
     r, k = w.shape
-    had = choose_rotation(w, stats, cfg, ex.primary)
+    s16 = smoothing_scale(stats, cfg.smooth)
+    w, inv = _smoothed(w, s16)
+    had = choose_rotation(w, stats, cfg, ex.primary, inv)
 
     def shard(dev, lo, hi):
         wt = w[lo:hi].to(dev, torch.float32)
         wt = fwht_groups(wt, had) if had.any() else wt
-        d = _weights(stats, k, had, dev)
+        d = _weights(stats, k, had, dev, inv)
         sse = torch.stack(
             [encode_rows(wt, d, nb, b, cfg.effort).sse for nb, b in cfg.candidates]
         )
@@ -131,7 +159,14 @@ def build_table(
     sse = torch.cat([p[0] for p in parts], dim=1)
     energy = sum(p[1] for p in parts)
     return TensorTable(
-        name, (r, k), had, sse, list(cfg.candidates), energy, stats.n if stats else 0
+        name,
+        (r, k),
+        had,
+        sse,
+        list(cfg.candidates),
+        energy,
+        stats.n if stats else 0,
+        s16,
     )
 
 
@@ -146,13 +181,14 @@ def encode_with_picks(
     """Encode rows with the candidate index ``picks[r]`` chosen by the allocator."""
     r, k = w.shape
     had = table.had
+    w, inv = _smoothed(w, table.col_scale)
     nbits = torch.tensor([table.candidates[i][0] for i in picks.tolist()])
     block = torch.tensor([table.candidates[i][1] for i in picks.tolist()])
 
     def shard(dev, lo, hi):
         wt = w[lo:hi].to(dev, torch.float32)
         wt = fwht_groups(wt, had) if had.any() else wt
-        d = _weights(stats, k, had, dev)
+        d = _weights(stats, k, had, dev, inv)
         pieces = []
         for ci, (nb, b) in enumerate(table.candidates):
             rows = (picks[lo:hi] == ci).nonzero().flatten()
@@ -165,4 +201,4 @@ def encode_with_picks(
         return pieces
 
     pieces = [p for part in ex.map_rows(shard, r) for p in part]
-    return assemble(pieces, nbits, block, had, k)
+    return assemble(pieces, nbits, block, had, k, table.col_scale)

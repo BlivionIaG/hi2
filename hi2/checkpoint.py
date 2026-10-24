@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 
+import regex as re
 import torch
 
 from .calibrate import Config, TensorTable, encode_with_picks
@@ -34,6 +35,38 @@ def weight_map(d: Path) -> dict[str, str]:
         return {k: "model.safetensors" for k in f.keys()}  # noqa: SIM118
 
 
+_LAYER_KEY = re.compile(r"^(?:.*\.)?layers\.(\d+)\.(.*)$")
+
+
+def make_resolver(wmap: dict[str, str]):
+    """Map a module's weight name to the checkpoint's tensor name.
+
+    Multimodal checkpoints often nest the text model (``model.language_model.layers.N``)
+    while the text-only class names it ``model.layers.N``. Tries the name itself, the
+    usual ``language_model`` rewrites, then a unique match on ``layers.N.<rest>``.
+    Returns ``None`` when nothing matches unambiguously.
+    """
+    index: dict[tuple[int, str], list[str]] = {}
+    for key in wmap:
+        m = _LAYER_KEY.match(key)
+        if m:
+            index.setdefault((int(m.group(1)), m.group(2)), []).append(key)
+
+    def resolve(name: str) -> str | None:
+        for cand in (
+            name,
+            name.replace("model.", "model.language_model.", 1),
+            "language_model." + name,
+        ):
+            if cand in wmap:
+                return cand
+        m = _LAYER_KEY.match(name)
+        hits = index.get((int(m.group(1)), m.group(2)), []) if m else []
+        return hits[0] if len(hits) == 1 else None
+
+    return resolve
+
+
 def is_eligible(name: str, shape, dtype, include, exclude) -> bool:
     return (
         len(shape) == 2
@@ -48,12 +81,28 @@ def is_eligible(name: str, shape, dtype, include, exclude) -> bool:
 def to_tensors(t: HI2Tensor, base: str) -> dict[str, torch.Tensor]:
     out = {f"{base}.hi2_{f}": getattr(t, f) for f in FIELDS if f != "had"}
     out[f"{base}.hi2_had"] = t.had
+    if t.col_scale is not None:
+        out[f"{base}.hi2_col_scale"] = t.col_scale
     return out
 
 
 def from_tensors(d: dict[str, torch.Tensor], base: str) -> HI2Tensor:
     g = {f: d[f"{base}.hi2_{f}"] for f in FIELDS}
-    return HI2Tensor(**g, shape=(g["row_nbits"].numel(), g["had"].numel() * 16))
+    return HI2Tensor(
+        **g,
+        shape=(g["row_nbits"].numel(), g["had"].numel() * 16),
+        col_scale=d.get(f"{base}.hi2_col_scale"),
+    )
+
+
+def read_tensors(f, base: str) -> dict[str, torch.Tensor]:
+    """The ``<base>.hi2_*`` tensors (including the optional smoothing vector) from an
+    open safetensors file."""
+    names = [f"{base}.hi2_{fld}" for fld in FIELDS]
+    cs = f"{base}.hi2_col_scale"
+    if cs in f.keys():  # noqa: SIM118
+        names.append(cs)
+    return {n: f.get_tensor(n) for n in names}
 
 
 def table_stats_path(workdir: Path, name: str) -> Path:
@@ -112,6 +161,8 @@ def write_checkpoint(
                 else:
                     for fld in FIELDS:
                         out[f"{base}.hi2_{fld}"] = None
+                    if table.col_scale is not None:
+                        out[f"{base}.hi2_col_scale"] = None
         if not done:
             save_file(out, str(dst / shard), metadata={"format": "pt"})
             (workdir / "shards_done").mkdir(parents=True, exist_ok=True)
@@ -164,9 +215,7 @@ def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> 
     for name, info in list(report.items())[:max_tensors]:
         base = name.removesuffix(".weight")
         with safe_open(dst / wdst[f"{base}.hi2_codes"], "pt") as f:
-            d = {
-                f"{base}.hi2_{fld}": f.get_tensor(f"{base}.hi2_{fld}") for fld in FIELDS
-            }
+            d = read_tensors(f, base)
         with safe_open(src / wsrc[name], "pt") as f:
             w = f.get_tensor(name).double()
         t = from_tensors(d, base)
@@ -194,9 +243,33 @@ def load_dequantized(dst: Path) -> dict[str, torch.Tensor]:
                     continue
                 out[name] = f.get_tensor(name)
             for base in sorted(b for b in bases if wmap[f"{b}.hi2_codes"] == shard):
-                d = {
-                    f"{base}.hi2_{fld}": f.get_tensor(f"{base}.hi2_{fld}")
-                    for fld in FIELDS
-                }
+                d = read_tensors(f, base)
                 out[f"{base}.weight"] = dequantize(from_tensors(d, base)).float()
     return out
+
+
+def export_dense(src: Path, dst: Path, out: Path) -> None:
+    """Write the dequantised model as a plain fp16 Hugging Face checkpoint in ``out``
+    (``model.safetensors`` + ``config.json`` without ``quantization_config`` + the
+    tokenizer/other files of ``src`` symlinked), e.g. to score it in another engine."""
+    from safetensors.torch import save_file
+
+    out.mkdir(parents=True, exist_ok=True)
+    state = {
+        k: v.to(torch.float16).contiguous() for k, v in load_dequantized(dst).items()
+    }
+    save_file(state, str(out / "model.safetensors"), metadata={"format": "pt"})
+    cfg = json.loads((src / "config.json").read_text())
+    cfg.pop("quantization_config", None)
+    (out / "config.json").write_text(json.dumps(cfg, indent=2))
+    skip = {"config.json", "model.safetensors", "model.safetensors.index.json"}
+    for entry in src.iterdir():
+        if (
+            entry.name in skip
+            or entry.name.startswith(".")
+            or entry.suffix == ".safetensors"
+        ):
+            continue
+        link = out / entry.name
+        if not link.exists():
+            os.symlink(entry.resolve(), link)

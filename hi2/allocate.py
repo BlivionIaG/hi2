@@ -45,7 +45,12 @@ def allocate_global(
     sens = sensitivity or {}
     data = [(t, *_costs(t, sens.get(t.name, 1.0))) for t in tables]
     total_w = sum(t.shape[0] * t.shape[1] for t in tables)
-    overhead = sum(ROW_OVERHEAD_BITS * t.shape[0] + t.shape[1] // 16 for t in tables)
+    overhead = sum(
+        ROW_OVERHEAD_BITS * t.shape[0]
+        + t.shape[1] // 16
+        + (16 * t.shape[1] if t.col_scale is not None else 0)  # smoothing vector
+        for t in tables
+    )
     budget = target_bpw * total_w - overhead
 
     def solve(lam: float):

@@ -155,6 +155,7 @@ def calibrate_layerwise(
     exclude,
     limit_layers: int | None = None,
     log=print,
+    resolve=None,
 ):
     """Return ``{checkpoint tensor name: TensorTable}`` and write each Linear's
     statistics under ``workdir/stats``."""
@@ -174,7 +175,11 @@ def calibrate_layerwise(
             if isinstance(mod, nn.Linear) and is_eligible(
                 full, mod.weight.shape, mod.weight.dtype, include, exclude
             ):
-                linears[n] = full
+                ckpt = resolve(full) if resolve else full
+                if ckpt is None:
+                    log(f"warning: {full} has no tensor in the checkpoint; skipped")
+                    continue
+                linears[n] = ckpt
         k_of = {n: layer.get_submodule(n).in_features for n in linears}
         results = _layer_pass(layer, ex.devices, n_seq, hidden, kwargs, linears, k_of)
         merged = {n: ColumnStats(k_of[n], ex.primary) for n in linears}

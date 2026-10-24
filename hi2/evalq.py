@@ -8,11 +8,12 @@ The quantised weights are dequantised back to dense tensors and run through the
 original architecture (a numerical check of the format, not a kernel test).
 """
 
+import shutil
 from pathlib import Path
 
 import torch
 
-from .checkpoint import load_dequantized
+from .checkpoint import export_dense
 
 
 @torch.no_grad()
@@ -37,19 +38,17 @@ def evaluate(
     for i in range(ids.shape[0]):
         lg = model(ids[i : i + 1].to(device)).logits[0].float()
         ref_logp.append(torch.log_softmax(lg, -1).cpu())
-    state = load_dequantized(dst)
-    own = model.state_dict()
-    tied = bool(getattr(model.config, "tie_word_embeddings", False))
-    missing = [
-        k for k in own if k not in state and not (tied and k == "lm_head.weight")
-    ]
-    if missing:
-        raise SystemExit(f"checkpoint lacks {missing[:3]}")
-    model.load_state_dict(
-        {k: v.to(own[k].dtype) for k, v in state.items() if k in own}, strict=False
-    )
-    if tied:
-        model.tie_weights()
+    del model
+    # Load the quantised model through the same class and loader as the original, from
+    # an exported fp16 copy, so checkpoint/module name differences are handled by
+    # transformers rather than by us.
+    dense = dst.parent / (dst.name + ".eval-dense")
+    export_dense(src, dst, dense)
+    try:
+        model = AutoModelForCausalLM.from_pretrained(dense, dtype=torch.float32)
+        model = model.eval().to(device)
+    finally:
+        shutil.rmtree(dense, ignore_errors=True)
     nll_ref = nll_q = kl = agree = 0.0
     n = 0
     for i in range(ids.shape[0]):

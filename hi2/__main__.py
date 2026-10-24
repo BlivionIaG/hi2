@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from .calibrate import ALL_CANDIDATES, Config
-from .checkpoint import DEFAULT_EXCLUDE, verify_checkpoint
+from .checkpoint import DEFAULT_EXCLUDE, export_dense, verify_checkpoint
 from .encode import EFFORT
 from .evalq import evaluate
 from .pipeline import RunConfig, run
@@ -53,9 +53,15 @@ def main(argv=None):
     )
     q.add_argument(
         "--rotation",
-        choices=("off", "auto", "on"),
-        default="off",
-        help="Hadamard flags; off by default (measured worse with calibration)",
+        choices=("on", "auto", "off"),
+        default="on",
+        help="Hadamard flags (default on; pairs with --smooth when calibrated)",
+    )
+    q.add_argument(
+        "--smooth",
+        type=float,
+        default=0.5,
+        help="smoothing exponent alpha (0 = off); needs --calib",
     )
     q.add_argument("--effort", choices=list(EFFORT), default="normal")
     q.add_argument("--bits", type=_ints, default=[2, 4], help="allowed code widths")
@@ -72,6 +78,12 @@ def main(argv=None):
     v.add_argument("src", type=Path)
     v.add_argument("dst", type=Path)
     v.add_argument("--max-tensors", type=int, default=8)
+    x = sub.add_parser(
+        "export-dense", help="write the dequantised model as a plain fp16 HF dir"
+    )
+    x.add_argument("src", type=Path)
+    x.add_argument("dst", type=Path)
+    x.add_argument("out", type=Path)
     e = sub.add_parser(
         "eval", help="perplexity / KLD of an HI2 checkpoint vs the original"
     )
@@ -88,7 +100,10 @@ def main(argv=None):
     )
     e.add_argument("--device", default="cpu")
     a = ap.parse_args(argv)
-    if a.cmd == "eval":
+    if a.cmd == "export-dense":
+        export_dense(a.src, a.dst, a.out)
+        out = {"exported": str(a.out)}
+    elif a.cmd == "eval":
         out = evaluate(
             a.src, a.dst, a.text, a.samples, a.seq_len, a.device, a.skip_tokens
         )
@@ -109,7 +124,9 @@ def main(argv=None):
             exclude=a.exclude,
             limit_layers=a.limit_layers,
             compute_dtype=a.compute_dtype,
-            cfg=Config(candidates=cands, rotation=a.rotation, effort=a.effort),
+            cfg=Config(
+                candidates=cands, rotation=a.rotation, smooth=a.smooth, effort=a.effort
+            ),
         )
         out = run(rc)
     else:
