@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# ruff: noqa: E501
+"""Encoder, statistics, per-tensor calibration, global allocation (CPU)."""
+
+import torch
+from hi2.allocate import allocate_global
+from hi2.calibrate import ALL_CANDIDATES, Config, build_table, encode_with_picks
+from hi2.encode import encode_rows, fit_ladder
+from hi2.executor import Executor
+from hi2.format import dequantize, fwht_groups, tensor_bpw
+from hi2.stats import ColumnStats
+
+
+def _w(r=64, k=256, seed=0):
+    g = torch.Generator().manual_seed(seed)
+    w = torch.randn(r, k, generator=g) * torch.exp(
+        0.45 * torch.randn(r, 1, generator=g)
+    )
+    w *= torch.exp(0.6 * torch.randn(1, k, generator=g))
+    w[:, [c for c in (5, 70, 133, 200) if c < k]] *= 10
+    return w
+
+
+def test_weighted_fit_beats_minmax_and_respects_weights():
+    torch.manual_seed(0)
+    wb = torch.randn(32, 4, 32)
+    d = torch.ones(1, 4, 32)
+    lo, step = fit_ladder(wb, d, 4, "normal")
+    rec = lo.unsqueeze(-1) + torch.round(
+        (wb - lo.unsqueeze(-1)) / step.unsqueeze(-1)
+    ).clamp(0, 3) * step.unsqueeze(-1)
+    mn, mx = wb.amin(-1), wb.amax(-1)
+    st = (mx - mn) / 3
+    rec_mm = mn.unsqueeze(-1) + torch.round(
+        (wb - mn.unsqueeze(-1)) / st.unsqueeze(-1)
+    ) * st.unsqueeze(-1)
+    assert ((rec - wb) ** 2).sum() < ((rec_mm - wb) ** 2).sum() * 0.9
+    # a heavily weighted column ends up with lower error than under uniform weights
+    d2 = d.clone()
+    d2[..., 3] = 1000.0
+    lo2, step2 = fit_ladder(wb, d2, 4, "normal")
+    rec2 = lo2.unsqueeze(-1) + torch.round(
+        (wb - lo2.unsqueeze(-1)) / step2.unsqueeze(-1)
+    ).clamp(0, 3) * step2.unsqueeze(-1)
+    assert ((rec2 - wb)[..., 3] ** 2).sum() <= ((rec - wb)[..., 3] ** 2).sum()
+
+
+def test_encode_rows_sse_matches_reconstruction():
+    w = _w(16, 128)
+    d = torch.rand(128) + 0.1
+    enc = encode_rows(w, d, 2, 32, "fast")
+    assert enc.codes.dtype == torch.uint8 and int(enc.codes.max()) <= 3
+    assert enc.params.shape == (16, 4, 2) and enc.consts.shape == (16, 3)
+    assert (enc.sse >= 0).all()
+
+
+def test_stats_diag_and_rotated_diag_match_direct_computation():
+    torch.manual_seed(1)
+    k = 64
+    x = torch.randn(500, k) * torch.rand(k) * 3
+    st = ColumnStats(k)
+    st.update(x[:200])
+    st.update(x[200:])
+    assert st.n == 500
+    assert torch.allclose(st.diag(), (x**2).mean(0), rtol=1e-4)
+    flags = torch.tensor([1, 0, 1, 1], dtype=torch.uint8)
+    # diag of the rotated activation second moment, per flagged group
+    xr = fwht_groups(x, flags.repeat_interleave(1))
+    assert torch.allclose(st.diag(flags), (xr**2).mean(0), rtol=1e-3, atol=1e-5)
+    other = ColumnStats(k)
+    other.update(x[:100])
+    merged = ColumnStats(k)
+    merged.update(x[100:])
+    merged.merge(other)
+    assert torch.allclose(merged.diag(), (x**2).mean(0), rtol=1e-4)
+
+
+def test_table_and_encode_with_picks_roundtrip():
+    w = _w()
+    ex = Executor("cpu")
+    cfg = Config(effort="fast")
+    table = build_table("x.weight", w, None, cfg, ex)
+    assert table.sse.shape == (len(ALL_CANDIDATES), 64)
+    picks = table.sse.argmin(0)  # most accurate candidate per row
+    t = encode_with_picks(w, None, table, picks, cfg, ex)
+    assert t.shape == (64, 256) and tensor_bpw(t) > 3
+    err = ((dequantize(t) - w.double()) ** 2).sum() / (w.double() ** 2).sum()
+    assert err.item() < 0.06
+
+
+def test_row_sharding_is_equivalent():
+    w = _w(65, 128)
+    cfg = Config(effort="fast", rotation="off")
+    one = build_table("a", w, None, cfg, Executor(["cpu"]))
+    two = build_table("a", w, None, cfg, Executor(["cpu", "cpu"]))
+    assert torch.allclose(one.sse, two.sse, rtol=1e-5)
+
+
+def test_global_allocation_hits_target_and_moves_bits_to_sensitive_tensors():
+    ex = Executor("cpu")
+    cfg = Config(effort="fast", rotation="off")
+    easy = build_table("easy", torch.randn(64, 128) * 0.01, None, cfg, ex)
+    hard = build_table("hard", _w(64, 128, seed=3), None, cfg, ex)
+    alloc = allocate_global([easy, hard], target_bpw=3.5)
+    assert alloc.feasible and alloc.bpw <= 3.5 + 1e-6
+    assert alloc.bpw > 3.2  # uses the budget
+    assert alloc.picks["easy"].shape == (64,)
+    # raising the target never raises the relative error
+    loose = allocate_global([easy, hard], target_bpw=5.0)
+    assert loose.bpw >= alloc.bpw
+
+
+def test_allocation_flags_infeasible_target():
+    ex = Executor("cpu")
+    t = build_table("t", _w(32, 128), None, Config(effort="fast", rotation="off"), ex)
+    alloc = allocate_global([t], target_bpw=1.0)
+    assert not alloc.feasible

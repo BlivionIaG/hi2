@@ -1,0 +1,198 @@
+[
+ {
+  "bits": 2,
+  "B": 16,
+  "mode": "fp16 per block (v3.1)",
+  "out_err": 0.1905292535200715,
+  "bpw": 4.0
+ },
+ {
+  "bits": 2,
+  "B": 16,
+  "mode": "row  lin step, lin lo (v3.2 draft)",
+  "out_err": 0.1907237943261862,
+  "bpw": 3.053571428571429
+ },
+ {
+  "bits": 2,
+  "B": 16,
+  "mode": "row  lin step, z lo",
+  "out_err": 0.1907917520031333,
+  "bpw": 3.053571428571429
+ },
+ {
+  "bits": 2,
+  "B": 16,
+  "mode": "row  log step, z lo",
+  "out_err": 0.19145385399460793,
+  "bpw": 3.053571428571429
+ },
+ {
+  "bits": 2,
+  "B": 16,
+  "mode": "tensor lin step, lin lo",
+  "out_err": 0.19100399017333985,
+  "bpw": 3.0
+ },
+ {
+  "bits": 2,
+  "B": 16,
+  "mode": "tensor lin step, z lo",
+  "out_err": 0.19105897638946773,
+  "bpw": 3.0
+ },
+ {
+  "bits": 2,
+  "B": 16,
+  "mode": "tensor log step, z lo (nvfp4-like scope)",
+  "out_err": 0.1913117015734315,
+  "bpw": 3.0
+ },
+ {
+  "bits": 2,
+  "B": 32,
+  "mode": "fp16 per block (v3.1)",
+  "out_err": 0.22971980832517147,
+  "bpw": 3.0
+ },
+ {
+  "bits": 2,
+  "B": 32,
+  "mode": "row  lin step, lin lo (v3.2 draft)",
+  "out_err": 0.2296482976526022,
+  "bpw": 2.553571428571429
+ },
+ {
+  "bits": 2,
+  "B": 32,
+  "mode": "row  lin step, z lo",
+  "out_err": 0.22977438792586327,
+  "bpw": 2.553571428571429
+ },
+ {
+  "bits": 2,
+  "B": 32,
+  "mode": "row  log step, z lo",
+  "out_err": 0.2301421958953142,
+  "bpw": 2.553571428571429
+ },
+ {
+  "bits": 2,
+  "B": 32,
+  "mode": "tensor lin step, lin lo",
+  "out_err": 0.23015976808965205,
+  "bpw": 2.5
+ },
+ {
+  "bits": 2,
+  "B": 32,
+  "mode": "tensor lin step, z lo",
+  "out_err": 0.22999043986201287,
+  "bpw": 2.5
+ },
+ {
+  "bits": 2,
+  "B": 32,
+  "mode": "tensor log step, z lo (nvfp4-like scope)",
+  "out_err": 0.23022207506000997,
+  "bpw": 2.5
+ },
+ {
+  "bits": 2,
+  "B": 64,
+  "mode": "fp16 per block (v3.1)",
+  "out_err": 0.260556835308671,
+  "bpw": 2.5
+ },
+ {
+  "bits": 2,
+  "B": 64,
+  "mode": "row  lin step, lin lo (v3.2 draft)",
+  "out_err": 0.26035047248005866,
+  "bpw": 2.3035714285714284
+ },
+ {
+  "bits": 2,
+  "B": 64,
+  "mode": "row  lin step, z lo",
+  "out_err": 0.26043255180120467,
+  "bpw": 2.3035714285714284
+ },
+ {
+  "bits": 2,
+  "B": 64,
+  "mode": "row  log step, z lo",
+  "out_err": 0.260888434946537,
+  "bpw": 2.3035714285714284
+ },
+ {
+  "bits": 2,
+  "B": 64,
+  "mode": "tensor lin step, lin lo",
+  "out_err": 0.26059889383614065,
+  "bpw": 2.25
+ },
+ {
+  "bits": 2,
+  "B": 64,
+  "mode": "tensor lin step, z lo",
+  "out_err": 0.2601808991283178,
+  "bpw": 2.25
+ },
+ {
+  "bits": 2,
+  "B": 64,
+  "mode": "tensor log step, z lo (nvfp4-like scope)",
+  "out_err": 0.2609528128057718,
+  "bpw": 2.25
+ },
+ {
+  "bits": 4,
+  "B": 32,
+  "mode": "fp16 per block (v3.1)",
+  "out_err": 0.05517459879629314,
+  "bpw": 5.0
+ },
+ {
+  "bits": 4,
+  "B": 32,
+  "mode": "row  lin step, lin lo (v3.2 draft)",
+  "out_err": 0.05534935789182782,
+  "bpw": 4.553571428571429
+ },
+ {
+  "bits": 4,
+  "B": 32,
+  "mode": "row  lin step, z lo",
+  "out_err": 0.05667122378945351,
+  "bpw": 4.553571428571429
+ },
+ {
+  "bits": 4,
+  "B": 32,
+  "mode": "row  log step, z lo",
+  "out_err": 0.057187975849956274,
+  "bpw": 4.553571428571429
+ },
+ {
+  "bits": 4,
+  "B": 32,
+  "mode": "tensor lin step, lin lo",
+  "out_err": 0.05614503752440214,
+  "bpw": 4.5
+ },
+ {
+  "bits": 4,
+  "B": 32,
+  "mode": "tensor lin step, z lo",
+  "out_err": 0.056899722386151555,
+  "bpw": 4.5
+ },
+ {
+  "bits": 4,
+  "B": 32,
+  "mode": "tensor log step, z lo (nvfp4-like scope)",
+  "out_err": 0.057599656842648984,
+  "bpw": 4.5
+ }
+]
