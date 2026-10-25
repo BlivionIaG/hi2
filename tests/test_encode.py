@@ -116,3 +116,19 @@ def test_allocation_flags_infeasible_target():
     t = build_table("t", _w(32, 128), None, Config(effort="fast", rotation="off"), ex)
     alloc = allocate_global([t], target_bpw=1.0)
     assert not alloc.feasible
+
+
+def test_int8_rows_roundtrip_and_accounting():
+    from hi2.calibrate import INT8_CANDIDATES
+    from hi2.format import dequantize
+
+    torch.manual_seed(0)
+    w = torch.randn(16, 128)
+    cfg = Config(candidates=[(2, 32), *INT8_CANDIDATES], rounding="nearest")
+    ex = Executor("cpu")
+    table = build_table("x", w, None, cfg, ex)
+    picks = torch.tensor([0] * 8 + [2] * 8)  # mixed INT2/INT8 rows
+    t = encode_with_picks(w, None, table, picks, cfg, ex, None)
+    rel = ((dequantize(t).float() - w) ** 2).sum(1) / (w**2).sum(1)
+    assert rel[8:].max() < 1e-3 < rel[:8].min()
+    assert tensor_bpw(t) > 5.0

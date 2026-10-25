@@ -14,7 +14,7 @@ mc() { # gguf tag data out
   local g=$1 t=$2 data=$3 out=$4
   for spec in "arc-easy-validation 570" "arc-challenge-validation 299" "hellaswag-validation ${MC_TASKS:-2000}" "mmlu-test ${MC_TASKS:-2000}"; do
     read -r name tasks <<< "$spec"
-    $BIN/llama-perplexity -m "$g" --multiple-choice -bf "$data/$name.bin" --multiple-choice-tasks "$tasks" -c 2048 -ngl 99 > "$out/$t.mc-$name.log" 2>&1
+    $BIN/llama-perplexity -m "$g" --multiple-choice -bf "$data/$name.bin" --multiple-choice-tasks "$tasks" -c 2048 -ngl 99 -np 8 > "$out/$t.mc-$name.log" 2>&1
   done
 }
 score() { # gguf tag text data out

@@ -26,6 +26,9 @@ from .format import (
 from .stats import ColumnStats
 
 ALL_CANDIDATES = [(nb, b) for nb in (2, 4) for b in (16, 32, 64)]
+# INT8 rows (v_dot4_i32_i8 in the I8 mode) for very sensitive projections; opt-in via --bits
+INT8_CANDIDATES = [(8, 32), (8, 64)]
+SELECTABLE = ALL_CANDIDATES + INT8_CANDIDATES
 ROTATION_ROWS = 1024  # rows sampled to decide rotation per 64-column chunk
 CHUNK = 64
 

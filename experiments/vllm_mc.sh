@@ -7,6 +7,10 @@ TREE=${VLLM_TREE:-/home/chenco_adm/vllm-rdna-0.31.0-exl3}
 VENV=/home/chenco_adm/Apps/vllm/venv-7.14.0_0.31.0-final
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$OUT"
+# serve_rdna.sh kills every vLLM process that shares VLLM_CACHE_ROOT at launch; a private root per
+# server lets several servers run at once without killing each other
+export VLLM_CACHE_ROOT="$OUT/cache-$TAG/vllm"
+mkdir -p "$VLLM_CACHE_ROOT"
 cd "$TREE" || exit 1
 VENV=$VENV setsid bash tools/rdna/serve_rdna.sh RECIPE=27b-exl3 MODEL="$MODEL" SERVED_NAME="$TAG" TP=1 EAGER=1 MAXLEN=4096 SEQS=16 PORT="$PORT" GMEM=0.85 KVCAP=4000000000 > "$OUT/$TAG.server.log" 2>&1 < /dev/null &
 SPID=$!
@@ -23,4 +27,6 @@ else
 fi
 kill -- "-$SPID" 2> /dev/null || kill "$SPID" 2> /dev/null
 sleep 3
+rm -rf "$OUT/cache-$TAG"
+rm -rf "$OUT/cache-$TAG"
 echo "done" > "$OUT/$TAG.mc.done"

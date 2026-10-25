@@ -75,7 +75,7 @@ def test_calibrated_layerwise_run_end_to_end(tiny, tmp_path):
     summary = run(rc, log=lambda *_: None)
     assert summary["feasible"] and summary["avg_bpw"] <= 3.5 + 0.05
     cfgj = json.loads((rc.dst / "config.json").read_text())
-    assert cfgj["quantization_config"]["quant_method"] == "hadamard_int2"
+    assert cfgj["quantization_config"]["quant_method"] == "rdna_hint_flex"
     assert cfgj["quantization_config"]["version"] == "3.2"
     rep = json.loads((rc.dst / "hi2_report.json").read_text())["tensors"]
     # 3 layers x (q,k,v,o,gate,up,down); lm_head / embeddings stay dense

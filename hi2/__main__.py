@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .calibrate import ALL_CANDIDATES, Config
+from .calibrate import SELECTABLE, Config
 from .checkpoint import DEFAULT_EXCLUDE, export_dense, verify_checkpoint
 from .encode import EFFORT
 from .evalq import evaluate
@@ -100,7 +100,7 @@ def main(argv=None):
         "--bits",
         type=_ints,
         default=[2, 4],
-        help="allowed code widths",
+        help="allowed code widths (2,4 default; add 8 for INT8 rows)",
     )
     q.add_argument(
         "--blocks", type=_ints, default=[16, 32, 64], help="allowed block sizes"
@@ -145,7 +145,7 @@ def main(argv=None):
             a.src, a.dst, a.text, a.samples, a.seq_len, a.device, a.skip_tokens
         )
     elif a.cmd == "quantize":
-        cands = [(nb, b) for nb, b in ALL_CANDIDATES if nb in a.bits and b in a.blocks]
+        cands = [(nb, b) for nb, b in SELECTABLE if nb in a.bits and b in a.blocks]
         if not cands:
             raise SystemExit("--bits/--blocks leave no candidate configuration")
         rc = RunConfig(

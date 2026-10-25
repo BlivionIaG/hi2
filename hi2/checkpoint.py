@@ -185,7 +185,7 @@ def write_checkpoint(
     (dst / "model.safetensors.index.json").write_text(json.dumps(index, indent=2))
     cfgj = json.loads((src / "config.json").read_text())
     cfgj["quantization_config"] = {
-        "quant_method": "hadamard_int2",
+        "quant_method": "rdna_hint_flex",
         "version": SPEC_VERSION,
         **meta,
     }
