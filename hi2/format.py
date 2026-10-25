@@ -242,12 +242,15 @@ def reference_linear(x: torch.Tensor, t: HI2Tensor) -> torch.Tensor:
 
 # ---- accounting (2.5) ---------------------------------------------------------
 def metadata_bits(row_nbits, row_block, had) -> int:
-    """1 Hadamard bit if all groups agree else K/16; 1 bit per INT4 row; 2 bits per
-    row when block sizes differ."""
+    """1 Hadamard bit if all groups agree else K/16; ``ceil(log2(#widths))`` bits per
+    row when the rows use more than one code width (1 bit for INT2/INT4 as in v3.1);
+    2 bits per row when block sizes differ."""
     had = had.reshape(-1)
     uniform = bool((had == had[0]).all())
     bits = 1 if uniform else had.numel()
-    bits += int((row_nbits == 4).sum())
+    widths = len(set(row_nbits.tolist()))
+    if widths > 1:
+        bits += row_nbits.numel() * math.ceil(math.log2(widths))
     if len(set(row_block.tolist())) > 1:
         bits += 2 * row_nbits.numel()
     return bits

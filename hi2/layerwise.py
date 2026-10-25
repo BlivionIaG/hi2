@@ -218,8 +218,17 @@ def _merge_hessians(results, linears, primary) -> dict[str, torch.Tensor]:
 def _save_hessians(results, linears, workdir: Path, primary) -> None:
     """Write ``Sigma`` per Linear under ``workdir/hessian``."""
     (workdir / "hessian").mkdir(parents=True, exist_ok=True)
+    written: dict[int, Path] = {}
     for ckpt, sigma in _merge_hessians(results, linears, primary).items():
-        torch.save(sigma, table_hessian_path(workdir, ckpt))
+        path = table_hessian_path(workdir, ckpt)
+        if (
+            id(sigma) in written
+        ):  # shared input (q/k/v, gate/up): store once, link the rest
+            path.unlink(missing_ok=True)
+            path.symlink_to(written[id(sigma)].name)
+        else:
+            torch.save(sigma, path)
+            written[id(sigma)] = path
 
 
 def encode_layerwise(

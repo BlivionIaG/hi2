@@ -155,7 +155,8 @@ def test_bit_accounting():
     assert tensor_bpw(t) == pytest.approx(bits / (r * k))
     mixed = torch.tensor([2, 4, 2, 2])
     assert (
-        metadata_bits(mixed, torch.tensor([32, 64, 32, 32]), torch.ones(8)) == 1 + 1 + 8
+        metadata_bits(mixed, torch.tensor([32, 64, 32, 32]), torch.ones(8))
+        == 1 + 4 + 8  # 1 hadamard, 1 width bit x 4 rows, 2 block bits x 4 rows
     )
 
 

@@ -30,7 +30,7 @@ class RunConfig:
     devices: list[str] = field(default_factory=lambda: ["cpu"])
     calib: Path | None = None  # None = data-free (unless calib_ids is given)
     calib_ids: torch.Tensor | None = None  # [samples, seq_len], skips tokenising
-    calib_samples: int = 64
+    calib_samples: int = 128
     seq_len: int = 2048
     target_bpw: float = 3.0
     include: str | None = None
@@ -38,6 +38,11 @@ class RunConfig:
     limit_layers: int | None = None
     compute_dtype: str = "float32"
     cfg: Config = field(default_factory=Config)
+    # spec 8.6: none | probe (measure each tensor's KL cost and weight the allocation)
+    sensitivity: str = "none"
+    sens_seqs: int = 8
+    sens_len: int = 512
+    sens_floor: float = 0.05
 
 
 def load_calibration_ids(
@@ -125,6 +130,19 @@ def _tabulate_streaming(rc, ex, inc, exc, tdir, log) -> dict[str, TensorTable]:
     return tables
 
 
+def _probe_ids(rc) -> torch.Tensor:
+    """First ``sens_seqs`` sequences of the calibration data, cut to ``sens_len``."""
+    from transformers import AutoTokenizer
+
+    if rc.calib_ids is not None:
+        ids = rc.calib_ids
+    else:
+        ids = load_calibration_ids(
+            rc.calib, AutoTokenizer.from_pretrained(rc.src), rc.sens_seqs, rc.seq_len
+        )
+    return ids[: rc.sens_seqs, : rc.sens_len]
+
+
 def _sequential_encode(rc, ex, tables, picks, log) -> dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -197,10 +215,28 @@ def run(rc: RunConfig, log=print) -> dict:
         f"{'' if calibrated else ' (data-free)'}"
     )
     tables = phase1_tables(rc, ex, log)
+    sens = None
+    if rc.sensitivity == "probe":
+        if not calibrated:
+            raise SystemExit("--sensitivity probe needs calibration data (--calib)")
+        from .sensitivity import probe_sensitivity
+
+        log("phase 2a: probing per-tensor sensitivity")
+        sens = probe_sensitivity(
+            rc.src,
+            tables,
+            rc.workdir,
+            _probe_ids(rc),
+            rc.cfg,
+            ex,
+            floor=rc.sens_floor,
+            log=log,
+        )
+        (rc.workdir / "sensitivity.json").write_text(json.dumps(sens, indent=1))
     log(
         f"phase 2: global allocation over {len(tables)} tensors, target {rc.target_bpw} bpw"
     )
-    alloc = allocate_global(list(tables.values()), rc.target_bpw)
+    alloc = allocate_global(list(tables.values()), rc.target_bpw, sens)
     log(f"  allocation bpw {alloc.bpw:.4f} feasible={alloc.feasible}")
     if not alloc.feasible:
         log("  warning: target is below the cheapest configuration; using the cheapest")

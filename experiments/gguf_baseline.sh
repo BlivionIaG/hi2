@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # GGUF baselines (k-quants, i-quants, ROCmFPX) on the same model and held-out text as `hi2 eval`.
 # usage: HIP_VISIBLE_DEVICES=3 gguf_baseline.sh <hf_model_dir> <text_file> <out_dir>
+# TYPES overrides the quantization types; KEEP_GGUF=1 keeps the quantized files.
 # Calibration (imatrix) uses the first 32 x 2048 tokens, evaluation the 8 x 2048 tokens at
 # offset 800000, matching the hi2 runs. Perplexity is llama.cpp's own (its tokenizer, ctx 2048).
 set -u
@@ -23,9 +24,10 @@ PYTHONPATH=$D/gguf-py $V/bin/python $D/convert_hf_to_gguf.py "$M" --outtype f16 
 $BIN/llama-imatrix -m "$OUT/f16.gguf" -f "$OUT/calib.txt" -c 2048 --chunks 32 -ngl 99 -o "$OUT/imat.dat" > "$OUT/imatrix.log" 2>&1
 ppl() { $BIN/llama-perplexity -m "$1" -f "$OUT/eval.txt" -c 2048 --chunks 8 -ngl 99 > "$2" 2>&1; }
 ppl "$OUT/f16.gguf" "$OUT/f16.ppl.log"
-for T in Q8_0 Q6_K Q5_K_M Q4_K_M IQ4_XS Q3_K_M Q3_K_S IQ3_XS IQ3_XXS Q2_K IQ2_M IQ2_S IQ2_XS IQ2_XXS Q2_0_ROCMFPX; do
+for T in ${TYPES:-Q8_0 Q6_K Q5_K_M Q4_K_M IQ4_XS Q3_K_M Q3_K_S IQ3_XS IQ3_XXS Q2_K IQ2_M IQ2_S IQ2_XS IQ2_XXS Q2_0_ROCMFPX}; do
   $BIN/llama-quantize --imatrix "$OUT/imat.dat" "$OUT/f16.gguf" "$OUT/$T.gguf" "$T" > "$OUT/$T.quant.log" 2>&1 || { echo "$T quantize failed" >> "$OUT/failures.txt"; continue; }
   ppl "$OUT/$T.gguf" "$OUT/$T.ppl.log"
+  [ "${KEEP_GGUF:-0}" = 1 ] || rm -f "$OUT/$T.gguf"  # the logs are the result; model files are large
 done
 # imatrix effect at one point
 $BIN/llama-quantize "$OUT/f16.gguf" "$OUT/Q3_K_M-noimat.gguf" Q3_K_M > "$OUT/Q3_K_M-noimat.quant.log" 2>&1 && ppl "$OUT/Q3_K_M-noimat.gguf" "$OUT/Q3_K_M-noimat.ppl.log"

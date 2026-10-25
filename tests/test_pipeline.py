@@ -206,3 +206,24 @@ def test_sequential_gptq_round_trip(tiny, tmp_path):
     assert summary["feasible"]
     assert verify_checkpoint(rc.src, rc.dst, 3, log=lambda *_: None)["checked"] == 3
     assert _logits_err(tiny[1], load_dequantized(rc.dst), tiny[2]) < 0.6
+
+
+def test_sensitivity_probe_weights_and_allocation(tiny, tmp_path):
+    ids = torch.randint(0, 256, (16, 64), generator=torch.Generator().manual_seed(7))
+    rc = _rc(
+        tiny,
+        tmp_path,
+        "sens",
+        target_bpw=3.0,
+        calib_ids=ids,
+        calib_samples=16,
+        sensitivity="probe",
+        sens_seqs=4,
+        sens_len=64,
+        cfg=Config(effort="fast", rounding="nearest"),
+    )
+    summary = run(rc, log=lambda *_: None)
+    sens = json.loads((rc.workdir / "sensitivity.json").read_text())
+    assert len(sens) == 21 and all(v > 0 for v in sens.values())
+    assert max(sens.values()) > 2 * min(sens.values())  # tensors differ in sensitivity
+    assert summary["feasible"] and summary["avg_bpw"] <= 3.0 + 0.05

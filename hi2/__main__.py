@@ -43,7 +43,12 @@ def main(argv=None):
         default=None,
         help=".txt or .jsonl calibration text; omit for data-free",
     )
-    q.add_argument("--calib-samples", type=int, default=64)
+    q.add_argument(
+        "--calib-samples",
+        type=int,
+        default=128,
+        help="sequences of --seq-len tokens; 128 x 2048 = 262k tokens",
+    )
     q.add_argument("--seq-len", type=int, default=2048)
     q.add_argument(
         "--target-bpw",
@@ -72,12 +77,31 @@ def main(argv=None):
     )
     q.add_argument("--damp", type=float, default=0.01, help="Hessian damping for gptq")
     q.add_argument(
+        "--sensitivity",
+        choices=("none", "probe"),
+        default="none",
+        help="probe = weight the allocation by each tensor's measured KL cost (spec 8.6)",
+    )
+    q.add_argument("--sens-seqs", type=int, default=8)
+    q.add_argument("--sens-len", type=int, default=512)
+    q.add_argument(
+        "--sens-floor",
+        type=float,
+        default=0.05,
+        help="lower bound of a tensor weight relative to the median",
+    )
+    q.add_argument(
         "--sequential",
         action="store_true",
         help="gptq on the quantized prefix (spec 8.4): a second layerwise model pass",
     )
     q.add_argument("--effort", choices=list(EFFORT), default="normal")
-    q.add_argument("--bits", type=_ints, default=[2, 4], help="allowed code widths")
+    q.add_argument(
+        "--bits",
+        type=_ints,
+        default=[2, 4],
+        help="allowed code widths",
+    )
     q.add_argument(
         "--blocks", type=_ints, default=[16, 32, 64], help="allowed block sizes"
     )
@@ -137,6 +161,10 @@ def main(argv=None):
             exclude=a.exclude,
             limit_layers=a.limit_layers,
             compute_dtype=a.compute_dtype,
+            sensitivity=a.sensitivity,
+            sens_seqs=a.sens_seqs,
+            sens_len=a.sens_len,
+            sens_floor=a.sens_floor,
             cfg=Config(
                 candidates=cands,
                 rotation=a.rotation,
