@@ -105,6 +105,10 @@ def read_tensors(f, base: str) -> dict[str, torch.Tensor]:
     return {n: f.get_tensor(n) for n in names}
 
 
+def table_hessian_path(workdir: Path, name: str) -> Path:
+    return workdir / "hessian" / (name.replace("/", "_") + ".pt")
+
+
 def table_stats_path(workdir: Path, name: str) -> Path:
     return workdir / "stats" / (name.replace("/", "_") + ".pt")
 
@@ -119,9 +123,10 @@ def write_checkpoint(
     ex: Executor,
     meta: dict,
     log=print,
+    pre_encoded: dict | None = None,
 ) -> dict:
-    """Phase 3: stream shards, encode the tables' tensors with their picks, copy the
-    rest. Existing output shards are kept (resume)."""
+    """Phase 3: stream shards, encode the tables' tensors with their picks (or take
+    them from ``pre_encoded``), copy the rest. Existing output shards are kept."""
     from safetensors import safe_open
     from safetensors.torch import save_file
 
@@ -145,12 +150,19 @@ def write_checkpoint(
                 table, p = tables[name], picks[name]
                 base = name.removesuffix(".weight")
                 if not done:
-                    w = f.get_tensor(name)
-                    sp = table_stats_path(workdir, name)
-                    stats = None
-                    if sp.exists():
-                        stats = ColumnStats.from_state(torch.load(sp), "cpu")
-                    t = encode_with_picks(w, stats, table, p, cfg, ex)
+                    if pre_encoded is not None and name in pre_encoded:
+                        t = pre_encoded[name]
+                    else:
+                        w = f.get_tensor(name)
+                        sp = table_stats_path(workdir, name)
+                        stats = None
+                        if sp.exists():
+                            stats = ColumnStats.from_state(torch.load(sp), "cpu")
+                        hp = table_hessian_path(workdir, name)
+                        sigma = torch.load(hp) if hp.exists() else None
+                        if cfg.rounding == "gptq" and sigma is None:
+                            log(f"warning: {name} has no Hessian; nearest rounding")
+                        t = encode_with_picks(w, stats, table, p, cfg, ex, sigma)
                     out.update(to_tensors(t, base))
                     report[name] = _tensor_report(table, p, t)
                     log(

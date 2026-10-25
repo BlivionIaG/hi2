@@ -12,6 +12,7 @@ mkdir -p "$OUT"; rm -rf "${OUT:?}/$TAG"
 date +%s > "$OUT/$TAG.t0"
 $V/bin/python -m hi2 quantize "$MODEL" "$OUT/$TAG" --workdir "$OUT/$TAG.work" --devices "$DEVS" "$@" > "$OUT/$TAG.quant.log" 2>&1
 echo "quant_exit=$?" >> "$OUT/$TAG.quant.log"
+rm -rf "$OUT/$TAG.work/hessian"  # saved Hessians are ~2 GB per run and only needed by the quantize step
 date +%s > "$OUT/$TAG.t1"
 EVD=cpu; case "$DEVS" in cuda*) EVD=${DEVS%%,*};; esac
 $V/bin/python -m hi2 eval "$MODEL" "$OUT/$TAG" --text "$TEXT" --skip-tokens "${EVAL_SKIP:-800000}" --samples 8 --seq-len 2048 --device "$EVD" > "$OUT/$TAG.eval.log" 2>&1

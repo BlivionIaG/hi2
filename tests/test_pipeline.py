@@ -171,3 +171,38 @@ def test_resolver_maps_text_model_names_to_multimodal_checkpoint():
         "model.layers.2.self_attn.q_proj.weight"
     )
     assert r("model.layers.7.mlp.down_proj.weight") is None
+
+
+def test_gptq_rounding_round_trip_and_beats_nearest(tiny, tmp_path):
+    base = dict(effort="fast", rotation="on", smooth=0.5)
+    out = {}
+    for rounding in ("nearest", "gptq"):
+        rc = _rc(
+            tiny,
+            tmp_path,
+            f"r-{rounding}",
+            target_bpw=2.8,
+            calib_ids=torch.randint(
+                0, 256, (24, 64), generator=torch.Generator().manual_seed(7)
+            ),
+            calib_samples=24,
+            cfg=Config(rounding=rounding, **base),
+        )
+        run(rc, log=lambda *_: None)
+        assert verify_checkpoint(rc.src, rc.dst, 3, log=lambda *_: None)["checked"] == 3
+        out[rounding] = _logits_err(tiny[1], load_dequantized(rc.dst), tiny[2])
+    assert (
+        out["gptq"] < out["nearest"] * 1.05
+    )  # at least not worse (tiny, random model)
+
+
+def test_sequential_gptq_round_trip(tiny, tmp_path):
+    ids = torch.randint(0, 256, (24, 64), generator=torch.Generator().manual_seed(7))
+    cfg = Config(effort="fast", rounding="gptq", sequential=True)
+    rc = _rc(
+        tiny, tmp_path, "seq", target_bpw=2.8, calib_ids=ids, calib_samples=24, cfg=cfg
+    )
+    summary = run(rc, log=lambda *_: None)
+    assert summary["feasible"]
+    assert verify_checkpoint(rc.src, rc.dst, 3, log=lambda *_: None)["checked"] == 3
+    assert _logits_err(tiny[1], load_dequantized(rc.dst), tiny[2]) < 0.6

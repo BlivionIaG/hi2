@@ -125,6 +125,39 @@ def _tabulate_streaming(rc, ex, inc, exc, tdir, log) -> dict[str, TensorTable]:
     return tables
 
 
+def _sequential_encode(rc, ex, tables, picks, log) -> dict:
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from .layerwise import encode_layerwise
+
+    if rc.calib_ids is not None:
+        ids = rc.calib_ids
+    else:
+        ids = load_calibration_ids(
+            rc.calib,
+            AutoTokenizer.from_pretrained(rc.src),
+            rc.calib_samples,
+            rc.seq_len,
+        )
+    model = AutoModelForCausalLM.from_pretrained(
+        rc.src, dtype=getattr(torch, rc.compute_dtype), low_cpu_mem_usage=True
+    ).eval()
+    inc = re.compile(rc.include) if rc.include else None
+    return encode_layerwise(
+        model,
+        ids,
+        rc.cfg,
+        ex,
+        tables,
+        picks,
+        inc,
+        re.compile(rc.exclude),
+        rc.limit_layers,
+        log,
+        make_resolver(weight_map(rc.src)),
+    )
+
+
 def _dtype(s: str) -> torch.dtype:
     return {"F32": torch.float32, "F16": torch.float16, "BF16": torch.bfloat16}.get(
         s, torch.int8
@@ -155,6 +188,10 @@ def run(rc: RunConfig, log=print) -> dict:
     rc.workdir.mkdir(parents=True, exist_ok=True)
     ex = Executor(rc.devices)
     calibrated = rc.calib is not None or rc.calib_ids is not None
+    if rc.cfg.rounding == "gptq" and not calibrated:
+        log("no calibration data: using nearest rounding")
+        rc.cfg.rounding = "nearest"
+        rc.cfg.sequential = False
     log(
         f"phase 1: tabulating on {[str(d) for d in ex.devices]}"
         f"{'' if calibrated else ' (data-free)'}"
@@ -167,15 +204,23 @@ def run(rc: RunConfig, log=print) -> dict:
     log(f"  allocation bpw {alloc.bpw:.4f} feasible={alloc.feasible}")
     if not alloc.feasible:
         log("  warning: target is below the cheapest configuration; using the cheapest")
+    pre = None
+    if rc.cfg.rounding == "gptq" and rc.cfg.sequential:
+        log("phase 3a: sequential encode pass (spec 8.4)")
+        pre = _sequential_encode(rc, ex, tables, alloc.picks, log)
     log("phase 3: encoding and writing")
     meta = {
         "mode": "flex",
         "target_bpw": rc.target_bpw,
         "calibrated": calibrated,
+        "rounding": rc.cfg.rounding,
+        "sequential": rc.cfg.sequential,
+        "smooth": rc.cfg.smooth,
+        "rotation": rc.cfg.rotation,
         "calib_tokens": rc.calib_samples * rc.seq_len if calibrated else 0,
     }
     report = write_checkpoint(
-        rc.src, rc.dst, rc.workdir, tables, alloc.picks, rc.cfg, ex, meta, log
+        rc.src, rc.dst, rc.workdir, tables, alloc.picks, rc.cfg, ex, meta, log, pre
     )
     summary = summarize(report) | {
         "allocation_bpw": alloc.bpw,

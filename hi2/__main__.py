@@ -63,6 +63,19 @@ def main(argv=None):
         default=0.5,
         help="smoothing exponent alpha (0 = off); needs --calib",
     )
+    q.add_argument(
+        "--rounding",
+        choices=("gptq", "nearest"),
+        default="gptq",
+        help="gptq (default) = Hessian-aware error-compensated rounding (spec 8.3), "
+        "falls back to nearest without --calib",
+    )
+    q.add_argument("--damp", type=float, default=0.01, help="Hessian damping for gptq")
+    q.add_argument(
+        "--sequential",
+        action="store_true",
+        help="gptq on the quantized prefix (spec 8.4): a second layerwise model pass",
+    )
     q.add_argument("--effort", choices=list(EFFORT), default="normal")
     q.add_argument("--bits", type=_ints, default=[2, 4], help="allowed code widths")
     q.add_argument(
@@ -125,7 +138,13 @@ def main(argv=None):
             limit_layers=a.limit_layers,
             compute_dtype=a.compute_dtype,
             cfg=Config(
-                candidates=cands, rotation=a.rotation, smooth=a.smooth, effort=a.effort
+                candidates=cands,
+                rotation=a.rotation,
+                smooth=a.smooth,
+                rounding=a.rounding,
+                sequential=a.sequential,
+                damp=a.damp,
+                effort=a.effort,
             ),
         )
         out = run(rc)

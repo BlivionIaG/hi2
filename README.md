@@ -48,21 +48,26 @@ tensor-parallel forward pass (a single layer fits one GPU).
 
 ## Defaults and what they are based on
 
+* `--rounding gptq` (default when `--calib` is given): Hessian-aware, error-compensated
+  rounding (spec 8.3). On Qwen3.5-0.8B at 3.0 bpw it takes the perplexity ratio from
+  1.92 to 1.32. It costs about 3.7x the quantization time and writes the full
+  Hessians (about 2 GB for that model, `K^2` floats per input, 1.2 GB per input at
+  K=17408) under `<workdir>/hessian`; delete them afterwards. Without `--calib` it uses
+  nearest rounding. It changes only which codes are chosen, never the format.
+* `--sequential` runs the encode pass on the quantized prefix (spec 8.4): a second
+  layerwise model pass. It gave no measurable gain, so it is off.
 * `--rotation on --smooth 0.5`: smoothing the activation channels and then rotating
-  was the best setting at every bit width measured on Qwen2.5-0.5B (perplexity
-  -30% at 2.5 bpw, -8% at 3.0 bpw). Rotation alone hurts a calibrated encoder, so do
-  not turn on `--rotation` with `--smooth 0` and `--calib`. Without `--calib`
-  (data-free) smoothing is skipped and rotation helps a lot. Evidence:
+  was the best transform at every bit width (and still best, by a smaller margin, with
+  `--rounding gptq`). Rotation alone hurts a calibrated encoder under nearest rounding;
+  without `--calib` smoothing is skipped and rotation helps a lot. Evidence:
   `docs/rdna2/hadamard-int2-design-notes.md`.
 * The smoothing vector costs `16/R` bits per weight per tensor, and the global
   allocation accounts for it.
 * `--bits` / `--blocks` restrict the candidate set (for example `--bits 4 --blocks 64`
   for a uniform INT4/B64 reference). `--effort fast|normal|max`; more effort did not
   improve quality in our runs.
-* Activations are propagated from the unquantized model (the final configuration is
-  unknown until the global allocation), so there is no quantized-propagation mode.
-* `workdir` (default `<out>.work`) holds tables, statistics and shard markers;
-  finished output shards are kept on re-run.
+* `workdir` (default `<out>.work`) holds tables, statistics, Hessians and shard
+  markers; finished output shards are kept on re-run.
 * Calibration needs `--calib-samples x --seq-len` tokens of text. Evaluate on text
   that is not in the calibration region (`--skip-tokens`).
 * `eval` dequantizes back to dense weights and runs the original architecture: it
