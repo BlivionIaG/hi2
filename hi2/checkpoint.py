@@ -359,19 +359,20 @@ def _tensor_report(table: TensorTable, picks: torch.Tensor, t: HI2Tensor) -> dic
 
 
 def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> dict:
-    """Reload quantised tensors from ``dst`` and compare against ``src`` weights."""
+    """Reload quantised tensors from ``dst`` (either MoE layout) and compare against
+    ``src`` weights."""
     from safetensors import safe_open
 
+    from .stack import Hi2Checkpoint
+
     report = json.loads((dst / "hi2_report.json").read_text())["tensors"]
-    wsrc, wdst = weight_map(src), weight_map(dst)
+    wsrc = weight_map(src)
+    ck = Hi2Checkpoint(dst)
     worst, checked = 0.0, 0
     for name, info in list(report.items())[:max_tensors]:
-        base = name.removesuffix(".weight")
-        with safe_open(dst / wdst[f"{base}.hi2_codes"], "pt") as f:
-            d = read_tensors(f, base)
+        t = ck.get(name.removesuffix(".weight"))
         with safe_open(src / wsrc[name], "pt") as f:
             w = f.get_tensor(name).double()
-        t = from_tensors(d, base)
         rel = ((dequantize(t) - w) ** 2).sum().item() / (w**2).sum().item()
         if abs(tensor_bpw(t) - info["bpw"]) > 1e-6:
             raise AssertionError(f"{name}: bpw changed on reload")
@@ -382,22 +383,23 @@ def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> 
 
 
 def load_dequantized(dst: Path) -> dict[str, torch.Tensor]:
-    """Dense fp32 state dict of an HI2 checkpoint: quantised tensors are
-    dequantised back to ``<name>.weight`` (original basis); the rest are copied."""
+    """Dense fp32 state dict of an HI2 checkpoint (either MoE layout): quantised
+    tensors are dequantised back to ``<name>.weight`` (original basis); the rest are
+    copied."""
     from safetensors import safe_open
 
-    wmap = weight_map(dst)
+    from .stack import Hi2Checkpoint
+
+    ck = Hi2Checkpoint(dst)
     out: dict[str, torch.Tensor] = {}
-    bases = {k.removesuffix(".hi2_codes") for k in wmap if k.endswith(".hi2_codes")}
-    for shard in sorted(set(wmap.values())):
+    for shard in sorted(set(ck.wmap.values())):
         with safe_open(dst / shard, "pt") as f:
             for name in f.keys():  # noqa: SIM118
                 if ".hi2_" in name:
                     continue
                 out[name] = f.get_tensor(name)
-            for base in sorted(b for b in bases if wmap[f"{b}.hi2_codes"] == shard):
-                d = read_tensors(f, base)
-                out[f"{base}.weight"] = dequantize(from_tensors(d, base)).float()
+            for base, t in ck.iter_shard(shard, f):
+                out[f"{base}.weight"] = dequantize(t).float()
     return out
 
 

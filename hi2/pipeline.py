@@ -4,6 +4,7 @@
 """The three phases: tabulate (calibration), allocate (global), encode (write)."""
 
 import json
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,6 +66,9 @@ class RunConfig:
     sigma_fp16_above: int = 0  # cache Sigma in fp16 for K above this (0 = always fp32)
     # layer-wise quantization-aware distillation after the allocation (spec 13); None = off
     qad: object | None = None  # hi2.qad.QadConfig
+    # routed experts on disk: per-expert (one HI2 tensor per expert projection) or
+    # stacked (one per layer and projection group, hi2.stack); same weights either way
+    moe_layout: str = "stacked"
 
 
 def calib_paths(path) -> list[Path]:
@@ -557,6 +561,7 @@ def plan(rc: RunConfig, log=print) -> dict:
         "sensitivity": rc.sensitivity,
         "rounding": rc.cfg.rounding,
         "layers": n_layers,
+        "moe_layout": rc.moe_layout,
         **facts,
     }
     if rc.qad is not None and hidden:
@@ -740,11 +745,18 @@ def output_dir(dst: Path, ratio: float) -> Path:
     return Path(f"{dst}-r{ratio:g}")
 
 
+def staging_dir(rc: RunConfig, dst: Path) -> Path:
+    """Per-expert staging copy of ``dst`` for ``moe_layout="stacked"``."""
+    return rc.workdir / "per-expert" / dst.name
+
+
 def run(rc: RunConfig, log=print) -> dict:
     """Quantize. With ``rc.max_error_ratios`` (several values) phase 1 and the probe
     run once and every ratio is allocated and written to ``<dst>-r<ratio>`` in one
     encode pass; the return value is then ``{"outputs": {dir: summary}}``."""
     t_start = time.time()
+    if rc.moe_layout not in ("per-expert", "stacked"):
+        raise ValueError(f"moe_layout {rc.moe_layout!r}: per-expert or stacked")
     rc.workdir.mkdir(parents=True, exist_ok=True)
     ex = Executor(rc.devices)
     calibrated = rc.calib is not None or rc.calib_ids is not None
@@ -793,6 +805,7 @@ def run(rc: RunConfig, log=print) -> dict:
             ratio = rc.max_error_ratios[0]
         targets = [(rc.target_bpw, ratio, rc.dst)]
     outs, allocs = [], []
+    t_qad = 0.0  # QAD passes (spec 13), reported apart from the allocation
     for target_bpw, ratio, dst in targets:
         alloc = _allocate(rc, tables, sens, target_bpw, ratio, log)
         pre = None
@@ -804,9 +817,11 @@ def run(rc: RunConfig, log=print) -> dict:
             )
             log(f"phase 3q: layer-wise quantization-aware distillation (spec 13){what}")
             tag = f"-r{ratio:g}" if multi else ""
+            tq = time.time()
             pre = _qad_encode(
                 rc, ex, tables, alloc.picks, sens, log, target_bpw, ratio, tag
             )
+            t_qad += time.time() - tq
         elif rc.cfg.rounding == "gptq" and rc.cfg.sequential:
             log("phase 3a: sequential encode pass (spec 8.4)")
             pre = _sequential_encode(rc, ex, tables, alloc.picks, log)
@@ -831,8 +846,12 @@ def run(rc: RunConfig, log=print) -> dict:
                 "tokens": (rc.qad.samples + rc.qad.val) * rc.seq_len
             }
         done = rc.workdir / ("shards_done" if not multi else f"shards_done-r{ratio:g}")
-        outs.append(Output(dst, alloc.picks, meta, done, pre))
+        # stacked: write per expert to a staging dir in the workdir, then restack
+        # (byte-level, hi2.stack.restack) into dst
+        write_to = dst if rc.moe_layout == "per-expert" else staging_dir(rc, dst)
+        outs.append(Output(write_to, alloc.picks, meta, done, pre))
         allocs.append(alloc)
+    dst_of = {id(o): t[2] for o, t in zip(outs, targets)}
     t_alloc = time.time()
     log(f"phase 3: encoding and writing {len(outs)} checkpoint(s)")
     write_checkpoints(rc.src, outs, rc.workdir, tables, rc.cfg, ex, log)
@@ -849,7 +868,8 @@ def run(rc: RunConfig, log=print) -> dict:
             "runtime_s": {
                 "phase1": round(t_phase1 - t_start, 1),
                 "probe": round(t_probe - t_phase1, 1),
-                "allocate": round(t_alloc - t_probe, 1),
+                "allocate": round(t_alloc - t_probe - t_qad, 1),
+                **({"qad": round(t_qad, 1)} if rc.qad is not None else {}),
                 "encode": round(t_end - t_alloc, 1),
                 "total": round(t_end - t_start, 1),
                 "outputs_in_this_run": len(outs),
@@ -865,7 +885,15 @@ def run(rc: RunConfig, log=print) -> dict:
         (o.dst / "hi2_report.json").write_text(
             json.dumps({"summary": summary, "tensors": report}, indent=2)
         )
-        summaries[str(o.dst)] = summary
+        final = dst_of[id(o)]
+        if final != o.dst:
+            from .stack import restack
+
+            log(f"restacking {o.dst} -> {final}")
+            restack(o.dst, final, rc.moe_layout, log, overwrite=True)
+            shutil.rmtree(o.dst)
+            summary["moe_layout"] = rc.moe_layout
+        summaries[str(final)] = summary
     if multi:
         return {"outputs": summaries}
-    return summaries[str(outs[0].dst)]
+    return summaries[str(targets[0][2])]

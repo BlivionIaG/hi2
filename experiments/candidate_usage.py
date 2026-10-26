@@ -27,7 +27,7 @@ def usage(dst: Path) -> dict:
                 base = k.removesuffix(".hi2_row_nbits")
                 nb = f.get_tensor(k).to(torch.int64)
                 bl = f.get_tensor(base + ".hi2_row_block").to(torch.int64)
-                kdim = f.get_slice(base + ".hi2_had").get_shape()[0] * 16
+                kdim = f.get_slice(base + ".hi2_had").get_shape()[-1] * 16
                 for a, b in torch.unique(torch.stack([nb, bl], 1), dim=0).tolist():
                     n = int(((nb == a) & (bl == b)).sum())
                     key = f"INT{a}/B{b}"

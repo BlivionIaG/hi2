@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # ruff: noqa: E501
-"""``python -m hi2 quantize|verify|eval|export-dense`` (run from tools/hi2 or with it on
+"""``python -m hi2 quantize|verify|eval|export-dense|restack`` (run from tools/hi2 or with it on
 PYTHONPATH). ``quantize`` runs layer-wise quantization-aware distillation after PTQ by
 default when calibration text is given (``--no-qad`` for PTQ only)."""
 
@@ -261,6 +261,14 @@ def main(argv=None):
         help="store cached Sigma in fp16 for inputs wider than this (halves the disk; "
         "lossy, see docs/rdna2/hi2-speed.md); 0 = fp32",
     )
+    q.add_argument(
+        "--moe-layout",
+        choices=("per-expert", "stacked"),
+        default="stacked",
+        help="routed experts on disk: one stack per layer and gate_up/down group "
+        "(default; loads ~9x faster in the fork) or one HI2 tensor per expert "
+        "projection (docs/rdna2/hi2-moe.md); the weights are identical",
+    )
     q.add_argument("--include", default=None, help="regex: only these weights")
     q.add_argument("--exclude", default=DEFAULT_EXCLUDE, help="regex: keep dense")
     q.add_argument("--limit-layers", type=int, default=None)
@@ -348,6 +356,14 @@ def main(argv=None):
         default="float32",
         help="dtype of both models (float16 when an fp32 copy does not fit the device)",
     )
+    r = sub.add_parser(
+        "restack",
+        help="rewrite an HI2 checkpoint's routed experts per-expert <-> stacked "
+        "(data movement only, no re-encode)",
+    )
+    r.add_argument("dst", type=Path, help="HI2 checkpoint")
+    r.add_argument("out", type=Path, help="new directory")
+    r.add_argument("--layout", choices=("per-expert", "stacked"), default="stacked")
     c = sub.add_parser("cache", help="list, size or prune the persistent cache")
     c.add_argument("action", choices=("list", "size", "prune"))
     c.add_argument("--cache-dir", type=Path, default=None)
@@ -358,6 +374,12 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.cmd == "cache":
         out = cache_command(a)
+    elif a.cmd == "restack":
+        from .stack import restack
+
+        out = restack(a.dst, a.out, a.layout, log=lambda m: print(m, file=sys.stderr))
+        for k in ("before", "after"):
+            out[k].pop("per_shard")
     elif a.cmd == "export-dense":
         export_dense(a.src, a.dst, a.out)
         out = {"exported": str(a.out)}
@@ -412,6 +434,7 @@ def main(argv=None):
             sens_batch=a.sens_batch,
             sens_dtype=a.sens_dtype,
             expert_share_floor=a.expert_share_floor,
+            moe_layout=a.moe_layout,
             cfg=Config(
                 candidates=cands,
                 rotation=a.rotation,

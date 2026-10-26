@@ -7,6 +7,8 @@
 # Hessians (so other runs can share phase 1). SHARE_FROM=<workdir of a finished run with the same
 # calibration settings> hard-links its phase-1 tables, statistics, Hessians and sensitivity first, so
 # only the QAD stage runs (the fingerprint check in hi2 still decides whether they are reused).
+# With the persistent cache (default) phase 1 and the probe are shared automatically and
+# SHARE_FROM only carries the workdir's cache_ref.json.
 set -u
 TAG=$1; shift
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -17,7 +19,7 @@ export PYTHONPATH=$HERE OMP_NUM_THREADS=32
 mkdir -p "$OUT"
 if [ -n "${SHARE_FROM:-}" ]; then
   mkdir -p "$OUT/$TAG.work"
-  for f in tables stats hessian phase1.json sensitivity.json sensitivity.key.json; do
+  for f in tables stats hessian phase1.json sensitivity.json sensitivity.key.json cache_ref.json; do
     [ -e "$SHARE_FROM/$f" ] && cp -al "$SHARE_FROM/$f" "$OUT/$TAG.work/"
   done
 fi

@@ -324,6 +324,7 @@ def test_olmoe_end_to_end_layout_sharing_and_export(olmoe, tmp_path):
             seq_len=64,
             target_bpw=3.5,
             cfg=Config(effort="fast", rotation="auto"),
+            moe_layout="per-expert",
         ),
         log=lambda *_: None,
     )
@@ -376,3 +377,90 @@ def test_olmoe_end_to_end_layout_sharing_and_export(olmoe, tmp_path):
         lg = m(ids[:1]).logits
     assert torch.isfinite(lg).all()
     assert ((lg - ref) ** 2).mean() < (ref**2).mean()
+
+
+def test_olmoe_stacked_layout_is_bit_identical(olmoe, tmp_path):
+    """``--moe-layout stacked`` and ``hi2 restack`` give the same weights as the
+    per-expert layout: same arrays, same dequantized state dict, same fp16 export."""
+    import hashlib
+
+    from hi2.checkpoint import (
+        export_dense,
+        load_dequantized,
+        verify_checkpoint,
+        weight_map,
+    )
+    from hi2.pipeline import RunConfig, run
+    from hi2.stack import Hi2Checkpoint, restack
+    from safetensors import safe_open
+
+    d, state, ids, _ = olmoe
+
+    def quantize(dst, layout):
+        return run(
+            RunConfig(
+                src=d,
+                dst=dst,
+                workdir=tmp_path / "w",  # the second run reuses phase 1
+                calib_ids=ids,
+                calib_samples=8,
+                seq_len=64,
+                target_bpw=3.5,
+                cfg=Config(effort="fast", rotation="auto"),
+                moe_layout=layout,
+            ),
+            log=lambda *_: None,
+        )
+
+    pe, st = tmp_path / "pe", tmp_path / "st"
+    quantize(pe, "per-expert")
+    summary = quantize(st, "stacked")
+    assert summary["moe_layout"] == "stacked"
+    assert not (tmp_path / "w" / "per-expert" / "st").exists()  # staging removed
+    wpe, wst = weight_map(pe), weight_map(st)
+    stacks = [k for k in wst if k.endswith(".hi2_part_off")]
+    assert len(stacks) == 2 * 2  # gate_up and down per layer
+    assert len(wpe) - len(wst) == 2 * 8 * 3 * 9 - len(stacks) * 10
+    assert not any(".experts.0." in k for k in wst)
+    for li in range(2):
+        pre = f"model.layers.{li}.mlp.experts"
+        with safe_open(st / wst[f"{pre}.gate_up.hi2_codes"], "pt") as f:
+            assert f.get_tensor(f"{pre}.gate_up.hi2_part_off").tolist() == list(
+                range(0, 2 * 64 * 8 + 1, 64)
+            )
+            assert tuple(f.get_slice(f"{pre}.gate_up.hi2_had").get_shape()) == (
+                8,
+                128 // 16,
+            )
+            assert tuple(f.get_slice(f"{pre}.down.hi2_col_scale").get_shape()) == (
+                8,
+                64,
+            )
+    a, b = Hi2Checkpoint(pe), Hi2Checkpoint(st)
+    assert set(a.logical()) == set(b.logical())
+    for base in a.logical():
+        ta, tb = a.get(base), b.get(base)
+        for fld in ("codes", "code_off", "blk_params", "param_off", "row_consts",
+                    "row_nbits", "row_block", "had", "col_scale"):  # fmt: skip
+            x, y = getattr(ta, fld), getattr(tb, fld)
+            assert x.dtype == y.dtype and torch.equal(x, y), (base, fld)
+    da, db = load_dequantized(pe), load_dequantized(st)
+    assert da.keys() == db.keys() and all(torch.equal(da[k], db[k]) for k in da)
+    assert verify_checkpoint(d, st, max_tensors=200, log=lambda *_: None)["checked"] > 0
+
+    def export_hash(q):
+        out = tmp_path / f"{q.name}.dense"
+        export_dense(d, q, out)
+        return hashlib.sha256((out / "model.safetensors").read_bytes()).hexdigest()
+
+    assert export_hash(pe) == export_hash(st)
+    # restack converts without re-encoding, both ways
+    st2, pe2 = tmp_path / "st2", tmp_path / "pe2"
+    restack(pe, st2, "stacked", log=lambda *_: None)
+    restack(st2, pe2, "per-expert", log=lambda *_: None)
+    for x, y in ((st, st2), (pe, pe2)):
+        wx, wy = weight_map(x), weight_map(y)
+        assert wx.keys() == wy.keys()
+        for k in wx:
+            with safe_open(x / wx[k], "pt") as f, safe_open(y / wy[k], "pt") as g:
+                assert torch.equal(f.get_tensor(k), g.get_tensor(k)), k

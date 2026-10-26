@@ -38,6 +38,10 @@ for job in "$@"; do
                m=$M08; case $w in n4b*) m=$M4B;; nmoe*) m=$MOE;; esac
                "$HERE/fast_run.sh" $h chk-$w -- "$HERE/check_tables.py" $m $B/runsfast/$w.work
              done ;;
+    m08ptq)  "$HERE/fast_ptq.sh" $h m08-r6-ptq $M08 $B/calib_mix.txt $S08 --no-qad ;;
+    m08qad)  "$HERE/fast_ptq.sh" $h m08-r6-qad $M08 $B/calib_mix.txt $S08 --qad-preset fast --qad-layers 0-1 --qad-samples 64
+             "$HERE/fast_run.sh" $h m08-r6-qad-verify -- -m hi2 verify $M08 $B/runsfast/m08-r6-qad ;;
+    b08qad)  CODE=$B/hi2-qad-base "$HERE/fast_ptq.sh" $h b08-r6-qad $M08 $B/calib_mix.txt $S08 --qad-preset fast --qad-layers 0-1 --qad-samples 64 ;;
     moe)     NO_EVAL=1 CALIB_SAMPLES=178 "$HERE/fast_ptq.sh" $h nmoe-b3.0 $MOE $B/calib_mix.txt --target-bpw 3.0 --sensitivity probe --sens-dtype float16 ;;
   esac
   echo "$(date +%T) $job done rc=$?" >> $B/runsfast/chain_fast.log
