@@ -50,7 +50,31 @@ rows already exist in the format.
 | QAD + final KL, 200 steps, learning-rate variant 2 | 11.040 | 0.0527 | 6.020 | 0.1140 |
 | QAD (3.0 bpw), reference | 11.796 | 0.0993 | 7.292 | 0.2538 |
 
-Read this table as follows.
+## Results on Qwen3.5-4B
+
+Same setup at 3.5 bpw (error ratio 6.2; allocation 3.499 bpw, INT2 44.4 % and INT4 55.6 % of
+the rows), unquantized perplexity 7.067 on the docs text.
+
+| Run | docs ppl | docs KLD | mix ppl | mix KLD |
+| --- | ---: | ---: | ---: | ---: |
+| PTQ only | 7.600 | 0.0927 | 4.055 | 0.1168 |
+| PTQ with INT8 candidates | 7.604 | 0.0925 | 4.056 | 0.1173 |
+| QAD, weight-unit latents (older default) | 7.190 | 0.0416 | 3.999 | 0.1033 |
+| QAD, step-unit latents (current default) | 7.221 | 0.0450 | 3.985 | 0.0934 |
+| QAD, step-unit latents + final KL, 200 steps | 7.137 | 0.0425 | 3.933 | 0.0869 |
+| PTQ only, 3.0 bpw | 8.041 | 0.1607 | 4.438 | 0.2258 |
+| QAD, step-unit latents, 3.0 bpw | 7.308 | 0.0677 | 4.276 | 0.1770 |
+
+The final-KL phase lowers the KLD against the step-unit QAD baseline by 5.6 % (docs) and
+7.0 % (mix). Its own log shows the held-out KL falling from 0.1175 to 0.1033 (-12.1 %) in
+92.9 minutes. Against the older weight-unit QAD, the docs KLD does not improve (0.0425
+against 0.0416). INT8 candidates change nothing at this size, as on the 0.8B model.
+
+All numbers of this page are in
+[`experiments/results/lowbit_runs_2026-10-26.json`](../experiments/results/lowbit_runs_2026-10-26.json)
+(parsed from the `hi2 eval` logs of each run).
+
+Read the 0.8B table as follows.
 
 1. **INT8 does not help at this size.** The allocator already finds that INT4 is enough
    for almost every row. Forced INT8 costs bits that INT2 rows would have saved, so
@@ -85,5 +109,5 @@ The final-KL learning rates default to the values measured on Qwen3.5-4B.
 ## What is not done
 
 * The 4B final-KL runs at 100 steps and the 4B learning-rate run were stopped before they
-  finished. The 4B numbers in the summary come from the 200-step run only.
+  finished. The 4B numbers come from the 200-step run only.
 * Nobody scored the 0.8B final-KL variants on the multiple-choice tasks.

@@ -1,0 +1,436 @@
+{
+ "0.8B/b30-ptq": {
+  "docs": {
+   "kld_nats_per_token": 0.23432439516157888,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 13.787805557250977,
+   "top1_agreement": 0.7856008793356131
+  },
+  "mix": {
+   "kld_nats_per_token": 0.36426482319424197,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 8.273069381713867,
+   "top1_agreement": 0.738580850024426
+  }
+ },
+ "0.8B/b30-qad": {
+  "docs": {
+   "kld_nats_per_token": 0.09928507821176713,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.795503616333008,
+   "top1_agreement": 0.8540547142159257
+  },
+  "mix": {
+   "kld_nats_per_token": 0.25375861171168934,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 7.29220724105835,
+   "top1_agreement": 0.792256961406937
+  }
+ },
+ "0.8B/b35-ptq": {
+  "docs": {
+   "kld_nats_per_token": 0.12880877581933212,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 12.405803680419922,
+   "top1_agreement": 0.8341475329750855
+  },
+  "mix": {
+   "kld_nats_per_token": 0.1841498143392245,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.847665786743164,
+   "top1_agreement": 0.8146678065461651
+  }
+ },
+ "0.8B/b35-ptq-t": {
+  "docs": {
+   "kld_nats_per_token": 0.12869184891887567,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 12.403741836547852,
+   "top1_agreement": 0.8344528578407425
+  },
+  "mix": {
+   "kld_nats_per_token": 0.18397509393659403,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.845006942749023,
+   "top1_agreement": 0.8146067415730337
+  }
+ },
+ "0.8B/b35-qad": {
+  "docs": {
+   "kld_nats_per_token": 0.06073176761807962,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.388404846191406,
+   "top1_agreement": 0.8813507572056668
+  },
+  "mix": {
+   "kld_nats_per_token": 0.12494245341887518,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.308718204498291,
+   "top1_agreement": 0.8472154372252076
+  }
+ },
+ "0.8B/fkl100": {
+  "docs": {
+   "kld_nats_per_token": 0.05726388680626255,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.148401260375977,
+   "top1_agreement": 0.8849535906204201
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11649388945504521,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.173662185668945,
+   "top1_agreement": 0.8515510503175379
+  }
+ },
+ "0.8B/fkl200": {
+  "docs": {
+   "kld_nats_per_token": 0.05556121429234641,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.133420944213867,
+   "top1_agreement": 0.8867244748412311
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11423916949489726,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.140117645263672,
+   "top1_agreement": 0.8524059599413776
+  }
+ },
+ "0.8B/fklbytes": {
+  "docs": {
+   "kld_nats_per_token": 0.05562211853385146,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.134089469909668,
+   "top1_agreement": 0.8869076697606253
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11434868596854533,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.140604496002197,
+   "top1_agreement": 0.8526502198339033
+  }
+ },
+ "0.8B/fkllr": {
+  "docs": {
+   "kld_nats_per_token": 0.05223132367825939,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.090219497680664,
+   "top1_agreement": 0.8925867122618466
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11275106112317568,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.136806488037109,
+   "top1_agreement": 0.8540547142159257
+  }
+ },
+ "0.8B/fkllr100": {
+  "docs": {
+   "kld_nats_per_token": 0.05527553688798466,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.155854225158691,
+   "top1_agreement": 0.888190034196385
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11380597306975052,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.133783340454102,
+   "top1_agreement": 0.8539325842696629
+  }
+ },
+ "0.8B/fkllr2": {
+  "docs": {
+   "kld_nats_per_token": 0.05265752385171612,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.039588928222656,
+   "top1_agreement": 0.892342452369321
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11401275407411904,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.0198283195495605,
+   "top1_agreement": 0.8557034684904739
+  }
+ },
+ "0.8B/fklnorms": {
+  "docs": {
+   "kld_nats_per_token": 0.05910979868670353,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.27728271484375,
+   "top1_agreement": 0.8830605764533463
+  },
+  "mix": {
+   "kld_nats_per_token": 0.12129186174609805,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.241864204406738,
+   "top1_agreement": 0.8499022960429897
+  }
+ },
+ "0.8B/i8-ptq35": {
+  "docs": {
+   "kld_nats_per_token": 0.12899462537294956,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 12.411848068237305,
+   "top1_agreement": 0.8332315583781144
+  },
+  "mix": {
+   "kld_nats_per_token": 0.18454578159259596,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.849782943725586,
+   "top1_agreement": 0.8149120664386907
+  }
+ },
+ "0.8B/i8-qad35": {
+  "docs": {
+   "kld_nats_per_token": 0.060365661505553336,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.409080505371094,
+   "top1_agreement": 0.8845261358085003
+  },
+  "mix": {
+   "kld_nats_per_token": 0.12546052546051578,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.308620452880859,
+   "top1_agreement": 0.8484978016609672
+  }
+ },
+ "0.8B/i8f2-ptq": {
+  "docs": {
+   "kld_nats_per_token": 0.1326635022482525,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 12.483855247497559,
+   "top1_agreement": 0.8328041035661944
+  },
+  "mix": {
+   "kld_nats_per_token": 0.1884597178255574,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.872237682342529,
+   "top1_agreement": 0.8126526624328285
+  }
+ },
+ "0.8B/i8f4-ptq": {
+  "docs": {
+   "kld_nats_per_token": 0.14426034313326763,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 12.575658798217773,
+   "top1_agreement": 0.8265754763067904
+  },
+  "mix": {
+   "kld_nats_per_token": 0.20854087684232547,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 7.013650417327881,
+   "top1_agreement": 0.8021494870542257
+  }
+ },
+ "0.8B/i8f8-ptq": {
+  "docs": {
+   "kld_nats_per_token": 0.1620132900996504,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 12.774080276489258,
+   "top1_agreement": 0.8171104054714216
+  },
+  "mix": {
+   "kld_nats_per_token": 0.23794403038900774,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 7.185898303985596,
+   "top1_agreement": 0.7877992183683439
+  }
+ },
+ "0.8B/kl2-35": {
+  "docs": {
+   "kld_nats_per_token": 0.06174207351006236,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.375831604003906,
+   "top1_agreement": 0.8803126526624329
+  },
+  "mix": {
+   "kld_nats_per_token": 0.12504966094776893,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.307723522186279,
+   "top1_agreement": 0.8458109428431851
+  }
+ },
+ "0.8B/nrm35": {
+  "docs": {
+   "kld_nats_per_token": 0.05983815894338872,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.405834197998047,
+   "top1_agreement": 0.8830605764533463
+  },
+  "mix": {
+   "kld_nats_per_token": 0.12355469003443492,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.298413276672363,
+   "top1_agreement": 0.8499022960429897
+  }
+ },
+ "0.8B/s512-35": {
+  "docs": {
+   "kld_nats_per_token": 0.059786833840925986,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.475763320922852,
+   "top1_agreement": 0.8855031753786028
+  },
+  "mix": {
+   "kld_nats_per_token": 0.12527819616246003,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.322836875915527,
+   "top1_agreement": 0.8478871519296531
+  }
+ },
+ "0.8B/seed1-35": {
+  "docs": {
+   "kld_nats_per_token": 0.06154932041662055,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.406251907348633,
+   "top1_agreement": 0.8842818759159746
+  },
+  "mix": {
+   "kld_nats_per_token": 0.12781506488541014,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.3156046867370605,
+   "top1_agreement": 0.846238397655105
+  }
+ },
+ "0.8B/task35": {
+  "docs": {
+   "kld_nats_per_token": 0.07199121930858945,
+   "ppl_original": 10.873801231384277,
+   "ppl_quantized": 11.602684020996094,
+   "top1_agreement": 0.8745725451880801
+  },
+  "mix": {
+   "kld_nats_per_token": 0.12788514946516863,
+   "ppl_original": 5.482752799987793,
+   "ppl_quantized": 6.387308120727539,
+   "top1_agreement": 0.8473986321446019
+  }
+ },
+ "4B/q4b-b3.0-qad": {
+  "docs": {
+   "kld_nats_per_token": 0.060675836506271924,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 7.278484344482422,
+   "top1_agreement": 0.8958231558378115
+  },
+  "mix": {
+   "kld_nats_per_token": 0.19516354604179706,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 4.348208427429199,
+   "top1_agreement": 0.8425134342940889
+  }
+ },
+ "4B/q4b-b3.0-qad-su": {
+  "docs": {
+   "kld_nats_per_token": 0.06772819401638998,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 7.308233737945557,
+   "top1_agreement": 0.8935637518319492
+  },
+  "mix": {
+   "kld_nats_per_token": 0.17702067905830418,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 4.276370525360107,
+   "top1_agreement": 0.8443453834880312
+  }
+ },
+ "4B/q4b-b3.5-qad": {
+  "docs": {
+   "kld_nats_per_token": 0.041642735280464145,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 7.189908981323242,
+   "top1_agreement": 0.9137762579384465
+  },
+  "mix": {
+   "kld_nats_per_token": 0.10330631794670936,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 3.999178886413574,
+   "top1_agreement": 0.8804958475818271
+  }
+ },
+ "4B/q4b-b3.5-qad-su": {
+  "docs": {
+   "kld_nats_per_token": 0.04501480466864082,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 7.221423625946045,
+   "top1_agreement": 0.9116389838788471
+  },
+  "mix": {
+   "kld_nats_per_token": 0.0934310078213258,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 3.985499620437622,
+   "top1_agreement": 0.8860527601367856
+  }
+ },
+ "4B/q4b-lb-fkl200": {
+  "docs": {
+   "kld_nats_per_token": 0.04254398522984999,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 7.137423515319824,
+   "top1_agreement": 0.913104543234001
+  },
+  "mix": {
+   "kld_nats_per_token": 0.08693400300533292,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 3.932574987411499,
+   "top1_agreement": 0.8888617489008305
+  }
+ },
+ "4B/q4b-lb-i8-ptq": {
+  "docs": {
+   "kld_nats_per_token": 0.09251557179177512,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 7.6035027503967285,
+   "top1_agreement": 0.8691988275525159
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11726420951809717,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 4.055771350860596,
+   "top1_agreement": 0.8666340986809966
+  }
+ },
+ "4B/q4b-lb-ptq-r6.2": {
+  "docs": {
+   "kld_nats_per_token": 0.09269148300610698,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 7.599600791931152,
+   "top1_agreement": 0.8688324377137274
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11675029040897072,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 4.054601669311523,
+   "top1_agreement": 0.8671836834391793
+  }
+ },
+ "4B/q4b-ptq-b3.0": {
+  "docs": {
+   "kld_nats_per_token": 0.16071991391687435,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 8.041311264038086,
+   "top1_agreement": 0.829323400097704
+  },
+  "mix": {
+   "kld_nats_per_token": 0.22582267049352425,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 4.4380574226379395,
+   "top1_agreement": 0.81790425012213
+  }
+ },
+ "4B/q4b-ptq-b3.5": {
+  "docs": {
+   "kld_nats_per_token": 0.09269148300610698,
+   "ppl_original": 7.0670695304870605,
+   "ppl_quantized": 7.599600791931152,
+   "top1_agreement": 0.8688324377137274
+  },
+  "mix": {
+   "kld_nats_per_token": 0.11675029040897072,
+   "ppl_original": 3.7314882278442383,
+   "ppl_quantized": 4.054601669311523,
+   "top1_agreement": 0.8671836834391793
+  }
+ }
+}

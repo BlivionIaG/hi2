@@ -6,7 +6,8 @@ gfx1030). Paths such as `/home/chenco_adm/w4a8_runs/...` and the GPU rules (HIP 
 2-5, lock files) belong to that box. Change `box_env.sh` and the `B=` lines to run them
 elsewhere.
 
-Raw output of the studies is in [`results/`](results/).
+Raw output of the studies is in [`results/`](results/). `results/lowbit_runs_2026-10-26.json`
+holds the perplexity, KLD and top-1 numbers of every low-bit study run.
 
 ## Run drivers
 
