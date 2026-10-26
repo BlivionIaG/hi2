@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Calibration statistics: per linear, a 16x16 second-moment block per column
 group, ``S_g = E[x_g x_g^T]``. That is enough to get the exact diagonal of the
 activation second moment in the *rotated* basis (``diag(H S_g H)``) without

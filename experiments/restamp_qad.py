@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Reuse the per-layer QAD artifacts of an older run whose fingerprint fields have since changed.
 
 <dst qad dir> holds the first layers recomputed by the current code (current fingerprint) and

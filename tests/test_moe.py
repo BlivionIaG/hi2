@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """MoE support (CPU): routed-token statistics, the token floor, shared gate/up (and
 q/k/v) transforms, checkpoint name layout and the export round trip."""
 
@@ -126,6 +125,7 @@ def _calibrate(tmp_path, **cfg_kw):
 
 def _exclude():
     import regex as re
+
     from hi2.checkpoint import DEFAULT_EXCLUDE
 
     return re.compile(DEFAULT_EXCLUDE)
@@ -307,10 +307,11 @@ def olmoe(tmp_path_factory):
 
 
 def test_olmoe_end_to_end_layout_sharing_and_export(olmoe, tmp_path):
-    from hi2.checkpoint import export_dense, load_dequantized, weight_map
-    from hi2.pipeline import RunConfig, run
     from safetensors import safe_open
     from transformers import AutoModelForCausalLM
+
+    from hi2.checkpoint import export_dense, load_dequantized, weight_map
+    from hi2.pipeline import RunConfig, run
 
     d, state, ids, ref = olmoe
     dst = tmp_path / "q"
@@ -384,6 +385,8 @@ def test_olmoe_stacked_layout_is_bit_identical(olmoe, tmp_path):
     per-expert layout: same arrays, same dequantized state dict, same fp16 export."""
     import hashlib
 
+    from safetensors import safe_open
+
     from hi2.checkpoint import (
         export_dense,
         load_dequantized,
@@ -392,7 +395,6 @@ def test_olmoe_stacked_layout_is_bit_identical(olmoe, tmp_path):
     )
     from hi2.pipeline import RunConfig, run
     from hi2.stack import Hi2Checkpoint, restack
-    from safetensors import safe_open
 
     d, state, ids, _ = olmoe
 

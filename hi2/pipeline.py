@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """The three phases: tabulate (calibration), allocate (global), encode (write)."""
 
 import json
@@ -510,7 +509,7 @@ def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag=""):
     )
     torch.save({"fingerprint": ffp, "tensors": t, "dense": d, "info": info}, art)
     (rc.workdir / f"final_kl{tag}.json").write_text(
-        json.dumps({k: v for k, v in info.items()}, indent=1)
+        json.dumps(dict(info.items()), indent=1)
     )
     return t, d
 

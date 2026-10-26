@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Profile the phase-3 encode of real tensors: where the old per-tensor GPTQ encode
 spends its time, and old against new (batched, fused kernel) with a bit-exactness check.
 
@@ -18,6 +17,7 @@ from pathlib import Path
 
 import regex as re
 import torch
+
 from hi2.allocate import allocate_global
 from hi2.cache import StatsView
 from hi2.calibrate import (

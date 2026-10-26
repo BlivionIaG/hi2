@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Perplexity of a model served by vLLM, via prompt_logprobs, on the same token slice
 as ``hi2 eval``. Lets models that only vLLM can run (EXL3 on this fork) be compared
 with the dense and HI2-exported models through one engine.

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Second-level scale scope: per row vs per tensor, linear vs log 8-bit block step.
 
 Same held-out protocol as scale_study.py (calibrate on the first half of the

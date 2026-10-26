@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Encoder, statistics, per-tensor calibration, global allocation (CPU)."""
 
 import torch
+
 from hi2.allocate import allocate_global
 from hi2.calibrate import ALL_CANDIDATES, Config, build_table, encode_with_picks
 from hi2.encode import encode_rows, fit_ladder

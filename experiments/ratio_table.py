@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Map --max-error-ratio to the resulting bpw and INT2/INT4/INT8 row shares, from a finished phase 1.
 usage: ratio_table.py <workdir> [ratio ...]   (uses <workdir>/tables, or the cache entry named in
        <workdir>/cache_ref.json, and sensitivity.json if present)
@@ -11,6 +10,7 @@ import sys
 from pathlib import Path
 
 import torch
+
 from hi2.allocate import allocate_by_quality
 
 torch.set_num_threads(4)  # tiny ops: more threads only contend

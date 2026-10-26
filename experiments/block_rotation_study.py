@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Does a wider input-side rotation let HI2 use larger blocks (fewer block parameters)?
 
 MLP projections of a real model, activation-weighted encoder with nearest rounding, smoothing 0.5
@@ -76,7 +75,7 @@ def main(model_dir, text_file, out_dir):
             (256, 256),
         ):
             errs = []
-            for key, (w, x1, x2) in rows.items():
+            for _key, (w, x1, x2) in rows.items():
                 k = w.shape[1]
                 if k % b or k % g:
                     continue

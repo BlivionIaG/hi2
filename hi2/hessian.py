@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Hessian-aware (error-compensated) rounding, spec 8.3.
 
 The layer output error of a row is ``(w_hat - w)^T Hs (w_hat - w)`` with

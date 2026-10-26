@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Fused GPTQ column loop for one lazy-update block (HIP, gfx10/gfx11).
 
 The reference (:func:`hi2.hessian.gptq_block_reference`) rounds one column at a time

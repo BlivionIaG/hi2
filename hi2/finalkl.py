@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Final logit-KL phase after layer-wise QAD (spec 13 step 2, a small-parameter version).
 
 The layer-wise phase fits each decoder layer's output (MSE). This phase distills the

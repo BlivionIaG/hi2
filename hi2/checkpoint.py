@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Checkpoint I/O: shard enumeration, eligibility, the streaming writer (phase 3)
 and verification. Tensor names follow spec 2.4 (``<name>.hi2_<field>``).
 """
@@ -33,7 +32,7 @@ def weight_map(d: Path) -> dict[str, str]:
     if idx.exists():
         return json.loads(idx.read_text())["weight_map"]
     with safe_open(d / "model.safetensors", "pt") as f:
-        return {k: "model.safetensors" for k in f.keys()}  # noqa: SIM118
+        return dict.fromkeys(f.keys(), "model.safetensors")  # noqa: SIM118
 
 
 _LAYER_KEY = re.compile(r"^(?:.*\.)?layers\.(\d+)\.(.*)$")

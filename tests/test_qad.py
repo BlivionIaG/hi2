@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Layer-wise QAD (spec 13): exact fake-quant forward, STE gradients, training, export (CPU)."""
 
 import json
 
 import pytest
 import torch
+from torch import nn
+
 from hi2.calibrate import Config, build_table, encode_with_picks
 from hi2.executor import Executor
 from hi2.format import dequantize, dequantize_stored
 from hi2.hessian import HessianStats
 from hi2.qad import FakeQuantLinear, make_config, parse_layers, train_layer
 from hi2.stats import ColumnStats
-from torch import nn
 
 CANDS = [(2, 32), (2, 16), (4, 32), (4, 64), (8, 32)]
 
@@ -292,9 +292,10 @@ def _rc(tiny, tmp_path, tag, **kw):
 
 
 def test_qad_pipeline_writes_a_normal_checkpoint_and_resumes(tiny, tmp_path):
+    from safetensors import safe_open
+
     from hi2.checkpoint import from_tensors, read_tensors, verify_checkpoint, weight_map
     from hi2.pipeline import run
-    from safetensors import safe_open
 
     rc = _rc(tiny, tmp_path, "q")
     logs: list[str] = []

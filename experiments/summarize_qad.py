@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Fidelity table (ppl ratio, KLD, top-1 on both held-out texts, bpw, INT2 share, runtime) of runs.
 usage: summarize_qad.py <runs dir> <tag> [tag ...]   (reads TAG.eval.log, TAG.evalmix.log,
 TAG/hi2_report.json, TAG.quant.log and TAG.t0/t1)"""

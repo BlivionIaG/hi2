@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Persistent cache of the reusable phase products (``--cache-dir``, default
 ``$HI2_CACHE_DIR`` or ``~/.cache/hi2``).
 

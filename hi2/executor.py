@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Compute placement: one or several devices (``cpu`` or ``cuda:N``; HIP on ROCm).
 
 Quantisation of a tensor is sharded by output rows across the devices (rows are

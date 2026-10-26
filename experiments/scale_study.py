@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ruff: noqa: E501
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Scale-system / encoder / int8-activation study on real weights and activations.
 
 Everything is output-space: relative L2 error of ``X @ W_hat.T`` against
@@ -16,6 +15,7 @@ import sys
 from pathlib import Path
 
 import torch
+
 from hi2.format import fwht_groups
 
 torch.set_grad_enabled(False)
@@ -272,7 +272,7 @@ def main(model_dir, text_file, out_dir):
 
     for ci, (rot, bits, B, system, hier, encoder) in enumerate(keep):
         errs, werrs, rotfrac = [], [], []
-        for key, (w, x1, x2) in rows.items():
+        for _key, (w, x1, x2) in rows.items():
             k = w.shape[1]
             flags = flags_for(rot, w, x1, bits)
             rotfrac.append(flags.float().mean().item())
@@ -305,7 +305,7 @@ def main(model_dir, text_file, out_dir):
     for rot in (0, 1):
         for group in (0, 64, 32, 16):
             e_act, e_out = [], []
-            for key, (w, _x1, x) in rows.items():
+            for _key, (w, _x1, x) in rows.items():
                 k = w.shape[1]
                 flags = torch.full((k // 16,), rot)
                 wt = fwht_groups(w, flags) if rot else w

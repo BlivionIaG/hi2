@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Summarise GGUF baseline logs: llama.cpp perplexity, whole-file bpw and
 linear-layers-only bpw (the attention and MLP weights, comparable to hi2's bpw).
 

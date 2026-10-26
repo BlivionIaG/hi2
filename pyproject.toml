@@ -19,3 +19,16 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["hi2*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PIE", "RET"]
+# E501: the formatter wraps code; long strings and comments stay readable.
+# B905, C408: style only, no behaviour change worth the churn.
+ignore = ["E501", "B905", "C408"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

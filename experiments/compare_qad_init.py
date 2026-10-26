@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Compare two QAD runs layer by layer (``<workdir>/qad/layerNNN.pt``): for layers kept
 at their PTQ encoding (not trained) the tensors must be identical, for trained layers the
 report says whether they are. Also compares the final checkpoints' shards.
@@ -12,6 +11,7 @@ import sys
 from pathlib import Path
 
 import torch
+
 from hi2.format import FIELDS
 
 

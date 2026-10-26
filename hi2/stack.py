@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Stacked layout of routed-expert HI2 tensors (``--moe-layout stacked``).
 
 The per-expert layout writes every expert projection as its own HI2 tensor
@@ -154,14 +153,6 @@ def split_stack(d: dict[str, torch.Tensor], nparts: int) -> list[list[HI2Tensor]
 # ------------------------------------------------------------- name helpers
 
 
-def split_base(base: str) -> tuple[str, str] | None:
-    """``(pre, group)`` of a stack base ``<pre>.<group>`` (``pre`` ends in ``experts``)."""
-    pre, _, group = base.rpartition(".")
-    if group in GROUPS and pre.endswith("experts"):
-        return pre, group
-    return None
-
-
 def member_base(pre: str, e: int, part: str) -> str:
     return f"{pre}.{e}.{part}"
 
@@ -288,7 +279,7 @@ class Hi2Checkpoint:
         expert count of a stack is read from its ``part_off`` shape."""
         from safetensors import safe_open
 
-        out: dict[str, tuple[str, int, int] | None] = {b: None for b in self.single}
+        out: dict[str, tuple[str, int, int] | None] = dict.fromkeys(self.single)
         for s in self.stacked:
             parts = self.parts(s)
             with safe_open(self.dir / self.shard(s), "pt") as f:

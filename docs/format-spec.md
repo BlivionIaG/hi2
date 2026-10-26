@@ -769,9 +769,10 @@ Every technique is judged on the same measurements as section 4.5:
   uniform INT4/B64 at 4.3 bpw. Measured per-precision sensitivity (8.6) is the next step.
 * **Three models only.** Qwen2.5-0.5B, Qwen3.5-0.8B and Qwen3.5-4B, one text. Everything
   was tuned on the small ones.
-* The smoothing vector costs `16/R` bpw per tensor, which matters for small tensors;
-  sharing it between q/k/v and gate/up (or folding it into the norm) is not
-  implemented.
+* The smoothing vector costs `16/R` bpw per tensor, which matters for small tensors.
+  It is shared between q/k/v and between gate/up (`calibrate.shared_transform`: one
+  vector and one set of rotation flags per shared input). Folding it into the preceding
+  norm is not implemented.
 * Calibration and evaluation text is repository documentation, not a standard
   corpus.
 

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """cProfile of the sensitivity probe on the first units of a finished cached run, and
 of the cache write of one layer's Sigma.
 
@@ -15,6 +14,7 @@ import time
 from pathlib import Path
 
 import torch
+
 from hi2.cache import sigma_payload
 from hi2.calibrate import Config
 from hi2.executor import Executor

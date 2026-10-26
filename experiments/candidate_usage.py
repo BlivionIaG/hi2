@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Which (nbits, block) candidates the allocator actually picks, over finished HI2
 checkpoints (rows and weights per candidate, from ``hi2_row_nbits`` / ``hi2_row_block``).
 

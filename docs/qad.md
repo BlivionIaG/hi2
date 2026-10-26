@@ -339,11 +339,13 @@ on 4B exactly (6.2 was run) and PTQ at ratio 4 on 4B with this calibration.
 
 ## What is not done
 
-* A final global phase with a KL loss on the logits (spec 13 step 2's network-level
-  objective): the layer-wise MSE objective already moves the KL by 40-70 %, and a
-  full-network pass needs the student, teacher and optimizer state together.
-* Training the dense norm weights alongside the quantized Linears (they are written
-  unchanged from the source checkpoint).
+* A full-network final phase. `--qad-final-kl STEPS` trains a small set of parameters
+  (the quantized Linears' ladder bytes and the norms) against the logits; it is opt-in
+  because the fidelity gain did not reach the task scores ([lowbit.md](lowbit.md)). A
+  pass that trains everything needs the student, teacher and optimizer state together.
+* Training the dense norm weights in the layer-wise phase is available as an option
+  (`train_norms` in the QAD config) and is off: it was within seed noise
+  ([lowbit.md](lowbit.md)).
 * Data-parallel training across several GPUs (the teacher/student propagation passes
   do split across devices; the training step runs on the first device).
 * Decision fidelity (spec 12.3) and a kernel-side check of a QAD checkpoint in the

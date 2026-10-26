@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """v3.2 format: decode, packing, layout, reference semantics, accounting."""
 
 import pytest
 import torch
+
 from hi2.encode import encode_rows, quantize_params
 from hi2.format import (
     assemble,

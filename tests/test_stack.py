@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Stacked MoE layout (CPU): stack/split is byte-exact, the stack's offsets and shapes
 hold the documented invariants, checkpoints convert both ways without re-encoding and
 dequantize bit-identically."""
@@ -136,8 +135,9 @@ def test_unstackable_groups_are_rejected():
 def _write_per_expert(d, layers=2, experts=4, unstackable_layer=None):
     """A hand-made per-expert HI2 checkpoint over two shards; layer 1's experts are
     split across both shards."""
-    from hi2.checkpoint import to_tensors
     from safetensors.torch import save_file
+
+    from hi2.checkpoint import to_tensors
 
     d.mkdir(parents=True)
     shards = [{}, {}]
@@ -182,8 +182,9 @@ def _write_per_expert(d, layers=2, experts=4, unstackable_layer=None):
 
 
 def _all_tensors(d):
-    from hi2.checkpoint import weight_map
     from safetensors import safe_open
+
+    from hi2.checkpoint import weight_map
 
     out = {}
     wmap = weight_map(d)

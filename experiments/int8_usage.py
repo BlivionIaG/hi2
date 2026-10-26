@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Which tensors the quality allocation gives INT8 rows, at given ratios (from a finished phase 1
 with --bits 2,4,8), plus each tensor's sensitivity and the projection/layer totals.
 usage: int8_usage.py <workdir> <ratio> [ratio ...]"""
@@ -10,6 +9,7 @@ import sys
 from pathlib import Path
 
 import torch
+
 from hi2.allocate import allocate_by_quality
 
 torch.set_num_threads(4)

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Bit-identity of two HI2 checkpoints that differ only in MoE layout.
 
 For every logical HI2 tensor (per-expert name) the nine stored arrays must be
@@ -17,10 +16,11 @@ import time
 from pathlib import Path
 
 import torch
+from safetensors import safe_open
+
 from hi2.checkpoint import weight_map
 from hi2.format import FIELDS, dequantize
 from hi2.stack import Hi2Checkpoint, checkpoint_stats
-from safetensors import safe_open
 
 
 def dense_tensors(d: Path) -> dict[str, tuple[str, str]]:

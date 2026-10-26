@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """The batched / fused GPTQ encoder is bit-identical to the reference column loop."""
 
 import pytest
 import torch
+
 from hi2.hessian import (
     GptqJob,
     encode_jobs_gptq,

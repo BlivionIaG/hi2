@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Block encoder for the v3.2 ladder (spec 2.2, 8): activation-weighted least
 squares fit of ``lo``/``step``, 8-bit parameter quantisation, code assignment.
 

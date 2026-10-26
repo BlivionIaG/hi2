@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Re-tabulate a cached run from its cached statistics (``tables_from_stats``, no model
 forward) and compare every table with the cached one built during the calibration
 pass: sse, energy, flags, smoothing vector, bit for bit. Prints the time.
@@ -14,6 +13,7 @@ import time
 from pathlib import Path
 
 import torch
+
 from hi2.calibrate import Config
 from hi2.executor import Executor
 from hi2.layerwise import tables_from_stats

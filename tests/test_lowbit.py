@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Low-bit options (docs/lowbit.md): INT8 rows end to end, the final logit-KL
 phase, norm training and the KL term of the layer-wise phase (CPU, tiny Qwen2)."""
 
@@ -9,6 +8,7 @@ from dataclasses import asdict
 
 import pytest
 import torch
+
 from hi2.allocate import ROW_OVERHEAD_BITS, row_overhead_bits
 from hi2.calibrate import ALL_CANDIDATES, INT8_CANDIDATES, Config, build_table
 from hi2.executor import Executor
@@ -102,8 +102,9 @@ def _rc(tiny, tmp_path, tag, qad=None, **kw):
 
 
 def _hi2(dst):
-    from hi2.checkpoint import from_tensors, read_tensors, weight_map
     from safetensors import safe_open
+
+    from hi2.checkpoint import from_tensors, read_tensors, weight_map
 
     wmap = weight_map(dst)
     out = {}
@@ -116,8 +117,9 @@ def _hi2(dst):
 
 
 def _dense(dst, name):
-    from hi2.checkpoint import weight_map
     from safetensors import safe_open
+
+    from hi2.checkpoint import weight_map
 
     with safe_open(dst / weight_map(dst)[name], "pt") as f:
         return f.get_tensor(name)

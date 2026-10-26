@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """End-to-end quality of an HI2 checkpoint: perplexity of the original and the
 quantised model, KL(original || quantised) and top-1 agreement, on held-out text.
 
@@ -65,7 +64,7 @@ def evaluate(
         agree += (lp_r.argmax(-1) == lp_q.argmax(-1))[:-1].sum().item()
         n += tgt.numel()
         log(f"seq {i + 1}/{ids.shape[0]}")
-    out = {
+    return {
         "tokens": n,
         "ppl_original": float(torch.exp(torch.tensor(nll_ref / n))),
         "ppl_quantized": float(torch.exp(torch.tensor(nll_q / n))),
@@ -73,7 +72,6 @@ def evaluate(
         "top1_agreement": agree / n,
         "dtype": dtype,
     }
-    return out
 
 
 def load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens):

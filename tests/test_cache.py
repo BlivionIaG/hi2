@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Statistics/tables/probe cache, batched multi-tensor encode, multi-output mode (CPU).
 
 Everything here must be bit-identical to the uncached, per-tensor path."""
@@ -215,10 +214,11 @@ def test_encode_many_equals_per_tensor_reference(
     cfg = Config(effort="fast", act_order=act_order, rounding=rounding)
     rc = _rc(tiny, tmp_path, "t", cache=False, cfg=cfg)
     run(rc, **QUIET)
+    from safetensors import safe_open
+
     from hi2.cache import StatsView
     from hi2.checkpoint import weight_map
     from hi2.stats import ColumnStats
-    from safetensors import safe_open
 
     tables = {
         n: torch.load(p, weights_only=False)
@@ -283,6 +283,7 @@ def test_space_estimate_bounds_the_entry(tiny, tmp_path):
     rc = _rc(tiny, tmp_path, "a")
     run(rc, **QUIET)
     import regex as re
+
     from hi2.checkpoint import DEFAULT_EXCLUDE
 
     est = C.estimate_stats_bytes(rc.src, None, re.compile(DEFAULT_EXCLUDE))

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """QAD calibration text: the mixed-domain calibration file followed by the calibration region of
 the repo-docs corpus (the tokens before the held-out offset), so QAD gets ~4x the PTQ tokens
 without touching either held-out text.

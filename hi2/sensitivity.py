@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Sensitivity-aware allocation weights (spec 8.6).
 
 The allocator minimises ``sum_t s_t * rel_err_t`` where ``rel_err_t`` is the proxy error

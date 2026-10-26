@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
-"""``python -m hi2 quantize|verify|eval|export-dense|restack`` (run from . or with it on
-PYTHONPATH). ``quantize`` runs layer-wise quantization-aware distillation after PTQ by
-default when calibration text is given (``--no-qad`` for PTQ only)."""
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
+"""``hi2 quantize|verify|eval|export-dense|restack|cache`` (or ``python -m hi2``).
+
+``quantize`` runs layer-wise quantization-aware distillation after PTQ by default when
+calibration text is given (``--no-qad`` for PTQ only).
+"""
 
 import argparse
 import json

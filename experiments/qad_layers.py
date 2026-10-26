@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Print the per-layer QAD results (held-out nMSE before/after, time, GPU peak) of a workdir.
 usage: qad_layers.py <workdir>"""
 

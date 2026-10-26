@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Global allocation: pick every row's ``(nbits, block)`` across the whole model.
 
 Minimise ``sum_t s_t * sse_t / energy_t`` (relative weighted output error per
@@ -234,7 +233,7 @@ def allocate_global(
         return picks, bits_total
 
     lam_hi = 1.0
-    for t, cost, bits in data:
+    for _t, cost, bits in data:
         span_b = (bits.max() - bits.min()).clamp_min(1e-9)
         lam_hi = max(
             lam_hi,

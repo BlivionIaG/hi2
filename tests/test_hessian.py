@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Hessian-aware rounding (spec 8.3): transform, factor, compensated encode."""
 
 import pytest
 import torch
+
 from hi2.encode import encode_rows
 from hi2.format import decode_params, fwht_groups, ladder_dequantize
 from hi2.hessian import (

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Multiple-choice accuracy through a vLLM server (prompt log-probabilities).
 
 Datasets are the llama.cpp validation sets converted to JSON (ARC-Easy, ARC-Challenge,

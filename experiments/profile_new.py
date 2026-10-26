@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """torch.profiler table of the new encode of a few real tensors (where the remaining
 time goes). usage: python experiments/profile_new.py MODEL WORKDIR --match REGEX"""
 
@@ -11,13 +10,14 @@ from pathlib import Path
 
 import regex as re
 import torch
+from safetensors import safe_open
+from torch.profiler import ProfilerActivity, profile
+
 from hi2.allocate import allocate_global
 from hi2.cache import StatsView
 from hi2.calibrate import Config, EncodeRequest, encode_many
 from hi2.checkpoint import weight_map
 from hi2.executor import Executor
-from safetensors import safe_open
-from torch.profiler import ProfilerActivity, profile
 
 
 def main():

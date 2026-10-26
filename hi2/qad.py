@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# ruff: noqa: E501
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Layer-wise quantization-aware distillation (QAD), spec section 13.
 
 After the PTQ pipeline has allocated every row's ``(nbits, B)`` (and computed the
