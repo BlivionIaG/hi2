@@ -53,8 +53,17 @@ def main(argv=None):
     q.add_argument(
         "--target-bpw",
         type=float,
-        default=3.0,
-        help="model-wide bits per weight (global allocation)",
+        default=None,
+        help="model-wide bits per weight (global allocation); default is the "
+        "quality mode below",
+    )
+    q.add_argument(
+        "--max-error-ratio",
+        type=float,
+        default=None,
+        help="quality target: the fewest bits whose weighted error is at most this "
+        "multiple of the best achievable (rows that matter less get INT2, the rest "
+        "INT4); the bpw is a result",
     )
     q.add_argument(
         "--rotation",
@@ -94,6 +103,11 @@ def main(argv=None):
         "--sequential",
         action="store_true",
         help="gptq on the quantized prefix (spec 8.4): a second layerwise model pass",
+    )
+    q.add_argument(
+        "--act-order",
+        action="store_true",
+        help="round columns in descending Hessian-diagonal order (storage unchanged)",
     )
     q.add_argument("--effort", choices=list(EFFORT), default="normal")
     q.add_argument(
@@ -157,6 +171,7 @@ def main(argv=None):
             calib_samples=a.calib_samples,
             seq_len=a.seq_len,
             target_bpw=a.target_bpw,
+            max_error_ratio=a.max_error_ratio,
             include=a.include,
             exclude=a.exclude,
             limit_layers=a.limit_layers,
@@ -171,6 +186,7 @@ def main(argv=None):
                 smooth=a.smooth,
                 rounding=a.rounding,
                 sequential=a.sequential,
+                act_order=a.act_order,
                 damp=a.damp,
                 effort=a.effort,
             ),

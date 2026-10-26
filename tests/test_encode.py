@@ -132,3 +132,27 @@ def test_int8_rows_roundtrip_and_accounting():
     rel = ((dequantize(t).float() - w) ** 2).sum(1) / (w**2).sum(1)
     assert rel[8:].max() < 1e-3 < rel[:8].min()
     assert tensor_bpw(t) > 5.0
+
+
+def test_quality_allocation_puts_int2_where_it_matters_less_and_is_monotone():
+    from hi2.allocate import allocate_by_quality
+
+    ex = Executor("cpu")
+    cfg = Config(effort="fast", rotation="off")
+    easy = build_table("easy", torch.randn(64, 128) * 0.01, None, cfg, ex)
+    hard = build_table("hard", _w(64, 128, seed=3), None, cfg, ex)
+    sens = {"easy": 0.01, "hard": 1.0}
+    tight = allocate_by_quality([easy, hard], 1.5, sens)
+    loose = allocate_by_quality([easy, hard], 20.0, sens)
+    assert tight.feasible and loose.feasible
+    assert tight.error_ratio <= 1.5 + 1e-6 and loose.error_ratio <= 20.0 + 1e-6
+    assert loose.bpw <= tight.bpw  # a looser quality target never costs more bits
+    assert loose.frac_by_bits[2] >= tight.frac_by_bits[2]
+    # the low-sensitivity tensor is the one that drops to INT2 first
+    int2 = [i for i, (nb, _) in enumerate(easy.candidates) if nb == 2]
+    share = {
+        n: float(torch.isin(loose.picks[n], torch.tensor(int2)).float().mean())
+        for n in ("easy", "hard")
+    }
+    assert share["easy"] >= share["hard"]
+    assert not allocate_by_quality([easy, hard], 0.5, sens).feasible

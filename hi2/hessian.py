@@ -90,8 +90,13 @@ def encode_rows_gptq(
     nbits: int,
     block: int,
     effort: str = "normal",
+    perm: torch.Tensor | None = None,
 ) -> Encoded:
     """Quantise ``w[N, K]`` (stored basis) with error compensation.
+
+    With ``perm`` the columns are rounded in that order (``u`` must then be the factor
+    of the Hessian permuted the same way, e.g. descending diagonal "act-order"); the
+    blocks and the stored codes keep their original column positions.
 
     ``d`` are the ladder-fit weights (``diag(Hs)``), ``u`` the factor from
     :func:`inverse_factor`. The ladders are fitted on the uncompensated weights and
@@ -112,6 +117,10 @@ def encode_rows_gptq(
         )
         lo_d, step_d = lo_d.float(), step_d.float()
         codes = torch.zeros_like(wc)
+        if perm is not None:
+            wc = wc[:, perm]
+            blk_of = (perm // block).tolist()
+            codes_p = torch.zeros_like(wc)
         for i1 in range(0, k, BLOCK_COLUMNS):
             i2 = min(i1 + BLOCK_COLUMNS, k)
             w1 = wc[:, i1:i2].clone()
@@ -119,17 +128,20 @@ def encode_rows_gptq(
             u1 = u[i1:i2, i1:i2]
             for i in range(i2 - i1):
                 j = i1 + i
-                b = j // block
+                b = blk_of[j] if perm is not None else j // block
                 lo_j, st_j = lo_d[:, b], step_d[:, b]
                 col = w1[:, i]
                 q = torch.round((col - lo_j) / _safe(st_j)).clamp(0, n - 1)
                 q = torch.where(st_j == 0, torch.zeros_like(q), q)
                 wq = (lo_j + q * st_j).to(torch.float16).float()
-                codes[:, j] = q
+                (codes_p if perm is not None else codes)[:, j] = q
                 e = (col - wq) / u1[i, i]
                 w1[:, i:] -= e[:, None] * u1[i, i:][None, :]
                 err1[:, i] = e
             wc[:, i2:] -= err1 @ u[i1:i2, i2:]
+        if perm is not None:
+            codes = torch.zeros_like(codes)
+            codes[:, perm] = codes_p
         rec = ladder_dequantize(
             codes.reshape(-1, k // block, block), lo_d, step_d, torch.float32
         ).float()

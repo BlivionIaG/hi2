@@ -10,7 +10,7 @@ from pathlib import Path
 import regex as re
 import torch
 
-from .allocate import allocate_global
+from .allocate import allocate_by_quality, allocate_global
 from .calibrate import Config, TensorTable, build_table
 from .checkpoint import (
     DEFAULT_EXCLUDE,
@@ -20,6 +20,8 @@ from .checkpoint import (
     write_checkpoint,
 )
 from .executor import Executor
+
+DEFAULT_ERROR_RATIO = 4.0  # placeholder until measured (see docs)
 
 
 @dataclass
@@ -32,7 +34,8 @@ class RunConfig:
     calib_ids: torch.Tensor | None = None  # [samples, seq_len], skips tokenising
     calib_samples: int = 128
     seq_len: int = 2048
-    target_bpw: float = 3.0
+    target_bpw: float | None = None  # model-wide bits per weight, or
+    max_error_ratio: float | None = None  # quality target (INT2 where it matters less)
     include: str | None = None
     exclude: str = DEFAULT_EXCLUDE
     limit_layers: int | None = None
@@ -233,13 +236,37 @@ def run(rc: RunConfig, log=print) -> dict:
             log=log,
         )
         (rc.workdir / "sensitivity.json").write_text(json.dumps(sens, indent=1))
-    log(
-        f"phase 2: global allocation over {len(tables)} tensors, target {rc.target_bpw} bpw"
+    if rc.target_bpw is not None and rc.max_error_ratio is not None:
+        raise ValueError("give either target_bpw or max_error_ratio, not both")
+    if rc.target_bpw is None:
+        ratio = (
+            DEFAULT_ERROR_RATIO if rc.max_error_ratio is None else rc.max_error_ratio
+        )
+        log(
+            f"phase 2: quality allocation over {len(tables)} tensors, "
+            f"weighted error <= {ratio:g} x the best achievable"
+        )
+        alloc = allocate_by_quality(list(tables.values()), ratio, sens)
+        if not alloc.feasible:
+            log("  warning: ratio below 1 is unreachable; using the most accurate")
+    else:
+        log(
+            f"phase 2: global allocation over {len(tables)} tensors, "
+            f"target {rc.target_bpw} bpw"
+        )
+        alloc = allocate_global(list(tables.values()), rc.target_bpw, sens)
+        if not alloc.feasible:
+            log(
+                "  warning: target is below the cheapest configuration; using the cheapest"
+            )
+    mix = ", ".join(
+        f"INT{nb} {100 * f:.1f}%"
+        for nb, f in sorted((alloc.frac_by_bits or {}).items())
     )
-    alloc = allocate_global(list(tables.values()), rc.target_bpw, sens)
-    log(f"  allocation bpw {alloc.bpw:.4f} feasible={alloc.feasible}")
-    if not alloc.feasible:
-        log("  warning: target is below the cheapest configuration; using the cheapest")
+    log(
+        f"  allocation bpw {alloc.bpw:.4f} error ratio {alloc.error_ratio:.3f} "
+        f"rows: {mix}"
+    )
     pre = None
     if rc.cfg.rounding == "gptq" and rc.cfg.sequential:
         log("phase 3a: sequential encode pass (spec 8.4)")
@@ -248,6 +275,8 @@ def run(rc: RunConfig, log=print) -> dict:
     meta = {
         "mode": "flex",
         "target_bpw": rc.target_bpw,
+        "max_error_ratio": rc.max_error_ratio,
+        "allocation_error_ratio": alloc.error_ratio,
         "calibrated": calibrated,
         "rounding": rc.cfg.rounding,
         "sequential": rc.cfg.sequential,

@@ -129,3 +129,25 @@ def test_row_chunking_is_consistent(monkeypatch):
     monkeypatch.setattr(hm, "ROW_ELEMS", 64 * 7)  # 7 rows per chunk
     chunked = encode_rows_gptq(w, d, u, 2, 32, "fast")
     assert torch.equal(whole.codes, chunked.codes)
+
+
+@pytest.mark.parametrize("nbits,block", [(2, 32), (4, 64)])
+def test_act_order_keeps_storage_and_stays_valid(nbits, block):
+    torch.manual_seed(2)
+    k, rows = 128, 32
+    x = _correlated(6000, k) * torch.exp(0.5 * torch.randn(1, k))
+    hs = x.T @ x / x.shape[0]
+    w = torch.randn(rows, k)
+    d = hs.diagonal().clone()
+    perm = torch.argsort(d, descending=True)
+    u_p = inverse_factor(hs[perm][:, perm], 0.01)
+    base = encode_rows_gptq(w, d, inverse_factor(hs, 0.01), nbits, block, "fast")
+    ao = encode_rows_gptq(w, d, u_p, nbits, block, "fast", perm)
+    assert torch.equal(base.params, ao.params) and torch.equal(base.consts, ao.consts)
+    assert ao.codes.shape == base.codes.shape and int(ao.codes.max()) < 2**nbits
+
+    def herr(enc):
+        e = _recon(enc, (nbits, block)) - w
+        return ((e @ hs) * e).sum().item()
+
+    assert herr(ao) < herr(base) * 1.05  # never much worse; usually better

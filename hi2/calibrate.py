@@ -53,6 +53,8 @@ class Config:
     # Sequential propagation (spec 8.4): encode layer by layer on the quantized prefix.
     sequential: bool = False
     damp: float = 0.01  # Hessian damping, relative to the mean diagonal
+    # round columns in descending Hessian-diagonal order (GPTQ "act-order"); storage unchanged
+    act_order: bool = False
     effort: str = "normal"  # fast | normal | max
 
 
@@ -206,6 +208,10 @@ def encode_with_picks(
 
             hs = transform_sigma(sigma.to(dev), table.col_scale, had)
             d = hs.diagonal().clone()
+            perm = None
+            if cfg.act_order:
+                perm = torch.argsort(d, descending=True)
+                hs = hs[perm][:, perm]
             u = inverse_factor(hs, cfg.damp)
             del hs
         else:
@@ -216,7 +222,7 @@ def encode_with_picks(
             if rows.numel() == 0:
                 continue
             if use_gptq:
-                enc = encode_rows_gptq(wt[rows.to(dev)], d, u, nb, b, cfg.effort)
+                enc = encode_rows_gptq(wt[rows.to(dev)], d, u, nb, b, cfg.effort, perm)
             else:
                 enc = encode_rows(wt[rows.to(dev)], d, nb, b, cfg.effort)
             pieces.append(
