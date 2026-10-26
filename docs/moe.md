@@ -1,6 +1,6 @@
-# HI2 for mixture-of-experts models (.)
+# HI2 for mixture-of-experts models
 
-`.` quantizes routed experts into the v3.2 flex format (`quant_method:
+`hi2` quantizes routed experts into the v3.2 flex format (`quant_method:
 rdna_hint_flex`) with the same three phases as dense models. Nothing in the format,
 the kernels or the loader changes: each expert projection is an ordinary HI2 tensor
 `model.layers.N.mlp.experts.E.{gate,up,down}_proj.hi2_*` (or, with

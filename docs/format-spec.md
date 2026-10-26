@@ -2,13 +2,13 @@
 
 Status: **draft for review.** Supersedes v3.1 for the points listed in section 10.
 Every number in sections 3, 4 and 6 is produced by a script in this repo
-(`./experiments/`) or by a probe that was assembled and **run on a
+(`experiments/`) or by a probe that was assembled and **run on a
 gfx1030 V620**; where something is a design choice or a guess it says so.
 
 | --- | --- | --- | --- | --- |
 | Scope | Weight matrices. Activation handling is defined only for the dot-product input. KV cache is out of scope. |
 | Hardware | RDNA2 `gfx1030`, ROCm 7.14 toolchain. |
-| Runtime | vLLM. The format, loader and kernels go into the vLLM PR. **Calibration does not**: it lives in the separate `.` quantizer, which produces checkpoints in this format. |
+| Runtime | vLLM. The format, loader and kernels go into the vLLM PR. **Calibration does not**: it lives in the separate `hi2` quantizer, which produces checkpoints in this format. |
 | Format name | `rdna_hint_flex` (quant_method; "HI2" is the short name used in this document), tensor prefix `hi2_`, mode `flex`. v2 and v2i4 are restrictions of flex. The earlier name `hadamard_int2` is kept as a load-time alias because the rows carry INT2, INT4 and INT8. |
 
 ## 1. What changed from v3.1, in one table
@@ -121,8 +121,8 @@ measured on the other 2048** (held out). Metric: relative L2 error of the layer
 output `X W_hat^T` against `X W^T`, averaged over matrices. This is output
 error, **not KL divergence and not perplexity**; neither has been measured yet.
 One small model: treat the *ordering* of options as the finding, not the
-absolute values. Script `./experiments/scale_study.py`; raw results
-`./experiments/results/qwen2.5-0.5b-scale-study.json`.
+absolute values. Script `experiments/scale_study.py`; raw results
+`experiments/results/qwen2.5-0.5b-scale-study.json`.
 
 ## 4. Scale system, encoder, rotation
 
@@ -210,18 +210,18 @@ affine range** (the form in 2.2). Per tensor is a defensible simplification if t
 constants must be a single broadcast, but it trades accuracy for under 0.05 bpw.
 `lo` as z-score is slightly worse and cannot represent a constant block, so it is
 not used. Raw results:
-`./experiments/results/qwen2.5-0.5b-scope-study.json`.
+`experiments/results/qwen2.5-0.5b-scope-study.json`.
 
 ### 4.5 End-to-end quality (Qwen2.5-0.5B, held-out text)
 
-Produced by the reference quantizer `.` (global allocation over the whole
+Produced by the reference quantizer `hi2` (global allocation over the whole
 model, calibrated on 32 x 2048 tokens of repo documentation) and `hi2 eval`
 (dequantized weights through the original architecture; 8 x 2048 tokens from a
 disjoint part of the text; **perplexity of the unquantized model 10.49**). All
 linear layers are quantized; embeddings stay dense. One model, one corpus, one run
 each: differences under about 5% are within what I would call noise. bpw includes
 the row constants, metadata and the smoothing vector. Raw data:
-`./experiments/results/e2e_qwen2.5-0.5b.json`.
+`experiments/results/e2e_qwen2.5-0.5b.json`.
 
 **Calibrated, smoothing 0.5 plus rotation, against no rotation:**
 
@@ -274,7 +274,7 @@ Findings:
 ### 4.6 Where rotation is applied: smoothing, group size, signs
 
 Layer-output error, held-out, same setup as section 3 (INT2, B=32, weighted encoder;
-`./experiments/rotation_study.py`). `alpha` is the smoothing exponent, `G`
+`experiments/rotation_study.py`). `alpha` is the smoothing exponent, `G`
 the rotation group size:
 
 | Transform | `G=1` (none) | `G=16` | `G=64` signs | `G=128` signs |
@@ -297,7 +297,7 @@ outliers, which is what it is good at.
 ### 4.7 Against GGUF and EXL3 (Qwen3.5-0.8B)
 
 Perplexity divided by the unquantized model's, held-out text, details and caveats in
-`hadamard-int2-design-notes.md` section 3. EXL3 3inst at 3.0 bpw: **1.12**. HI2
+`design-notes.md` section 3. EXL3 3inst at 3.0 bpw: **1.12**. HI2
 (smoothing + rotation) at 2.5 / 3.0 / 3.5 / 4.0 / 4.5 bpw: 3.12 / 1.92 / 1.46 / 1.19 /
 1.05. GGUF Q2_K / Q3_K_S / Q3_K_M / IQ4_XS at 3.26 / 3.46 / 3.96 / 4.57 bpw: 1.74 /
 1.37 / 1.27 / 1.044. HI2 is in the range of GGUF's k-quants and needs about 4.2 bpw to
@@ -321,7 +321,7 @@ about 2 hours for EXL3.
 
 `hi2 quantize --rounding gptq` (8.3), same held-out protocol as 4.5. Perplexity divided
 by the unquantized model's (10.874 for Qwen3.5-0.8B); KL in nats per token. Raw data
-in `./experiments/results/e2e_qwen3.5-0.8b.json`.
+in `experiments/results/e2e_qwen3.5-0.8b.json`.
 
 | bpw | nearest rounding: ratio / KL | Hessian-aware: ratio / KL |
 | --- | --- | --- |
@@ -530,7 +530,7 @@ may not show up as speed. A kernel benchmark must decide.
 ## 7. RDNA2 instruction facts (verified)
 
 Assembled with the ROCm 7.14 clang for `gfx1030`, and the dot results checked by
-running `./experiments/isa/run.hip` on a V620:
+running `experiments/isa/run.hip` on a V620:
 
 | Instruction | gfx1030 |
 | --- | --- |
@@ -542,7 +542,7 @@ running `./experiments/isa/run.hip` on a V620:
 
 ## 8. Quantization procedure (separate tool, not in the vLLM PR)
 
-`.` produces checkpoints; vLLM only reads them. The contract between them is
+`hi2` produces checkpoints; vLLM only reads them. The contract between them is
 the checkpoint layout (section 2.4) plus `quantization_config`
 `{quant_method: "rdna_hint_flex", mode, version: "3.2"}`; every per-tensor choice (bits,
 block size, flags, smoothing vector) is in the tensors. **Everything in this section
@@ -715,7 +715,7 @@ calibrating on repo docs alone leaves chat and tool-calling text at KLD 0.650 (a
 0.196 on docs), while a calibration mix of docs, chat and tool calling gives 0.364 on that
 text and 0.234 on docs. The quantizer reads the calibration file from its start, so a mix
 must interleave the sources in the first `samples x seq_len` tokens
-(`./experiments/build_calib_mix.py` does). Evaluate on text from a different
+(`experiments/build_calib_mix.py` does). Evaluate on text from a different
 domain than the calibration text, as well as on matching text; an in-domain-only table
 overstates the result.
 
@@ -791,7 +791,7 @@ The widths stay INT2 and INT4. The question is what the EXL3 trellis codebook (Q
 teach those two paths. Facts below are from the fork's EXL3 kernels
 (`csrc/rocm/exl3_dot2_*.cuh`, which already decode them on gfx1030), the conversion plan
 printed by upstream exllamav3 1.6.4 (built for gfx1030 in a scratch directory,
-`./experiments/exl3_build.sh`) and the checkpoints on the benchmark box.
+`experiments/exl3_build.sh`) and the checkpoints on the benchmark box.
 
 ### 11.1 What the EXL3 format is
 
@@ -892,7 +892,7 @@ Qwen3.5-0.8B, MLP projections of layers 0, 8, 16 and 23 (12 matrices, 256 sample
 each), activation-weighted encoder with nearest rounding, smoothing 0.5 then input-side
 rotation of group `G`, block `B`; held-out relative output error. bpw is code bits plus
 `16/B` plus `48/K`. Raw data
-`./experiments/results/qwen3.5-0.8b-block-rotation-study.json`.
+`experiments/results/qwen3.5-0.8b-block-rotation-study.json`.
 
 | `G` | `B` | INT2 error / bpw | INT4 error / bpw |
 | --- | --- | --- | --- |
@@ -1031,7 +1031,7 @@ offload or TP. Quantization time grows from minutes to hours; the vLLM PR is unc
 
 **Status: implemented and on by default** (`hi2 quantize`; `--no-qad` for PTQ only;
 presets `fast`, `default`, `thorough`; layer-wise, resumable; design, defaults and tables
-in `docs/hi2-qad.md`). Measured on the allocation of the PTQ run it starts from:
+in `docs/qad.md`). Measured on the allocation of the PTQ run it starts from:
 
 | Model, bpw | KLD docs (PTQ to QAD) | KLD mixed text | Top-1 docs | Task accuracy |
 | --- | --- | --- | --- | --- |

@@ -1,9 +1,9 @@
 # HI2 design notes: rotation, and where it stands against GGUF and EXL3
 
-Companion to `hadamard-int2-v3.2-spec.md` (the format) and `./README.md` (the
+Companion to `format-spec.md` (the format) and `./README.md` (the
 quantizer). Everything measured here is Qwen2.5-0.5B-Instruct on held-out text, one
 run each, so differences under about 5% are noise. Raw data is in
-`./experiments/results/`.
+`experiments/results/`.
 
 ## 1. What HI2 is
 
@@ -14,7 +14,7 @@ per-column smoothing vector, and an optional order-16 Hadamard rotation of the i
 dimension. Decode is fixed and branch-free, aimed at `v_dot2_f32_f16` (fp16
 activations) or `v_dot4_i32_i8` (int8 activations). Calibration (activation
 statistics, encoder, global bits-per-weight allocation) lives in the separate
-`.` quantizer, not in vLLM.
+`hi2` quantizer, not in vLLM.
 
 ## 2. Where rotation helps, and where it does not
 
@@ -68,7 +68,7 @@ documentation). The EXL3 checkpoint is the one already on the box
 (`Qwen3.5-0.8B-exl3-3inst-good`, 3.0 bpw, 3inst codebook, 6-bit head, calibrated on
 256 x 2048). Everything below is **perplexity divided by the same model's
 unquantized perplexity** (1.00 = lossless), so evaluators with different windows can
-be compared; raw data in `./experiments/results/e2e_qwen3.5-0.8b.json`.
+be compared; raw data in `experiments/results/e2e_qwen3.5-0.8b.json`.
 
 Evaluator check: vLLM (fork, fp16) scores the unquantized model 10.8736 and the HI2
 export 20.8727; my HF evaluator scores them 10.8738 and 20.8734. EXL3 and HI2 were

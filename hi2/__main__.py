@@ -243,7 +243,7 @@ def main(argv=None):
         choices=sorted(CANDIDATE_PRESETS),
         default="all",
         help="candidate preset on top of --bits/--blocks: lean drops INT4/B16, which "
-        "holds 0.1-0.8%% of the weights at 3-3.5 bpw (docs/hi2-speed.md)",
+        "holds 0.1-0.8%% of the weights at 3-3.5 bpw (docs/speed.md)",
     )
     q.add_argument(
         "--cache-dir",
@@ -262,7 +262,7 @@ def main(argv=None):
         type=int,
         default=0,
         help="store cached Sigma in fp16 for inputs wider than this (halves the disk; "
-        "lossy, see docs/hi2-speed.md); 0 = fp32",
+        "lossy, see docs/speed.md); 0 = fp32",
     )
     q.add_argument(
         "--moe-layout",
@@ -270,7 +270,7 @@ def main(argv=None):
         default="stacked",
         help="routed experts on disk: one stack per layer and gate_up/down group "
         "(default; loads ~9x faster in the fork) or one HI2 tensor per expert "
-        "projection (docs/hi2-moe.md); the weights are identical",
+        "projection (docs/moe.md); the weights are identical",
     )
     q.add_argument("--int8-force", type=int, default=0, help=argparse.SUPPRESS)
     q.add_argument("--include", default=None, help="regex: only these weights")
@@ -286,7 +286,7 @@ def main(argv=None):
         default=True,
         help="on by default: after PTQ, distill every layer against the unquantized model "
         "(needs --calib; data-free runs fall back to PTQ). --no-qad = PTQ only. "
-        "See docs/hi2-qad.md",
+        "See docs/qad.md",
     )
     g.add_argument(
         "--qad-preset",
@@ -322,7 +322,7 @@ def main(argv=None):
         metavar="STEPS",
         help="after layer-wise QAD, STEPS optimizer steps of whole-network logit KL "
         "training the ladder bytes and norm weights only (off by default; "
-        "docs/hi2-lowbit.md)",
+        "docs/lowbit.md)",
     )
     for flag, typ in (
         ("--qad-kl-layers", int),

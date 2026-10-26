@@ -7,7 +7,7 @@
 set -u
 B=/home/chenco_adm/w4a8_runs/hadamard-int2
 P=$1; CANDS=$2
-H=$B/hi2-qad/experiments
+H=$B/qad/experiments
 export MODEL=/home/chenco_adm/models/Qwen3.5-0.8B OUT=$B/runs35
 C="--calib $B/calib_qad.txt --calib-samples 128 --seq-len 2048 --max-error-ratio 10.75"
 echo '{"budget": 0.5, "min_gain": 0.01, "min_steps": 75, "eval_every": 50}' > "$B/qad_b0.5.json"

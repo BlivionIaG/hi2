@@ -12,7 +12,7 @@ set -u
 B=/home/chenco_adm/w4a8_runs/hadamard-int2
 SHARE=$1; RATIO=$2; read -ra GV <<< "$3"; RT=$4; shift 4
 export MODEL=${MODEL:-/home/chenco_adm/models/Qwen3.5-0.8B} OUT=${OUT:-$B/runs35}
-R=$B/hi2-qad/experiments/run_qad_model.sh
+R=$B/qad/experiments/run_qad_model.sh
 COMMON="--calib $B/calib_qad.txt --calib-samples 128 --seq-len 2048 --sensitivity probe --max-error-ratio $RATIO"
 i=0
 for spec in "$@"; do

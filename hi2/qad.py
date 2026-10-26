@@ -84,7 +84,7 @@ class QadConfig:
     # random: windows across the whole calibration text; balanced: equal windows per
     # calibration file; head: the first tokens
     sampling: str = "random"
-    # ---- low-bit options (docs/hi2-lowbit.md); all off by default -------------
+    # ---- low-bit options (docs/lowbit.md); all off by default -------------
     # Train the layer's RMSNorm weights (fp32, AdamW lr_norm) together with its Linears;
     # they are written to the checkpoint in fp16 (the runtime dtype on RDNA).
     train_norms: bool = False
@@ -115,7 +115,7 @@ class QadConfig:
 FINAL_FIELDS = {f for f in QadConfig.__dataclass_fields__ if f.startswith("final_")}
 
 
-# Chosen on Qwen3.5-0.8B at 3.0 bpw (docs/hi2-qad.md); everything else default.
+# Chosen on Qwen3.5-0.8B at 3.0 bpw (docs/qad.md); everything else default.
 # fast = half the steps spent where layers still gain, with early stopping (better than a
 # uniform 100 steps at the same time); no reduced budget stayed within noise of default.
 PRESETS: dict[str, dict] = {

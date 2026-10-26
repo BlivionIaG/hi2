@@ -69,7 +69,7 @@ class RunConfig:
     # routed experts on disk: per-expert (one HI2 tensor per expert projection) or
     # stacked (one per layer and projection group, hi2.stack); same weights either way
     moe_layout: str = "stacked"
-    # experiment (docs/hi2-lowbit.md): the N most sensitive tensors all-INT8, the
+    # experiment (docs/lowbit.md): the N most sensitive tensors all-INT8, the
     # others INT2/INT4 (needs INT8 candidates); 0 = off
     int8_force: int = 0
 
@@ -531,7 +531,7 @@ def check_inputs(rc: RunConfig, log=print) -> dict:
     if rc.qad is not None and not calibrated:
         log(
             "warning: QAD needs calibration text (--calib FILE[,FILE...]); this data-free "
-            "run falls back to PTQ only (./experiments/build_calib_mix.py builds a "
+            "run falls back to PTQ only (experiments/build_calib_mix.py builds a "
             "mixed-domain calibration file)"
         )
         rc.qad = None

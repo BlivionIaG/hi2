@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hi2 overview</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1f24; --muted:#5b6570; --card:#f4f6f8; --line:#d5dbe1; --accent:#0b6bcb; --int2:#d9822b; --int4:#2b8a5b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14181d; --fg:#e6e9ec; --muted:#9aa5b1; --card:#1d232a; --line:#2e3640; --accent:#5aa9ff; --int2:#e8a057; --int4:#58b98a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 36px 0 8px; }
+  p, li { max-width: 68ch; }
+  .lead { color: var(--muted); margin-top: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .steps { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  button { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .row { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 640px) { .row { grid-template-columns: 1fr 1fr; } }
+  label { display: block; font-size: .9rem; color: var(--muted); margin-bottom: 2px; }
+  input[type=range] { width: 100%; }
+  select { font: inherit; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  .bar { display: flex; height: 28px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); margin: 8px 0; }
+  .bar div { display:flex; align-items:center; justify-content:center; font-size:.8rem; color:#fff; min-width:0; overflow:hidden; white-space:nowrap; }
+  .out { font-size: 2rem; font-weight: 700; }
+  .small { font-size: .88rem; color: var(--muted); }
+  code { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<main>
+  <h1>hi2</h1>
+  <p class="lead">One quantizer for the rdna_hint_flex format: INT2 where a row matters less, INT4 where it matters more.</p>
+
+  <h2>1. Four phases</h2>
+  <div class="card">
+    <div class="steps" role="group" aria-label="Pipeline phase">
+      <button data-i="0" aria-pressed="true">1 Tabulate</button>
+      <button data-i="1" aria-pressed="false">2 Allocate</button>
+      <button data-i="2" aria-pressed="false">3 Encode</button>
+      <button data-i="3" aria-pressed="false">4 Distill</button>
+    </div>
+    <p id="phase-text" aria-live="polite"></p>
+    <p class="small" id="phase-files"></p>
+  </div>
+
+  <h2>2. What one row stores</h2>
+  <p>Each weight row is cut into blocks of 16, 32, or 64 weights. A block stores a code per weight and two 8-bit numbers, <code>lo</code> and <code>step</code>. The decoder computes <code>w = lo + code * step</code>. Each row also has three fp16 constants that scale the 8-bit numbers.</p>
+  <p>The cost in bits per weight (bpw) is <code>nbits + 16/B + 48/K</code>, where <code>B</code> is the block size and <code>K</code> is the row length. Metadata for the smoothing vector is extra.</p>
+
+  <h2>3. Bit budget</h2>
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="int4">Share of INT4 rows: <b id="int4-v"></b></label>
+        <input id="int4" type="range" min="0" max="100" value="50">
+      </div>
+      <div>
+        <label for="blk">Block size</label>
+        <select id="blk"><option>16</option><option selected>32</option><option>64</option></select>
+        <label for="k" style="margin-top:8px">Row length K</label>
+        <select id="k"><option>1024</option><option>2048</option><option selected>4096</option><option>8192</option></select>
+      </div>
+    </div>
+    <div class="bar" aria-hidden="true"><div id="b2" style="background:var(--int2)">INT2</div><div id="b4" style="background:var(--int4)">INT4</div></div>
+    <div class="out"><span id="bpw"></span> bpw</div>
+    <p class="small" id="detail"></p>
+  </div>
+  <p>You do not set this number. You set a quality target (<code>--max-error-ratio</code>). The tool picks the share of INT4 rows and reports the bit rate it reached.</p>
+
+  <h2>4. Where to go next</h2>
+  <table>
+    <tr><th>You want to</th><th>Read</th></tr>
+    <tr><td>Run the tool</td><td><a href="usage.md">usage.md</a></td></tr>
+    <tr><td>See how it works</td><td><a href="architecture.md">architecture.md</a></td></tr>
+    <tr><td>Check the format</td><td><a href="format-spec.md">format-spec.md</a></td></tr>
+    <tr><td>See the measurements</td><td><a href="results.md">results.md</a></td></tr>
+  </table>
+</main>
+<script>
+  const phases = [
+    ["The tool runs the calibration text through one decoder layer at a time. It collects second-moment statistics for every Linear and builds an error table for every row and every option.", "layerwise.py, stats.py, calibrate.py"],
+    ["Every row of the whole model picks INT2 or INT4 and a block size. The tool spends the fewest bits that keep the weighted error under one model-wide limit.", "allocate.py, sensitivity.py"],
+    ["GPTQ rounding picks the codes, and the writer streams every tensor to the output shards.", "encode.py, hessian.py, checkpoint.py"],
+    ["Layer by layer, the tool trains the quantized layer to match the unquantized one. A layer keeps its first encoding if training does not help.", "qad.py, finalkl.py"],
+  ];
+  const buttons = document.querySelectorAll(".steps button");
+  function show(i) {
+    buttons.forEach((b, j) => b.setAttribute("aria-pressed", String(i === j)));
+    document.getElementById("phase-text").textContent = phases[i][0];
+    document.getElementById("phase-files").textContent = "Code: " + phases[i][1];
+  }
+  buttons.forEach(b => b.addEventListener("click", () => show(Number(b.dataset.i))));
+  show(0);
+
+  const $ = id => document.getElementById(id);
+  function calc() {
+    const f = Number($("int4").value) / 100, B = Number($("blk").value), K = Number($("k").value);
+    const over = 16 / B + 48 / K, b2 = 2 + over, b4 = 4 + over, mix = (1 - f) * b2 + f * b4;
+    $("int4-v").textContent = Math.round(f * 100) + " %";
+    $("b2").style.width = (1 - f) * 100 + "%"; $("b4").style.width = f * 100 + "%";
+    $("bpw").textContent = mix.toFixed(2);
+    $("detail").textContent = "INT2 row: " + b2.toFixed(3) + " bpw. INT4 row: " + b4.toFixed(3) + " bpw. Block parameters and row constants add " + over.toFixed(3) + " bpw to both.";
+  }
+  ["int4", "blk", "k"].forEach(id => $(id).addEventListener("input", calc));
+  calc();
+</script>
+</body>
+</html>

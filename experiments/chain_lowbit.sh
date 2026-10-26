@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Queue low-bit study runs on one GPU, one after the other (lowbit_run.sh, WAIT=1).
-# usage: chain_lowbit.sh HIP "<tag|hi2 quantize args>" ...   (box paths, from hi2-lowbit/)
+# usage: chain_lowbit.sh HIP "<tag|hi2 quantize args>" ...   (box paths, from lowbit/)
 #   COMMON = arguments shared by every run (default: calib_qad.txt, 128 x 2048, probe);
 #   a spec "tag|args|SHARE_QAD=<workdir>" also copies that run's QAD layer artifacts.
 #   MODEL / OUT / KEEP_WORK pass through to lowbit_run.sh.

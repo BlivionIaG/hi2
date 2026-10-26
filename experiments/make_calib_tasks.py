@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # ruff: noqa: E501
-"""Task-style QAD calibration text from TRAINING splits only (docs/rdna2/hi2-lowbit.md).
+"""Task-style QAD calibration text from TRAINING splits only (docs/lowbit.md).
 
 Writes one text file of
 * ARC-Easy and ARC-Challenge **training** questions (llama.cpp ``arc-*-training.bin`` of

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # ruff: noqa: E501
-"""Low-bit options (docs/rdna2/hi2-lowbit.md): INT8 rows end to end, the final logit-KL
+"""Low-bit options (docs/lowbit.md): INT8 rows end to end, the final logit-KL
 phase, norm training and the KL term of the layer-wise phase (CPU, tiny Qwen2)."""
 
 import json

@@ -1,6 +1,6 @@
 # HI2 quantization-aware distillation (QAD)
 
-Tool-side extension of the HI2 v3.2 format (`hadamard-int2-v3.2-spec.md`, section 13).
+Tool-side extension of the HI2 v3.2 format (`format-spec.md`, section 13).
 QAD changes which codes and block parameters are stored, never the format: a QAD
 checkpoint is a normal `rdna_hint_flex` v3.2 checkpoint that `hi2 eval`,
 `hi2 export-dense` and the fork's loader read unchanged.

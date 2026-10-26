@@ -1,7 +1,7 @@
 # HI2 at 3.0-3.5 bpw: INT8 rows, a final logit-KL phase, QAD data and loss
 
 This is a study of the quantizer at 3.0-3.5 bpw. At this size HI2 with QAD still trails
-EXL3 3.0 bpw on HellaSwag and MMLU (`hi2-qad.md`, `hi2-comparison.md`). The study asks
+EXL3 3.0 bpw on HellaSwag and MMLU (`qad.md`, `results.md`). The study asks
 which extra options close the gap.
 
 Nothing here changes the format. Every checkpoint below is a normal v3.2 checkpoint. INT8

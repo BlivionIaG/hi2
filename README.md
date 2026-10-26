@@ -1,142 +1,64 @@
-# hi2: HadamardINT2-FP16 v3.2 quantizer (flex)
+# hi2: quantizer for the rdna_hint_flex weight format
 
-Standalone (torch, safetensors, regex, transformers for calibration). Implements
-`docs/hadamard-int2-v3.2-spec.md` only. Run from `.`:
+`hi2` converts a Hugging Face model into a **rdna_hint_flex** checkpoint. The format stores
+each weight row as INT2 or INT4 (INT8 on request). It adds block parameters, an optional
+smoothing vector, and an order-16 Hadamard rotation. The format is made for AMD RDNA2
+GPUs (gfx1030), where the decode kernel reads about 93 % of the memory bandwidth.
 
-```bash
-python -m hi2 quantize <hf_model_dir> <out_dir> --calib text.txt --target-bpw 3.0
-python -m hi2 verify   <hf_model_dir> <out_dir>
-python -m hi2 eval     <hf_model_dir> <out_dir> --text text.txt --skip-tokens 800000
+The tool picks INT2 where a row matters less and INT4 where it matters more. You do not
+set a bit rate. You set a quality target, and the tool reports the bit rate it reached.
+
+```mermaid
+flowchart LR
+    A[HF model + calibration text] --> B[1 Tabulate<br/>statistics, error tables]
+    B --> C[2 Allocate<br/>INT2 / INT4 per row]
+    C --> D[3 Encode<br/>GPTQ rounding]
+    D --> E[4 Distill<br/>layer-wise QAD]
+    E --> F[rdna_hint_flex checkpoint]
 ```
 
-## How it works
+## Quick start
 
-1. **Tabulate (calibration).** Layer by layer: one decoder layer is copied to each
-   compute device, the calibration sequences run through it, and hooks accumulate a
-   16x16 second-moment block per column group for every Linear. Each Linear then
-   gets a table of the activation-weighted squared error of every row under every
-   candidate `(bits in {2,4}) x (block in {16,32,64})`.
-2. **Allocate (global).** Every row of the whole model picks its configuration to
-   minimise the sum over tensors of relative weighted error under one model-wide
-   `--target-bpw`.
-3. **Encode (write).** The checkpoint is streamed again and each tensor is encoded
-   with its picks (spec 2.4 layout, tensors `<name>.hi2_*`), everything else copied.
+Install the requirements: Python 3.10 or later, `torch`, `safetensors`, `regex`,
+`transformers`.
 
-Without `--calib` it runs data-free (column weights of 1) and streams tensors
-without loading the model.
+```bash
+pip install -e .
+hi2 quantize  <hf_model_dir> <out_dir> --calib calib.txt          # PTQ + QAD
+hi2 verify    <hf_model_dir> <out_dir>                            # reload and compare
+hi2 eval      <hf_model_dir> <out_dir> --text heldout.txt         # ppl, KLD, top-1
+```
 
-## Placement
+`python -m hi2 ...` works too. The default run does PTQ and then QAD (quantization-aware
+distillation) on every layer. Use `--no-qad` for PTQ only. Use `--dry-run` to see the plan
+first.
 
-| Goal | Flags |
+## Documentation
+
+| You want to | Read |
 | --- | --- |
-| Automatic (default) | `--devices auto`: every visible GPU (narrow with `HIP_VISIBLE_DEVICES`), else the CPU |
-| CPU / RAM only | `--devices cpu` |
-| One GPU | `--devices cuda:0` (pick the physical GPU with `HIP_VISIBLE_DEVICES`) |
-| Several GPUs (2, 4, ...) | `--devices cuda:0,cuda:1,...`: calibration sequences are split across devices and every tensor's rows are sharded across them. Results are identical to one device |
-| GPU + RAM, model larger than VRAM | automatic: the model stays in RAM, one layer at a time is on the GPU(s), hidden states stay in RAM |
+| Run the tool, pick flags | [docs/usage.md](docs/usage.md) |
+| Understand how it works | [docs/architecture.md](docs/architecture.md) |
+| See the explainer page | [docs/overview.html](docs/overview.html) |
+| Read the format definition | [docs/format-spec.md](docs/format-spec.md) |
+| See measured quality and speed | [docs/results.md](docs/results.md) |
+| Quantize a mixture-of-experts model | [docs/moe.md](docs/moe.md) |
+| Learn about QAD | [docs/qad.md](docs/qad.md) |
+| Learn about the cache and speed | [docs/speed.md](docs/speed.md) |
+| See the INT8 and final-KL study | [docs/lowbit.md](docs/lowbit.md) |
+| Find a script that made a number | [experiments/README.md](experiments/README.md) |
 
-"Several GPUs" is row-sharded quantization plus data-parallel calibration, not a
-tensor-parallel forward pass (a single layer fits one GPU).
+The index of all documents is [docs/README.md](docs/README.md).
 
-## Commands
+## Status
 
-| Command | What it does |
-| --- | --- |
-| `quantize SRC DST` | HF checkpoint to HI2 flex checkpoint (see below) |
-| `verify SRC DST` | reload quantized tensors and compare with the source weights |
-| `eval SRC DST --text T --skip-tokens N` | perplexity of original and quantized model, KL(original to quantized), top-1 agreement, on held-out text |
-| `export-dense SRC DST OUT` | write the dequantized model as a plain fp16 HF directory, e.g. to score it in llama.cpp |
-
-## Defaults and what they are based on
-
-* `--rounding gptq` (default when `--calib` is given): Hessian-aware, error-compensated
-  rounding (spec 8.3). On Qwen3.5-0.8B at 3.0 bpw it takes the perplexity ratio from
-  1.92 to 1.32. The Hessians (`K^2/2` floats per distinct input, about 1 GB for that
-  model) go to the persistent cache (below). On gfx10/gfx11 the column loop runs as a
-  fused HIP kernel, bit-identical to the torch loop used elsewhere. Without `--calib`
-  it uses nearest rounding. It changes only which codes are chosen, never the format.
-* `--sequential` runs the encode pass on the quantized prefix (spec 8.4): a second
-  layerwise model pass. It gave no measurable gain, so it is off.
-* `--rotation on --smooth 0.5`: smoothing the activation channels and then rotating
-  was the best transform at every bit width (and still best, by a smaller margin, with
-  `--rounding gptq`). Rotation alone hurts a calibrated encoder under nearest rounding;
-  without `--calib` smoothing is skipped and rotation helps a lot. Evidence:
-  `docs/hadamard-int2-design-notes.md`.
-* The smoothing vector costs `16/R` bits per weight per tensor, and the global
-  allocation accounts for it.
-* `--bits` / `--blocks` restrict the candidate set (for example `--bits 4 --blocks 64`
-  for a uniform INT4/B64 reference). `--effort fast|normal|max`; more effort did not
-  improve quality in our runs.
-* `workdir` (default `<out>.work`) holds the shard markers (finished output shards
-  are kept on re-run) and `cache_ref.json`, the cache entries the run used; with
-  `--no-cache` it holds tables, statistics and Hessians itself, as before.
-* `--max-error-ratio a,b,c` writes one checkpoint per ratio to `<out>-r<ratio>` from one
-  phase 1, probe and encode pass (each output equals its single-ratio run).
-* Calibration needs `--calib-samples x --seq-len` tokens of text. Evaluate on text
-  that is not in the calibration region (`--skip-tokens`).
-* `eval` dequantizes back to dense weights and runs the original architecture: it
-  checks the format numerically, it is not a kernel test.
-
-## Quantization-aware distillation (QAD, on by default)
-
-With calibration text, `quantize` distills every decoder layer after PTQ (quality
-allocation, sensitivity probe, Hessian-aware encode, then layer-by-layer training against
-the unquantized model); `--no-qad` gives PTQ only, and a data-free run falls back to PTQ
-with a warning:
+The quantizer is complete for dense and mixture-of-experts models. The runtime side (HIP
+kernels and the vLLM loader) is in the vLLM fork for RDNA2, not in this repository.
+The tests run on the CPU; the fused GPTQ kernel tests need a gfx10 or gfx11 GPU.
 
 ```bash
-python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --max-error-ratio 6
-python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --dry-run   # plan only
-python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --no-qad    # PTQ only
-python -m hi2 eval <hf_model_dir> <out_dir> --text heldout.txt --device cuda:0
-python -m hi2 export-dense <hf_model_dir> <out_dir> <dense_dir>
+pytest tests
 ```
-
-The result is a normal v3.2 checkpoint (no format change). Each layer is trained with the
-exact fake-quantized decode of the format (straight-through gradients) so that its output
-on the quantized prefix's hidden states matches the unquantized layer; row picks, row
-constants, smoothing vectors and rotation flags stay as PTQ chose them, and a layer keeps
-its PTQ encoding if training does not beat it on held-out calibration data. Knobs:
-`--qad-preset fast|default|thorough`, `--qad-budget` (fraction of the preset's steps, spent
-where layers still gain, with per-layer early stopping), `--qad-samples`, `--qad-layers`,
-`--qad-config file.json`. The run logs its expected time up front and is resumable per
-layer (re-run the same command). QAD draws random windows from the whole calibration text,
-so a concatenated multi-domain file is fully used. Runtimes on one V620 (QAD part, `default` / `fast`): Qwen3.5-0.8B 41 / 17 min, Qwen3.5-4B about
-3.1 h / 1.3 h, on top of 10-50 min of PTQ.
-Design, measurements and memory: `docs/hi2-qad.md`.
-With the cache on, QAD's PTQ initialisation reads the cached statistics and Hessians and
-encodes each layer's Linears in one batched call. `--max-error-ratio a,b,c` with QAD
-runs one QAD pass per output, in sequence (logged, with a time warning; per-layer
-artifacts under `<workdir>/qad-r<ratio>`); use `--no-qad` for a quick PTQ sweep.
-
-## Cache and speed
-
-Statistics, Hessians, phase-1 tables and sensitivity-probe results are cached under
-`--cache-dir` (default `$HI2_CACHE_DIR` or `~/.cache/hi2`), keyed by content: the model
-(config and weight file sizes), the calibration token ids and the settings each product
-depends on. The Hessians do not depend on the allocation target, error ratio, rounding,
-smoothing, rotation or candidates, so later runs of the same model and calibration skip
-the calibration pass, and the probe when its settings match. The log reports
-`cache: ... hit|miss`. Manage it with:
-
-```bash
-python -m hi2 cache list|size
-python -m hi2 cache prune [--older-than DAYS] [--keep-gb N] [--digest D] [--dry-run]
-```
-
-Bump `STATS_VERSION` / `TABLES_VERSION` / `PROBE_VERSION` in `hi2/cache.py` when the code
-producing an entry changes. Design, key and measurements: `docs/hi2-speed.md`.
-`HI2_GPTQ_BACKEND=torch` forces the reference GPTQ loop; the kernel builds on first use
-into `~/.cache/hi2/kernels` (`HI2_KERNEL_DIR`).
-
-## Experiments
-
-`experiments/` holds the scripts behind the spec's numbers (scale systems, scope,
-rotation and smoothing, GGUF baselines, llama.cpp scoring of HI2 checkpoints, the
-gfx1030 instruction probes) and `experiments/results/` their raw output. They were
-run on a gfx1030 box; paths inside the shell scripts are that box's.
-
-Tests: `cd . && pytest tests`.
 
 ## License
 

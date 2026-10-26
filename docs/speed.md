@@ -1,6 +1,6 @@
-# HI2 quantizer speed (.)
+# HI2 quantizer speed
 
-The HI2 quantizer (`.`, spec v3.2 section 8) was made faster without changing
+The HI2 quantizer (`hi2`, spec v3.2 section 8) was made faster without changing
 what it writes. Every change below either computes the same values in the same order
 (bit-identical output, checked by a test) or is opt-in. This note records where the
 time went, what changed, the cache and how to invalidate it, and the measurements.
@@ -101,7 +101,7 @@ measurements below).
 
 ## With QAD (merged with the QAD branch)
 
-QAD (`docs/hi2-qad.md`) is on by default when calibration text is given;
+QAD (`docs/qad.md`) is on by default when calibration text is given;
 `--no-qad` gives the PTQ flow measured below. Its PTQ initialisation (the encode each
 layer starts from) goes through the same machinery: statistics and Hessians are read with
 `cache.StatsView` (from the cache, or from the workdir with `--no-cache`), each Sigma is
@@ -261,20 +261,20 @@ gave identical tables but were 1.7-1.9x slower than tensor by tensor (64 OLMoE e
 
 ## Reproduce
 
-`./experiments/chain_fast.sh <jobs>` runs the jobs above on the box, each on an
+`experiments/chain_fast.sh <jobs>` runs the jobs above on the box, each on an
 idle, unlocked GPU of ours (`free_gpu.sh`, `fast_ptq.sh`, `fast_run.sh` with an atomic
 `hifast.gpuN.lock`): `n08`, `n08warm`, `n08c2` (0.8B cold, warm, second cold), `o08`
 and `o4b` (the base branch's code, copied to `hi2-fast-base/`), `n4b`, `moe`, the
 studies `n08s4`, `n08s2`, `n08b8`, `n08lean`, `n08f16`, `n08multi`, and `gputests` /
 `chk` (kernel tests on the GPU, re-tabulation check). `profile_encode.py`,
 `profile_new.py` and `profile_probe.py` are the profilers. Raw numbers:
-`./experiments/results/hi2_speed_runs_2026-10-26.json`,
+`experiments/results/hi2_speed_runs_2026-10-26.json`,
 `hi2_speed_profile_4b_2026-10-26.json` and `hi2_candidate_usage_2026-10-26.json`.
 
 ## Tests
 
 ```bash
-cd . && pytest tests   # CPU; the kernel tests run on a gfx10/gfx11 GPU
+pytest tests   # CPU; the kernel tests run on a gfx10/gfx11 GPU
 ```
 
 | Test | Checks |

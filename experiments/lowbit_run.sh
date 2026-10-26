@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Low-bit study runner (docs/rdna2/hi2-lowbit.md): quantize with hi2 on one of our GPUs under an
+# Low-bit study runner (docs/lowbit.md): quantize with hi2 on one of our GPUs under an
 # atomic lock file, then score with `hi2 eval` on the docs held-out text (skip 800000) and the
 # mixed held-out text (skip 0). Refuses a GPU that another job locks or uses (rocm-smi).
-# usage: lowbit_run.sh HIP TAG [hi2 quantize args...]   (from the rsynced hi2-lowbit copy)
+# usage: lowbit_run.sh HIP TAG [hi2 quantize args...]   (from the rsynced lowbit copy)
 #   MODEL=<hf dir> (default Qwen3.5-0.8B), OUT=<runs dir> (default runslow), KEEP_WORK=1 keeps the
 #   workdir, NO_EVAL=1 skips the two evals, WAIT=1 waits for the GPU instead of failing,
 #   SHARE_QAD=<workdir of a finished QAD run> copies (not links: hi2 rewrites stale artifacts in
