@@ -102,7 +102,6 @@ def ref_allocate_by_quality(
         picks,
         (bits_total + overhead) / total_w,
         best_lam,
-        total_w,
         feasible,
         ratio,
         frac,
@@ -147,7 +146,7 @@ def ref_allocate_global(
 
     def done(p, b, lam, ok):
         ratio, frac = _summary(data, p)
-        return Allocation(p, (b + overhead) / total_w, lam, total_w, ok, ratio, frac)
+        return Allocation(p, (b + overhead) / total_w, lam, ok, ratio, frac)
 
     if min_bits > budget:  # even the cheapest assignment is over target
         return done(picks, bits_total, hi, False)

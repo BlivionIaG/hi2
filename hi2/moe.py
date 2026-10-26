@@ -79,7 +79,6 @@ class UnfusedExperts(nn.ModuleList):
             )
         super().__init__(ExpertMLP(gu[x, :i], gu[x, i:], down[x]) for x in range(e))
         self.act_fn = fused.act_fn
-        self.num_experts = e
 
     def forward(self, hidden_states, top_k_index, top_k_weights):
         out = torch.zeros_like(hidden_states)

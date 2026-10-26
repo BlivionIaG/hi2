@@ -31,7 +31,6 @@ from pathlib import Path
 import torch
 
 BLOCK_COLUMNS = 128
-THREADS = 64  # rows per workgroup (two wave32)
 
 _CPP = r"""
 #include <torch/extension.h>

@@ -17,9 +17,6 @@ from dataclasses import dataclass
 import torch
 
 GROUP = 16
-BLOCK_SIZES = (16, 32, 64)
-NBITS = (2, 4)
-K_MULTIPLE = 64
 
 
 def hadamard16(dtype: torch.dtype = torch.float64, device="cpu") -> torch.Tensor:
@@ -113,21 +110,6 @@ class HI2Tensor:
     # Optional smoothing vector s (fp16 [K]): the stored basis is H(W * s) and the
     # runtime activation is H(x / s). None means no smoothing.
     col_scale: torch.Tensor | None = None
-
-    def nbytes(self) -> int:
-        return sum(
-            t.numel() * t.element_size()
-            for t in (
-                self.codes,
-                self.code_off,
-                self.blk_params,
-                self.param_off,
-                self.row_consts,
-                self.row_nbits,
-                self.row_block,
-                self.had,
-            )
-        )
 
 
 FIELDS = (

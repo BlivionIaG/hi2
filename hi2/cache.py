@@ -191,7 +191,7 @@ def _upper(k: int, device="cpu") -> torch.Tensor:
 
 
 def sigma_payload(sigma: torch.Tensor, n: int, fp16_above: int = 0) -> dict:
-    """What :func:`save_sigma` stores, computed where ``sigma`` lives (the symmetry
+    """What a cached Sigma file stores, computed where ``sigma`` lives (the symmetry
     check and the triangle extraction on the GPU halve the device-to-host copy): the
     upper triangle (row-major) when ``sigma`` is exactly symmetric, else the full
     matrix; in fp16 when ``fp16_above`` > 0 and K exceeds it (lossy, opt-in)."""
@@ -202,13 +202,6 @@ def sigma_payload(sigma: torch.Tensor, n: int, fp16_above: int = 0) -> dict:
         tri = s[_upper(k, s.device)]
         return {"k": k, "n": n, "tri": (tri.half() if half else tri).cpu()}
     return {"k": k, "n": n, "full": (s.half() if half else s).cpu()}
-
-
-def save_sigma(
-    d: Path, name: str, sigma: torch.Tensor, n: int, fp16_above: int = 0
-) -> None:
-    d.mkdir(parents=True, exist_ok=True)
-    torch.save(sigma_payload(sigma, n, fp16_above), d / _fname(name))
 
 
 def load_sigma(path: Path) -> torch.Tensor:

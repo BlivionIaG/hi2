@@ -41,15 +41,6 @@ GROUPS = {
     "w2": ("w2",),
 }
 PART_GROUP = {p: (g, i) for g, parts in GROUPS.items() for i, p in enumerate(parts)}
-ROW_FIELDS = (
-    "codes",
-    "code_off",
-    "blk_params",
-    "param_off",
-    "row_consts",
-    "row_nbits",
-    "row_block",
-)
 MARK = "part_off"  # the array that tells a stack from a single tensor
 INT32_MAX = 2**31 - 1
 

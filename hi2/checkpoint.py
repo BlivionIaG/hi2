@@ -132,25 +132,6 @@ class Output:
     dense: dict | None = None
 
 
-def write_checkpoint(
-    src: Path,
-    dst: Path,
-    workdir: Path,
-    tables: dict[str, TensorTable],
-    picks: dict[str, torch.Tensor],
-    cfg: Config,
-    ex: Executor,
-    meta: dict,
-    log=print,
-    pre_encoded: dict | None = None,
-) -> dict:
-    """Phase 3: stream shards, encode the tables' tensors with their picks (or take
-    them from ``pre_encoded``), copy the rest. Existing output shards are kept."""
-    out = Output(dst, picks, meta, workdir / "shards_done", pre_encoded)
-    write_checkpoints(src, [out], workdir, tables, cfg, ex, log)
-    return out.report
-
-
 def _requests_for(names, path, view, tables, outs, cfg):
     """Load the source tensors, statistics and Hessians of ``names`` (one shard file)
     and build an :class:`EncodeRequest` per tensor and output that still needs it."""

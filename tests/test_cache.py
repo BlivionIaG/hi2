@@ -22,6 +22,12 @@ from hi2.calibrate import (  # noqa: E402
 from hi2.executor import Executor  # noqa: E402
 from hi2.pipeline import RunConfig, output_dir, run  # noqa: E402
 
+
+def _save_sigma(d, name, sigma, n, fp16_above=0):
+    d.mkdir(parents=True, exist_ok=True)
+    torch.save(C.sigma_payload(sigma, n, fp16_above), d / C._fname(name))
+
+
 QUIET = dict(log=lambda *_: None)
 
 
@@ -100,13 +106,13 @@ def test_sigma_triangle_roundtrip_is_exact(tmp_path):
     x = torch.randn(300, 48)
     s = x.T @ x / 300
     s = 0.5 * (s + s.T)
-    C.save_sigma(tmp_path, "a.weight", s, 300)
+    _save_sigma(tmp_path, "a.weight", s, 300)
     assert torch.equal(C.load_sigma(tmp_path / "a.weight.pt"), s)
     obj = torch.load(tmp_path / "a.weight.pt")
     assert "tri" in obj and obj["tri"].numel() == 48 * 49 // 2
     asym = s.clone()
     asym[0, 1] += 1e-3  # not symmetric: stored in full
-    C.save_sigma(tmp_path, "b.weight", asym, 300)
+    _save_sigma(tmp_path, "b.weight", asym, 300)
     assert torch.equal(C.load_sigma(tmp_path / "b.weight.pt"), asym)
 
 
@@ -331,8 +337,8 @@ def test_sigma_fp16_storage_is_opt_in(tmp_path):
     x = torch.randn(400, 80)
     s = x.T @ x / 400
     s = 0.5 * (s + s.T)
-    C.save_sigma(tmp_path, "a.weight", s, 400, fp16_above=64)
+    _save_sigma(tmp_path, "a.weight", s, 400, fp16_above=64)
     got = C.load_sigma(tmp_path / "a.weight.pt")
     assert torch.equal(got, s.half().float())
-    C.save_sigma(tmp_path, "b.weight", s, 400, fp16_above=80)  # K not above: fp32
+    _save_sigma(tmp_path, "b.weight", s, 400, fp16_above=80)  # K not above: fp32
     assert torch.equal(C.load_sigma(tmp_path / "b.weight.pt"), s)
