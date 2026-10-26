@@ -69,6 +69,9 @@ class RunConfig:
     # routed experts on disk: per-expert (one HI2 tensor per expert projection) or
     # stacked (one per layer and projection group, hi2.stack); same weights either way
     moe_layout: str = "stacked"
+    # experiment (docs/hi2-lowbit.md): the N most sensitive tensors all-INT8, the
+    # others INT2/INT4 (needs INT8 candidates); 0 = off
+    int8_force: int = 0
 
 
 def calib_paths(path) -> list[Path]:
@@ -440,6 +443,7 @@ def _qad_encode(
             "picks": fingerprint({k: v.tolist() for k, v in sorted(picks.items())}),
             "qad": qad_fingerprint_fields(qc),
             "n_seq": n_seq,
+            **({"int8_force": rc.int8_force} if rc.int8_force else {}),
         }
     )
     inc = re.compile(rc.include) if rc.include else None
@@ -461,7 +465,54 @@ def _qad_encode(
         qdir=rc.workdir / f"qad{tag}",
     )
     (rc.workdir / f"qad_report{tag}.json").write_text(json.dumps(out.layers, indent=1))
-    return out.tensors
+    tensors, dense = out.tensors, out.dense
+    if qc.final_kl > 0:
+        tensors, dense = _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag)
+    return tensors, dense
+
+
+def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag=""):
+    """Phase 3k: the final logit-KL phase (:mod:`hi2.finalkl`) on top of the layer-wise
+    result, resumable from ``workdir/qad<tag>/final_kl.pt``."""
+    from dataclasses import asdict
+
+    from .finalkl import final_kl
+    from .qad import FINAL_FIELDS, fingerprint, split_indices
+
+    qc = rc.qad
+    ffp = fingerprint(
+        {
+            "layerwise": fp,
+            "final": {k: v for k, v in asdict(qc).items() if k in FINAL_FIELDS},
+            "warmup": qc.warmup,
+            "seed": qc.seed,
+        }
+    )
+    art = rc.workdir / f"qad{tag}" / "final_kl.pt"
+    if art.exists():
+        rec = torch.load(art, weights_only=False)
+        if rec.get("fingerprint") == ffp:
+            log(f"final KL: reusing {art.name}")
+            return rec["tensors"], rec["dense"]
+    log(f"phase 3k: final logit-KL phase, {qc.final_kl} steps")
+    train_idx, val_idx = split_indices(ids.shape[0], qc)
+    t, d, info = final_kl(
+        model,
+        ids,
+        train_idx,
+        val_idx,
+        tensors,
+        dense,
+        qc,
+        ex.primary,
+        make_resolver(weight_map(rc.src)),
+        log,
+    )
+    torch.save({"fingerprint": ffp, "tensors": t, "dense": d, "info": info}, art)
+    (rc.workdir / f"final_kl{tag}.json").write_text(
+        json.dumps({k: v for k, v in info.items()}, indent=1)
+    )
+    return t, d
 
 
 def _text_config(src: Path) -> dict:
@@ -598,6 +649,7 @@ def summarize(report: dict[str, dict]) -> dict:
     )
     rows = sum(r["shape"][0] for r in report.values())
     int4 = sum(r["frac_int4"] * r["shape"][0] for r in report.values()) / max(rows, 1)
+    int8 = sum(r.get("frac_int8", 0.0) * r["shape"][0] for r in report.values())
     by_kind: dict[str, list[float]] = {}
     for name, r in report.items():
         kind = name.rsplit(".", 2)[-2]
@@ -607,6 +659,7 @@ def summarize(report: dict[str, dict]) -> dict:
         "params": params,
         "avg_bpw": bpw,
         "frac_int4_rows": int4,
+        **({"frac_int8_rows": int8 / max(rows, 1)} if int8 else {}),
         "bpw_by_projection": {k: sum(v) / len(v) for k, v in sorted(by_kind.items())},
     }
 
@@ -797,6 +850,14 @@ def run(rc: RunConfig, log=print) -> dict:
             raise SystemExit("--sensitivity probe needs calibration data (--calib)")
         sens = _probe(rc, ex, tables, weights, log)
     t_probe = time.time()
+    if rc.int8_force > 0:
+        from .allocate import force_int8
+
+        tables, chosen = force_int8(tables, sens, rc.int8_force)
+        log(
+            f"INT8 rule: {len(chosen)} most sensitive tensors all-INT8, the rest INT2/INT4: "
+            + ", ".join(chosen)
+        )
     if multi:
         targets = [(None, r, output_dir(rc.dst, r)) for r in rc.max_error_ratios]
     else:
@@ -808,7 +869,7 @@ def run(rc: RunConfig, log=print) -> dict:
     t_qad = 0.0  # QAD passes (spec 13), reported apart from the allocation
     for target_bpw, ratio, dst in targets:
         alloc = _allocate(rc, tables, sens, target_bpw, ratio, log)
-        pre = None
+        pre, dense = None, None
         if rc.qad is not None:
             what = (
                 f" for ratio {ratio:g} ({len(targets)} outputs, one QAD each)"
@@ -818,7 +879,7 @@ def run(rc: RunConfig, log=print) -> dict:
             log(f"phase 3q: layer-wise quantization-aware distillation (spec 13){what}")
             tag = f"-r{ratio:g}" if multi else ""
             tq = time.time()
-            pre = _qad_encode(
+            pre, dense = _qad_encode(
                 rc, ex, tables, alloc.picks, sens, log, target_bpw, ratio, tag
             )
             t_qad += time.time() - tq
@@ -840,16 +901,18 @@ def run(rc: RunConfig, log=print) -> dict:
             "calib_tokens": rc.calib_samples * rc.seq_len if calibrated else 0,
         }
         if rc.qad is not None:
-            from dataclasses import asdict
+            from .qad import qad_meta
 
-            meta["qad"] = asdict(rc.qad) | {
+            meta["qad"] = qad_meta(rc.qad) | {
                 "tokens": (rc.qad.samples + rc.qad.val) * rc.seq_len
             }
+            if dense:
+                meta["qad"]["dense_trained"] = len(dense)
         done = rc.workdir / ("shards_done" if not multi else f"shards_done-r{ratio:g}")
         # stacked: write per expert to a staging dir in the workdir, then restack
         # (byte-level, hi2.stack.restack) into dst
         write_to = dst if rc.moe_layout == "per-expert" else staging_dir(rc, dst)
-        outs.append(Output(write_to, alloc.picks, meta, done, pre))
+        outs.append(Output(write_to, alloc.picks, meta, done, pre, dense=dense or None))
         allocs.append(alloc)
     dst_of = {id(o): t[2] for o, t in zip(outs, targets)}
     t_alloc = time.time()

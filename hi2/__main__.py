@@ -95,6 +95,9 @@ def _qad_overrides(a) -> dict:
         ("budget", a.qad_budget),
         ("init", a.qad_init),
         ("layers", a.qad_layers),
+        ("final_kl", a.qad_final_kl),
+        ("kl_layers", a.qad_kl_layers),
+        ("train_norms", a.qad_train_norms),
     ):
         if val is not None:
             over[key] = val
@@ -269,6 +272,7 @@ def main(argv=None):
         "(default; loads ~9x faster in the fork) or one HI2 tensor per expert "
         "projection (docs/hi2-moe.md); the weights are identical",
     )
+    q.add_argument("--int8-force", type=int, default=0, help=argparse.SUPPRESS)
     q.add_argument("--include", default=None, help="regex: only these weights")
     q.add_argument("--exclude", default=DEFAULT_EXCLUDE, help="regex: keep dense")
     q.add_argument("--limit-layers", type=int, default=None)
@@ -311,7 +315,18 @@ def main(argv=None):
         default=None,
         help="JSON file of advanced QAD options (fields of hi2.qad.QadConfig)",
     )
+    g.add_argument(
+        "--qad-final-kl",
+        type=int,
+        default=None,
+        metavar="STEPS",
+        help="after layer-wise QAD, STEPS optimizer steps of whole-network logit KL "
+        "training the ladder bytes and norm weights only (off by default; "
+        "docs/hi2-lowbit.md)",
+    )
     for flag, typ in (
+        ("--qad-kl-layers", int),
+        ("--qad-train-norms", str),
         ("--qad-steps", int),
         ("--qad-lr", float),
         ("--qad-lr-params", float),
@@ -435,6 +450,7 @@ def main(argv=None):
             sens_dtype=a.sens_dtype,
             expert_share_floor=a.expert_share_floor,
             moe_layout=a.moe_layout,
+            int8_force=a.int8_force,
             cfg=Config(
                 candidates=cands,
                 rotation=a.rotation,

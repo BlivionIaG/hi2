@@ -7,10 +7,10 @@
 import pytest
 import torch
 from hi2.allocate import (
-    ROW_OVERHEAD_BITS,
     Allocation,
     allocate_by_quality,
     allocate_global,
+    row_overhead_bits,
 )
 from hi2.calibrate import (
     ALL_CANDIDATES,
@@ -20,7 +20,9 @@ from hi2.calibrate import (
 )
 
 
-# ---------------------------------------------------------------- reference (verbatim)
+# ---------------------------------------------------------------- reference (verbatim, except
+# the per-row overhead: row_overhead_bits(t) since INT8 rows count a 2-bit width flag; it
+# equals the old constant for INT2/INT4 tables, see tests/test_lowbit.py)
 def _costs(t: TensorTable, s: float):
     k = t.shape[1]
     cost = (s / max(t.energy, 1e-30)) * t.sse  # [C, R]
@@ -60,7 +62,7 @@ def ref_allocate_by_quality(
     data = [(t, *_costs(t, sens.get(t.name, 1.0))) for t in tables]
     total_w = sum(t.shape[0] * t.shape[1] for t in tables)
     overhead = sum(
-        ROW_OVERHEAD_BITS * t.shape[0]
+        row_overhead_bits(t) * t.shape[0]
         + t.shape[1] // 16
         + (16 * t.shape[1] if t.col_scale is not None else 0)
         for t in tables
@@ -117,7 +119,7 @@ def ref_allocate_global(
     data = [(t, *_costs(t, sens.get(t.name, 1.0))) for t in tables]
     total_w = sum(t.shape[0] * t.shape[1] for t in tables)
     overhead = sum(
-        ROW_OVERHEAD_BITS * t.shape[0]
+        row_overhead_bits(t) * t.shape[0]
         + t.shape[1] // 16
         + (16 * t.shape[1] if t.col_scale is not None else 0)  # smoothing vector
         for t in tables

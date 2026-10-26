@@ -84,6 +84,33 @@ class QadConfig:
     # random: windows across the whole calibration text; balanced: equal windows per
     # calibration file; head: the first tokens
     sampling: str = "random"
+    # ---- low-bit options (docs/hi2-lowbit.md); all off by default -------------
+    # Train the layer's RMSNorm weights (fp32, AdamW lr_norm) together with its Linears;
+    # they are written to the checkpoint in fp16 (the runtime dtype on RDNA).
+    train_norms: bool = False
+    lr_norm: float = 1e-4
+    # For the last kl_layers layers, add kl_weight x KL(teacher || student) of the logits
+    # (final norm + LM head applied to the layer output; exact at the last layer, a logit
+    # lens before it) on kl_tokens random positions per sequence to the nMSE.
+    kl_layers: int = 0
+    kl_weight: float = 1.0
+    kl_tokens: int = 256
+    # Final logit-KL phase after the layer-wise one (hi2.finalkl): final_kl optimizer steps
+    # of KL(teacher || student) over the whole network, training only the per-block ladder
+    # bytes and the RMSNorm weights (codes frozen); 0 = off.
+    final_kl: int = 0
+    final_batch: int = 2  # sequences per step
+    final_lr_p: float = 0.02  # ladder bytes, in 8-bit levels per step
+    final_lr_norm: float = 5e-5
+    final_norms: bool = True
+    final_bytes: bool = True
+    final_tokens: int = 0  # positions per sequence in the loss (0 = all)
+    final_evals: int = 4
+
+
+# Fields of the final logit-KL phase: never part of the layer-wise fingerprint (they do
+# not change the layer artifacts), fingerprinted separately by hi2.finalkl.
+FINAL_FIELDS = {f for f in QadConfig.__dataclass_fields__ if f.startswith("final_")}
 
 
 # Chosen on Qwen3.5-0.8B at 3.0 bpw (docs/hi2-qad.md); everything else default.
@@ -399,6 +426,25 @@ def _out(o):
     return o[0] if isinstance(o, tuple) else o
 
 
+def is_norm_param(name: str, p: torch.Tensor) -> bool:
+    """RMSNorm/LayerNorm weights (``input_layernorm.weight``, ``q_norm.weight``,
+    ``norm.weight``, ...): 1-D parameters of a module whose name contains ``norm``."""
+    parts = name.split(".")
+    return (
+        p.ndim == 1 and parts[-1] == "weight" and len(parts) > 1 and "norm" in parts[-2]
+    )
+
+
+def head_kl(head, out: torch.Tensor, tgt: torch.Tensor, pos) -> torch.Tensor:
+    """Mean KL(teacher || student) of the logits ``lm_head(norm(h))`` at the positions
+    ``pos`` of ``[1, T, H]`` hidden states (teacher ``tgt``, student ``out``)."""
+    norm, lm = head
+    with torch.no_grad():
+        lt = torch.log_softmax(lm(norm(tgt[0, pos])).float(), -1)
+    ls = torch.log_softmax(lm(norm(out[0, pos])).float(), -1)
+    return (lt.exp() * (lt - ls)).sum(-1).mean()
+
+
 def train_layer(
     layer: nn.Module,
     fq: dict[str, FakeQuantLinear],
@@ -413,13 +459,18 @@ def train_layer(
     tag: str = "",
     fallback: dict[str, FakeQuantLinear] | None = None,
     steps: int | None = None,
+    head: tuple | None = None,
 ) -> dict:
     """Train the fake-quantised Linears ``fq`` (submodule name -> module) of ``layer``
     so that ``layer(xs[i]) ~ ys[i]``. Returns loss/time info; ``fq`` is left at the
     best state (trained, or the initialisation when ``keep_best`` and it was better).
     ``fallback`` (same structure, e.g. the PTQ encoding) is scored on the held-out
     sequences too; with ``keep_best`` its state is taken when it beats training, and
-    ``val_before`` is its loss."""
+    ``val_before`` is its loss.
+
+    With ``qc.train_norms`` the layer's norm weights train too (``info["norms"]`` holds
+    the kept values, empty when the PTQ fallback wins); ``head`` = (final norm, LM head)
+    adds ``qc.kl_weight`` x the logit KL on ``qc.kl_tokens`` positions to the loss."""
     from torch.func import functional_call
 
     from .layerwise import to_device
@@ -439,6 +490,32 @@ def train_layer(
     for m in fq.values():
         m.to(dev)
     kw = to_device(kwargs, dev)
+    norm_params = {}
+    if qc.train_norms:
+        for n, p in layer.named_parameters():
+            if is_norm_param(n, p):
+                p.data = p.data.float()
+                p.requires_grad_(True)
+                norm_params[n] = p
+    hd = None
+    if head is not None:
+        hd = tuple(copy.deepcopy(m).to(dev).float() for m in head)
+        for m in hd:
+            for p in m.parameters():
+                p.requires_grad_(False)
+        kg = torch.Generator().manual_seed(qc.seed + 1)
+        n_tok = xs[0].shape[-2]
+        k_tok = min(qc.kl_tokens, n_tok) if qc.kl_tokens > 0 else n_tok
+        val_pos = {i: torch.randperm(n_tok, generator=kg)[:k_tok] for i in val_idx}
+
+    def loss_fn(out, i, pos=None):
+        tgt = ys[i].to(dev).float()
+        loss = _nmse(out, tgt)
+        if hd is not None:
+            if pos is None:
+                pos = torch.randperm(n_tok, generator=kg)[:k_tok]
+            loss = loss + qc.kl_weight * head_kl(hd, out, tgt, pos.to(dev))
+        return loss
 
     def weights(mods=None):
         return {f"{n}.weight": m() for n, m in (mods or fq).items()}
@@ -450,14 +527,23 @@ def train_layer(
     def val_loss(mods=None) -> float:
         wd = {k: v.detach() for k, v in weights(mods).items()}
         return sum(
-            _nmse(run(wd, i), ys[i].to(dev).float()).item() for i in val_idx
+            loss_fn(run(wd, i), i, val_pos[i] if hd is not None else None).item()
+            for i in val_idx
         ) / max(len(val_idx), 1)
 
     def snapshot():
-        return {
+        st = {
             n: {k: v.detach().clone() for k, v in m.state_dict().items()}
             for n, m in fq.items()
         }
+        st["__norms__"] = {n: p.detach().clone() for n, p in norm_params.items()}
+        return st
+
+    def restore(st):
+        for n, m in fq.items():
+            m.load_state_dict(st[n])
+        for n, p in norm_params.items():
+            p.data.copy_(st["__norms__"][n])
 
     loss0 = val_loss()
     loss_fb = None
@@ -471,10 +557,10 @@ def train_layer(
         a, b = m.param_groups()
         lat += a
         prm += b
-    opt = torch.optim.AdamW(
-        [{"params": lat, "lr": qc.lr_w}, {"params": prm, "lr": qc.lr_p}],
-        weight_decay=0.0,
-    )
+    groups = [{"params": lat, "lr": qc.lr_w}, {"params": prm, "lr": qc.lr_p}]
+    if norm_params:
+        groups.append({"params": list(norm_params.values()), "lr": qc.lr_norm})
+    opt = torch.optim.AdamW(groups, weight_decay=0.0)
     n_steps = qc.steps if steps is None else steps  # this layer's allotment
     warm = max(1, int(qc.warmup * n_steps))
 
@@ -502,7 +588,7 @@ def train_layer(
         wd = {k: v.detach().requires_grad_(True) for k, v in w.items()}
         tot = 0.0
         for i in batch:
-            loss = _nmse(run(wd, i), ys[i].to(dev).float()) / len(batch)
+            loss = loss_fn(run(wd, i), i) / len(batch)
             loss.backward()
             tot += loss.item()
         torch.autograd.backward(list(w.values()), [wd[k].grad for k in w])
@@ -533,15 +619,15 @@ def train_layer(
     final = trace[-1][2]
     kept = "trained"
     if qc.keep_best and best_state is not None and (best < final or n_steps == 0):
-        for n, m in fq.items():
-            m.load_state_dict(best_state[n])
+        restore(best_state)
         kept = "init" if best == loss0 else "best"
     after = min(best, final) if qc.keep_best else final
+    norms = {n: p.detach().cpu().clone() for n, p in norm_params.items()}
     if qc.keep_best and loss_fb is not None and loss_fb <= after:
         for n in list(fq):  # the caller exports from fq: hand it the fallback modules
             fq[n] = fallback[n]
-        kept, after = "ptq", loss_fb
-    return {
+        kept, after, norms = "ptq", loss_fb, {}
+    out = {
         "val_before": loss0 if loss_fb is None else loss_fb,
         "val_init": loss0,
         "val_after": after,
@@ -555,6 +641,9 @@ def train_layer(
         "gpu_peak_gib": acc.max_memory_allocated() / 2**30 if on_gpu else None,
         "trace": trace,
     }
+    if qc.train_norms:
+        out["norms"] = norms
+    return out
 
 
 # ---- whole model ---------------------------------------------------------------
@@ -569,12 +658,33 @@ LEGACY_DEFAULTS = {
     "min_gain": 0.0,
     "min_steps": 0,
     "eval_every": 0,
+    "train_norms": False,
+    "lr_norm": 1e-4,
+    "kl_layers": 0,
+    "kl_weight": 1.0,
+    "kl_tokens": 256,
 }
+
+
+def qad_meta(qc: QadConfig) -> dict:
+    """``QadConfig`` for the checkpoint's ``quantization_config``: the low-bit options
+    only when they differ from their default (a default run writes the same config)."""
+    d = QadConfig()
+    new = set(FINAL_FIELDS) | {
+        "train_norms",
+        "lr_norm",
+        "kl_layers",
+        "kl_weight",
+        "kl_tokens",
+    }
+    return {k: v for k, v in asdict(qc).items() if k not in new or v != getattr(d, k)}
 
 
 def qad_fingerprint_fields(qc: QadConfig) -> dict:
     return {
-        k: v for k, v in asdict(qc).items() if LEGACY_DEFAULTS.get(k, object()) != v
+        k: v
+        for k, v in asdict(qc).items()
+        if LEGACY_DEFAULTS.get(k, object()) != v and k not in FINAL_FIELDS
     }
 
 
@@ -684,10 +794,31 @@ class StepBudget:
         )
 
 
+def split_indices(n: int, qc: QadConfig) -> tuple[list[int], list[int]]:
+    """Training and held-out sequence indices; the held-out ones are spread over the set
+    (with random sampling the windows are sorted by position, so the tail would be one
+    domain)."""
+    val_idx = sorted(range(n - 1, -1, -max(1, n // qc.val))[: qc.val])
+    train_idx = [i for i in range(n) if i not in set(val_idx)]
+    return train_idx, val_idx
+
+
 @dataclass
 class QadResult:
     tensors: dict = field(default_factory=dict)  # checkpoint name -> HI2Tensor
     layers: list = field(default_factory=list)  # per-layer info
+    dense: dict = field(default_factory=dict)  # checkpoint name -> trained dense tensor
+
+
+def final_norm(model: nn.Module, layers_path: str) -> nn.Module:
+    """The decoder's final norm (sibling ``norm`` of the layer list)."""
+    base = layers_path.rsplit(".", 1)[0]
+    for name in (f"{base}.norm", f"{base}.final_layernorm", f"{base}.ln_f"):
+        try:
+            return model.get_submodule(name)
+        except AttributeError:
+            continue
+    raise SystemExit(f"cannot find the final norm next to {layers_path}")
 
 
 def qad_layerwise(
@@ -730,10 +861,7 @@ def qad_layerwise(
     dt = buffer_dtype(qc, n, hidden[0].shape[-2], hidden[0].shape[-1], log)
     xt, xs, yt = _buffers(hidden, dt)  # teacher input, student input, teacher target
     del hidden
-    # held-out sequences spread over the set (with random sampling the windows are sorted
-    # by position, so the tail would be one domain)
-    val_idx = sorted(range(n - 1, -1, -max(1, n // qc.val))[: qc.val])
-    train_idx = [i for i in range(n) if i not in set(val_idx)]
+    train_idx, val_idx = split_indices(n, qc)
     qdir = qdir or workdir / "qad"
     view = StatsView(workdir)
     qdir.mkdir(parents=True, exist_ok=True)
@@ -741,6 +869,9 @@ def qad_layerwise(
     t_start, trained_time, trained_n = time.time(), 0.0, 0
     todo = sorted(i for i in train_set if i < n_layers)
     budget = StepBudget(qc, len(todo))
+    head = None
+    if qc.kl_layers > 0:
+        head = (final_norm(model, path), model.get_output_embeddings())
     log(
         f"QAD: {n_layers} layers ({len(todo)} trained), {len(train_idx)} train + {len(val_idx)} held-out "
         f"sequences of {ids.shape[1]} tokens, {qc.steps} steps x {qc.batch} seqs per layer, "
@@ -767,8 +898,10 @@ def qad_layerwise(
         _propagate(layer, ex, xt, kwargs, yt)
         art = qdir / f"layer{li:03d}.pt"
         rec = torch.load(art, weights_only=False) if art.exists() else None
+        norms: dict = {}
         if rec is not None and rec.get("fingerprint") == fp:
             tensors, info = rec["tensors"], rec["info"]
+            norms = rec.get("norms", {})
             log(f"QAD layer {li}: reusing {art.name}")
             if li in todo:
                 budget.record(info)
@@ -834,7 +967,9 @@ def qad_layerwise(
                     f"L{li}",
                     fb,
                     budget.allot(),
+                    head if li >= n_layers - qc.kl_layers else None,
                 )
+                norms = info.pop("norms", {})
                 tensors = {linears[nm]: m.export() for nm, m in fq.items()}
                 del fq, fb
                 if ex.primary.type == "cuda":
@@ -845,7 +980,10 @@ def qad_layerwise(
             else:
                 tensors = {linears[nm]: t for nm, t in inits.items()}
                 info = {"kept": "ptq", "seconds": time.time() - tl}
-            torch.save({"fingerprint": fp, "tensors": tensors, "info": info}, art)
+            rec = {"fingerprint": fp, "tensors": tensors, "info": info}
+            if norms:
+                rec["norms"] = norms
+            torch.save(rec, art)
             left = len([i for i in todo if i > li])
             eta = (trained_time / max(trained_n, 1)) * left
             if "val_before" in info:
@@ -869,9 +1007,20 @@ def qad_layerwise(
             mod = layer.get_submodule(name)
             originals[name] = mod.weight.data
             mod.weight.data = dequantize(tensors[ckpt]).to(mod.weight.dtype)
+        norm_orig = {}
+        for pn, val in norms.items():  # trained norms: the student uses the fp16 value
+            prm = layer.get_parameter(pn)
+            norm_orig[pn] = prm.data
+            prm.data = val.to(torch.float16).to(prm.dtype)
+            full = f"{prefix}{li}.{pn}"
+            res.dense[(resolve(full) if resolve else full) or full] = val.to(
+                torch.float16
+            )
         _propagate(layer, ex, xs, kwargs, xs)
         for name, wv in originals.items():  # the model object stays unquantized
             layer.get_submodule(name).weight.data = wv
+        for pn, wv in norm_orig.items():
+            layer.get_parameter(pn).data = wv
         xt, yt = (
             yt,
             xt,

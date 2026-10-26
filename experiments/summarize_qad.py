@@ -25,9 +25,9 @@ def last_json(path: Path):
 
 runs = Path(sys.argv[1])
 print(
-    "| run | bpw | INT2 rows | docs ppl ratio | docs KLD | docs top-1 | mix ppl ratio | mix KLD | mix top-1 | quantize min |"
+    "| run | bpw | INT2 rows | INT8 rows | docs ppl ratio | docs KLD | docs top-1 | mix ppl ratio | mix KLD | mix top-1 | quantize min |"
 )
-print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 for tag in sys.argv[2:]:
     cells = []
     rep = runs / tag / "hi2_report.json"
@@ -39,6 +39,7 @@ for tag in sys.argv[2:]:
     )
     m = re.search(r"INT2 ([0-9.]+)%", log)
     cells += [f"{s.get('avg_bpw', float('nan')):.3f}", f"{m.group(1)}%" if m else "n/a"]
+    cells.append(f"{100 * s.get('frac_int8_rows', 0.0):.3f}%")
     for kind in ("eval", "evalmix"):
         r = last_json(runs / f"{tag}.{kind}.log")
         if r is None:

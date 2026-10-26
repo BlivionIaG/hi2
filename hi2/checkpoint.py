@@ -129,6 +129,8 @@ class Output:
     pre_encoded: dict | None = None
     report: dict = field(default_factory=dict)
     new_map: dict = field(default_factory=dict)
+    # trained dense tensors (QAD norms) written instead of the source's
+    dense: dict | None = None
 
 
 def write_checkpoint(
@@ -246,7 +248,10 @@ def write_checkpoints(
                     continue
                 t = f.get_tensor(name) if todo else None
                 for o in outs:
-                    data[id(o)][name] = t if o in todo else None
+                    v = t
+                    if o.dense is not None and name in o.dense and o in todo:
+                        v = o.dense[name].contiguous()
+                    data[id(o)][name] = v if o in todo else None
             enc_names = [n for n in names if n in tables]
             for o in outs:
                 if o in todo:
@@ -297,6 +302,11 @@ def write_checkpoints(
                                 f"{tag}{name} {tuple(tables[name].shape)} bpw={rep['bpw']:.3f} "
                                 f"rel_err={rep['pred_rel_err']:.4f} "
                                 f"int4={rep['frac_int4']:.2f}"
+                                + (
+                                    f" int8={rep['frac_int8']:.2f}"
+                                    if rep["frac_int8"]
+                                    else ""
+                                )
                             )
                     del reqs, encoded, by
         for o in outs:
@@ -351,6 +361,7 @@ def _tensor_report(table: TensorTable, picks: torch.Tensor, t: HI2Tensor) -> dic
         "bpw": tensor_bpw(t),
         "pred_rel_err": chosen / max(table.energy, 1e-30),
         "frac_int4": float((nb == 4).float().mean()),
+        "frac_int8": float((nb == 8).float().mean()),
         "block_hist": {int(b): int((bl == b).sum()) for b in (16, 32, 64)},
         "rotated_groups": int(t.had.sum()),
         "groups": int(t.had.numel()),

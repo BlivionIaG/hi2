@@ -9,6 +9,7 @@ bits-per-weight target. For a multiplier ``lam`` every row independently picks t
 candidate minimising ``cost + lam * bits``; ``lam`` is bisected to meet the target.
 """
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -16,6 +17,22 @@ import torch
 from .calibrate import TensorTable, candidate_row_bits
 
 ROW_OVERHEAD_BITS = 48 + 2 + 1  # row constants + block-size flag + INT4 flag, per row
+
+
+def row_overhead_bits(t: TensorTable) -> int:
+    """Per-row overhead of spec 2.5 for the code widths the table allows: the INT4 flag
+    is ``ceil(log2(#widths))`` bits (1 for INT2/INT4 as before, 2 with INT8 added)."""
+    widths = len({nb for nb, _ in t.candidates})
+    return ROW_OVERHEAD_BITS - 1 + max(1, math.ceil(math.log2(max(widths, 1))))
+
+
+def _overhead(tables) -> int:
+    return sum(
+        row_overhead_bits(t) * t.shape[0]
+        + t.shape[1] // 16
+        + (16 * t.shape[1] if t.col_scale is not None else 0)  # smoothing vector
+        for t in tables
+    )
 
 
 @dataclass
@@ -29,6 +46,36 @@ class Allocation:
         "nan"
     )  # weighted error / best achievable with these candidates
     frac_by_bits: dict[int, float] | None = None  # share of rows per code width
+
+
+def restrict(t: TensorTable, keep) -> TensorTable:
+    """A copy of ``t`` with only the candidates ``(nbits, block)`` for which ``keep`` is
+    true (picks then index the reduced list; the encoder reads ``t.candidates``)."""
+    import dataclasses
+
+    idx = [i for i, c in enumerate(t.candidates) if keep(c)]
+    if len(idx) == len(t.candidates) or not idx:
+        return t
+    return dataclasses.replace(
+        t, sse=t.sse[idx], candidates=[t.candidates[i] for i in idx]
+    )
+
+
+def force_int8(
+    tables: dict[str, TensorTable], sens: dict[str, float] | None, top: int
+) -> tuple[dict[str, TensorTable], list[str]]:
+    """Experiment rule: the ``top`` tensors with the highest probe sensitivity (among those
+    with INT8 candidates) keep only their INT8 candidates, every other tensor loses them."""
+    sens = sens or {}
+    cand = [n for n, t in tables.items() if any(nb == 8 for nb, _ in t.candidates)]
+    chosen = sorted(cand, key=lambda n: -sens.get(n, 1.0))[:top]
+    out = {}
+    for n, t in tables.items():
+        if n in chosen:
+            out[n] = restrict(t, lambda c: c[0] == 8)
+        else:
+            out[n] = restrict(t, lambda c: c[0] != 8)
+    return out, chosen
 
 
 def _costs(t: TensorTable, s: float):
@@ -121,12 +168,7 @@ def allocate_by_quality(
     sens = sensitivity or {}
     data = [(t, *_costs(t, sens.get(t.name, 1.0))) for t in tables]
     total_w = sum(t.shape[0] * t.shape[1] for t in tables)
-    overhead = sum(
-        ROW_OVERHEAD_BITS * t.shape[0]
-        + t.shape[1] // 16
-        + (16 * t.shape[1] if t.col_scale is not None else 0)
-        for t in tables
-    )
+    overhead = _overhead(tables)
     floor = sum(cost.min(0).values.sum().item() for _, cost, _ in data)
     budget = max_error_ratio * floor
 
@@ -179,12 +221,7 @@ def allocate_global(
     sens = sensitivity or {}
     data = [(t, *_costs(t, sens.get(t.name, 1.0))) for t in tables]
     total_w = sum(t.shape[0] * t.shape[1] for t in tables)
-    overhead = sum(
-        ROW_OVERHEAD_BITS * t.shape[0]
-        + t.shape[1] // 16
-        + (16 * t.shape[1] if t.col_scale is not None else 0)  # smoothing vector
-        for t in tables
-    )
+    overhead = _overhead(tables)
     budget = target_bpw * total_w - overhead
 
     flat = _Flat(data)
