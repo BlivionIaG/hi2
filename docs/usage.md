@@ -12,6 +12,7 @@ behind the defaults, read [results.md](results.md) and [design-notes.md](design-
 | `eval SRC DST --text T --skip-tokens N` | Measure perplexity of both models, KL(original to quantized), and top-1 agreement on held-out text. |
 | `export-dense SRC DST OUT` | Write the dequantized model as a plain fp16 Hugging Face directory. Use it to score the model in llama.cpp. |
 | `restack CKPT OUT --layout stacked\|per-expert` | Convert the expert layout of an MoE checkpoint without re-encoding. |
+| `size DST [--src SRC] [--by kind\|layer\|tensor] [--top N] [--json]` | Show where the bytes of a checkpoint go. See "Checking the size". |
 | `cache list\|size\|prune` | Manage the persistent cache. |
 
 `eval` dequantizes the weights and runs the original architecture. It checks the format
@@ -124,6 +125,30 @@ in the work directory instead.
 
 When the code that produces a cache entry changes, raise `STATS_VERSION`,
 `TABLES_VERSION`, or `PROBE_VERSION` in `hi2/cache.py`. See [speed.md](speed.md).
+
+## Checking the size
+
+`hi2 size` reads only the safetensors headers and the small per-row precision arrays. It
+works on both expert layouts and takes a second or two.
+
+```bash
+hi2 size out/q4b --src Qwen3.5-4B --top 10
+```
+
+The report gives:
+
+* the quantized linears: tensor count, weights, bytes, and the measured bpw;
+* the bpw split into codes, block parameters, row constants, smoothing vector, and row
+  index (offsets, precisions, block sizes, rotation flags);
+* the share of weights at INT2, INT4, and INT8;
+* the dense tensors that stay in fp16 (embeddings, `lm_head`, norms, routers);
+* with `--src`, the compression against the source model's tensors;
+* a table by tensor family (`--by kind`), by layer, or by tensor.
+
+The measured bpw counts every byte the loader reads. It is larger than the allocation
+target because it includes the row index. Use it to compare sizes with other formats on
+the same footing: add the dense tensors that the other format keeps in fp16, or subtract
+them from both.
 
 ## Examples
 

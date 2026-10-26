@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the hi2 project
-"""``hi2 quantize|verify|eval|export-dense|restack|cache`` (or ``python -m hi2``).
+"""``hi2 quantize|verify|eval|export-dense|restack|size|cache`` (or ``python -m hi2``).
 
 ``quantize`` runs layer-wise quantization-aware distillation after PTQ by default when
 calibration text is given (``--no-qad`` for PTQ only).
@@ -380,6 +380,14 @@ def main(argv=None):
     r.add_argument("dst", type=Path, help="HI2 checkpoint")
     r.add_argument("out", type=Path, help="new directory")
     r.add_argument("--layout", choices=("per-expert", "stacked"), default="stacked")
+    z = sub.add_parser(
+        "size", help="where the bytes of an HI2 checkpoint go (headers only)"
+    )
+    z.add_argument("dst", type=Path, help="HI2 checkpoint")
+    z.add_argument("--src", type=Path, default=None, help="source model, for the ratio")
+    z.add_argument("--by", choices=("kind", "layer", "tensor"), default="kind")
+    z.add_argument("--top", type=int, default=20, help="rows of the breakdown table")
+    z.add_argument("--json", action="store_true", help="print the report as JSON")
     c = sub.add_parser("cache", help="list, size or prune the persistent cache")
     c.add_argument("action", choices=("list", "size", "prune"))
     c.add_argument("--cache-dir", type=Path, default=None)
@@ -388,6 +396,12 @@ def main(argv=None):
     c.add_argument("--digest", action="append", default=None, help="remove this entry")
     c.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "size":
+        from .size import format_report, size_report
+
+        rep = size_report(a.dst, a.src, a.by)
+        print(json.dumps(rep, indent=2) if a.json else format_report(rep, a.top))
+        return
     if a.cmd == "cache":
         out = cache_command(a)
     elif a.cmd == "restack":
