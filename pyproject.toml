@@ -1,0 +1,21 @@
+[project]
+name = "hi2"
+version = "0.1.0"
+description = "Quantizer for the rdna_hint_flex weight format: variable INT2/INT4 (opt-in INT8) rows, Hadamard + hierarchical block params, GPTQ rounding and layer-wise QAD"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = ["torch", "safetensors", "regex", "transformers"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+hi2 = "hi2.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["hi2*"]

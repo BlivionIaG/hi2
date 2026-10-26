@@ -137,3 +137,7 @@ gfx1030 instruction probes) and `experiments/results/` their raw output. They we
 run on a gfx1030 box; paths inside the shell scripts are that box's.
 
 Tests: `cd . && pytest tests`.
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE).
