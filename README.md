@@ -51,10 +51,10 @@ tensor-parallel forward pass (a single layer fits one GPU).
 
 * `--rounding gptq` (default when `--calib` is given): Hessian-aware, error-compensated
   rounding (spec 8.3). On Qwen3.5-0.8B at 3.0 bpw it takes the perplexity ratio from
-  1.92 to 1.32. It costs about 3.7x the quantization time and writes the full
-  Hessians (about 2 GB for that model, `K^2` floats per input, 1.2 GB per input at
-  K=17408) under `<workdir>/hessian`; delete them afterwards. Without `--calib` it uses
-  nearest rounding. It changes only which codes are chosen, never the format.
+  1.92 to 1.32. The Hessians (`K^2/2` floats per distinct input, about 1 GB for that
+  model) go to the persistent cache (below). On gfx10/gfx11 the column loop runs as a
+  fused HIP kernel, bit-identical to the torch loop used elsewhere. Without `--calib`
+  it uses nearest rounding. It changes only which codes are chosen, never the format.
 * `--sequential` runs the encode pass on the quantized prefix (spec 8.4): a second
   layerwise model pass. It gave no measurable gain, so it is off.
 * `--rotation on --smooth 0.5`: smoothing the activation channels and then rotating
@@ -67,34 +67,67 @@ tensor-parallel forward pass (a single layer fits one GPU).
 * `--bits` / `--blocks` restrict the candidate set (for example `--bits 4 --blocks 64`
   for a uniform INT4/B64 reference). `--effort fast|normal|max`; more effort did not
   improve quality in our runs.
-* `workdir` (default `<out>.work`) holds tables, statistics, Hessians and shard
-  markers; finished output shards are kept on re-run.
+* `workdir` (default `<out>.work`) holds the shard markers (finished output shards
+  are kept on re-run) and `cache_ref.json`, the cache entries the run used; with
+  `--no-cache` it holds tables, statistics and Hessians itself, as before.
+* `--max-error-ratio a,b,c` writes one checkpoint per ratio to `<out>-r<ratio>` from one
+  phase 1, probe and encode pass (each output equals its single-ratio run).
 * Calibration needs `--calib-samples x --seq-len` tokens of text. Evaluate on text
   that is not in the calibration region (`--skip-tokens`).
 * `eval` dequantizes back to dense weights and runs the original architecture: it
   checks the format numerically, it is not a kernel test.
 
-## Quantization-aware distillation (`--qad`)
+## Quantization-aware distillation (QAD, on by default)
 
-One command from a Hugging Face model to a QAD checkpoint (quality allocation, sensitivity
-probe, Hessian-aware PTQ, then layer-by-layer distillation against the unquantized model):
+With calibration text, `quantize` distills every decoder layer after PTQ (quality
+allocation, sensitivity probe, Hessian-aware encode, then layer-by-layer training against
+the unquantized model); `--no-qad` gives PTQ only, and a data-free run falls back to PTQ
+with a warning:
 
 ```bash
-python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --qad
-python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --qad --dry-run  # plan only
+python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --max-error-ratio 6
+python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --dry-run   # plan only
+python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --no-qad    # PTQ only
 python -m hi2 eval <hf_model_dir> <out_dir> --text heldout.txt --device cuda:0
 python -m hi2 export-dense <hf_model_dir> <out_dir> <dense_dir>
 ```
 
-The result is a normal v3.2 checkpoint (no format change). Each decoder layer is trained
-with the exact fake-quantized decode of the format (straight-through gradients) so that
-its output on the quantized prefix's hidden states matches the unquantized layer; the
-row picks, row constants, smoothing vectors and rotation flags stay as PTQ chose them.
-`--qad-preset fast|default|thorough`, `--qad-samples`, `--qad-layers` and
-`--qad-config file.json` are the knobs; the run is resumable per layer (re-run the same
-command). Calibration text is required (`--qad` without it fails immediately); QAD draws
-random windows from the whole text, so a concatenated multi-domain file is fully used.
-Design, measurements, runtimes and memory: `docs/rdna2/hi2-qad.md`.
+The result is a normal v3.2 checkpoint (no format change). Each layer is trained with the
+exact fake-quantized decode of the format (straight-through gradients) so that its output
+on the quantized prefix's hidden states matches the unquantized layer; row picks, row
+constants, smoothing vectors and rotation flags stay as PTQ chose them, and a layer keeps
+its PTQ encoding if training does not beat it on held-out calibration data. Knobs:
+`--qad-preset fast|default|thorough`, `--qad-budget` (fraction of the preset's steps, spent
+where layers still gain, with per-layer early stopping), `--qad-samples`, `--qad-layers`,
+`--qad-config file.json`. The run logs its expected time up front and is resumable per
+layer (re-run the same command). QAD draws random windows from the whole calibration text,
+so a concatenated multi-domain file is fully used. Runtimes on one V620 (QAD part, `default` / `fast`): Qwen3.5-0.8B 41 / 17 min, Qwen3.5-4B about
+3.1 h / 1.3 h, on top of 10-50 min of PTQ.
+Design, measurements and memory: `docs/rdna2/hi2-qad.md`.
+With the cache on, QAD's PTQ initialisation reads the cached statistics and Hessians and
+encodes each layer's Linears in one batched call. `--max-error-ratio a,b,c` with QAD
+runs one QAD pass per output, in sequence (logged, with a time warning; per-layer
+artifacts under `<workdir>/qad-r<ratio>`); use `--no-qad` for a quick PTQ sweep.
+
+## Cache and speed
+
+Statistics, Hessians, phase-1 tables and sensitivity-probe results are cached under
+`--cache-dir` (default `$HI2_CACHE_DIR` or `~/.cache/hi2`), keyed by content: the model
+(config and weight file sizes), the calibration token ids and the settings each product
+depends on. The Hessians do not depend on the allocation target, error ratio, rounding,
+smoothing, rotation or candidates, so later runs of the same model and calibration skip
+the calibration pass, and the probe when its settings match. The log reports
+`cache: ... hit|miss`. Manage it with:
+
+```bash
+python -m hi2 cache list|size
+python -m hi2 cache prune [--older-than DAYS] [--keep-gb N] [--digest D] [--dry-run]
+```
+
+Bump `STATS_VERSION` / `TABLES_VERSION` / `PROBE_VERSION` in `hi2/cache.py` when the code
+producing an entry changes. Design, key and measurements: `docs/rdna2/hi2-speed.md`.
+`HI2_GPTQ_BACKEND=torch` forces the reference GPTQ loop; the kernel builds on first use
+into `~/.cache/hi2/kernels` (`HI2_KERNEL_DIR`).
 
 ## Experiments
 

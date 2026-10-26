@@ -230,11 +230,8 @@ def test_early_stop_and_allotted_steps():
 
 
 def test_config_presets_and_layer_spec():
-    assert (
-        make_config("fast").steps
-        < make_config("default").steps
-        < make_config("thorough").steps
-    )
+    assert make_config("fast").budget < 1 and make_config("default").budget == 1
+    assert make_config("default").steps < make_config("thorough").steps
     assert make_config("default", {"steps": "7", "keep_best": "false"}).steps == 7
     assert make_config("default", {"keep_best": "false"}).keep_best is False
     with pytest.raises(SystemExit):
@@ -500,3 +497,54 @@ def test_step_units_train_and_keep_exactness():
     assert info["val_after"] < info["val_before"]
     for m in fq.values():
         assert torch.equal(dequantize_stored(m.export()), m.stored(False).double())
+
+
+def _ckpt_bytes(dst):
+    return {
+        p.name: p.read_bytes()
+        for p in sorted(dst.iterdir())
+        if p.suffix == ".safetensors"
+    }
+
+
+def test_qad_with_cache_equals_qad_without(tiny, tmp_path):
+    """The cache only moves where the statistics live: a cached QAD run (statistics,
+    Hessians and tables in the cache, batched PTQ-init encode) writes the same
+    checkpoint as the workdir layout."""
+    from hi2.pipeline import run
+
+    plain = _rc(tiny, tmp_path, "plain")
+    cached = _rc(tiny, tmp_path, "cached", cache_dir=tmp_path / "cache")
+    run(plain, log=lambda *_: None)
+    run(cached, log=lambda *_: None)
+    assert not (cached.workdir / "hessian").exists()
+    assert _ckpt_bytes(plain.dst) == _ckpt_bytes(cached.dst)
+
+
+def test_qad_multi_ratio_runs_one_qad_per_output(tiny, tmp_path):
+    from hi2.pipeline import output_dir, run
+
+    logs: list[str] = []
+    rc = _rc(
+        tiny,
+        tmp_path,
+        "m",
+        target_bpw=None,
+        max_error_ratios=[2.0, 6.0],
+        cache_dir=tmp_path / "cache",
+    )
+    out = run(rc, log=logs.append)
+    assert len(out["outputs"]) == 2
+    assert any("QAD runs once per output" in m for m in logs)
+    for r in (2.0, 6.0):
+        assert (rc.workdir / f"qad-r{r:g}").is_dir()
+        single = _rc(
+            tiny,
+            tmp_path,
+            f"s{r:g}",
+            target_bpw=None,
+            max_error_ratio=r,
+            cache_dir=tmp_path / "cache",
+        )
+        run(single, log=lambda *_: None)
+        assert _ckpt_bytes(single.dst) == _ckpt_bytes(output_dir(rc.dst, r))

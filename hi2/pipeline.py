@@ -12,13 +12,15 @@ import regex as re
 import torch
 
 from .allocate import allocate_by_quality, allocate_global
+from .cache import StatsView
 from .calibrate import Config, TensorTable, build_table
 from .checkpoint import (
     DEFAULT_EXCLUDE,
+    Output,
     is_eligible,
     make_resolver,
     weight_map,
-    write_checkpoint,
+    write_checkpoints,
 )
 from .executor import Executor
 from .moe import expert_parts, expert_weights, group_key, probe_units
@@ -38,6 +40,8 @@ class RunConfig:
     seq_len: int = 2048
     target_bpw: float | None = None  # model-wide bits per weight, or
     max_error_ratio: float | None = None  # quality target (INT2 where it matters less)
+    # several quality targets from one phase 1 / probe, written to <dst>-r<ratio>
+    max_error_ratios: list[float] | None = None
     include: str | None = None
     exclude: str = DEFAULT_EXCLUDE
     limit_layers: int | None = None
@@ -48,12 +52,17 @@ class RunConfig:
     sens_seqs: int = 8
     sens_len: int = 512
     sens_floor: float = 0.05
+    sens_batch: int = 1  # probe sequences per forward (1 = the original probe, exact)
     sens_dtype: str = (
         "float32"  # dtype of the whole-model probe (float16 if fp32 does not fit)
     )
     # MoE: lower bound of an expert's routed-token share (relative to uniform routing)
     # in its allocation weight
     expert_share_floor: float = 0.05
+    # persistent cache of statistics, tables and probe results (hi2.cache); None keeps
+    # everything in the workdir as before
+    cache_dir: Path | None = None
+    sigma_fp16_above: int = 0  # cache Sigma in fp16 for K above this (0 = always fp32)
     # layer-wise quantization-aware distillation after the allocation (spec 13); None = off
     qad: object | None = None  # hi2.qad.QadConfig
 
@@ -163,32 +172,47 @@ def _load_model(rc: RunConfig, log=print):
     return model
 
 
+def _calib_ids(rc: RunConfig) -> torch.Tensor:
+    if rc.calib_ids is not None:
+        return rc.calib_ids
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(rc.src)
+    return load_calibration_ids(rc.calib, tok, rc.calib_samples, rc.seq_len)
+
+
+def _save_tables(tables: dict, tdir: Path) -> None:
+    tdir.mkdir(parents=True, exist_ok=True)
+    for name, t in tables.items():
+        torch.save(t, tdir / (name.replace("/", "_") + ".pt"))
+
+
+def _load_tables(tdir: Path, names: list[str]) -> dict[str, TensorTable]:
+    return {
+        n: torch.load(tdir / (n.replace("/", "_") + ".pt"), weights_only=False)
+        for n in names
+    }
+
+
 def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTable]:
     inc = re.compile(rc.include) if rc.include else None
     exc = re.compile(rc.exclude)
     tdir = rc.workdir / "tables"
-    tdir.mkdir(parents=True, exist_ok=True)
     if rc.calib is None and rc.calib_ids is None:
+        tdir.mkdir(parents=True, exist_ok=True)
         return _tabulate_streaming(rc, ex, inc, exc, tdir, log)
+    if rc.cache_dir is not None:
+        return _phase1_cached(rc, ex, inc, exc, log)
     marker = rc.workdir / "phase1.json"
     if rc.calib_ids is None and marker.exists():
         done = json.loads(marker.read_text())
         hess_ok = rc.cfg.rounding != "gptq" or (rc.workdir / "hessian").is_dir()
         if done.get("key") == _phase1_key(rc) and hess_ok:
             log(f"phase 1: reusing {len(done['tensors'])} tables from {rc.workdir}")
-            return {
-                n: torch.load(tdir / (n.replace("/", "_") + ".pt"), weights_only=False)
-                for n in done["tensors"]
-            }
-    from transformers import AutoTokenizer
-
+            return _load_tables(tdir, done["tensors"])
     from .layerwise import calibrate_layerwise
 
-    if rc.calib_ids is not None:
-        ids = rc.calib_ids
-    else:
-        tok = AutoTokenizer.from_pretrained(rc.src)
-        ids = load_calibration_ids(rc.calib, tok, rc.calib_samples, rc.seq_len)
+    ids = _calib_ids(rc)
     model = _load_model(rc, log)
     wmap = weight_map(rc.src)
     tables = calibrate_layerwise(
@@ -206,9 +230,93 @@ def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTab
     missing = [n for n in tables if n not in wmap]
     if missing:
         raise SystemExit(f"module names not found in the checkpoint: {missing[:3]}")
-    for name, t in tables.items():
-        torch.save(t, tdir / (name.replace("/", "_") + ".pt"))
+    _save_tables(tables, tdir)
     marker.write_text(json.dumps({"key": _phase1_key(rc), "tensors": list(tables)}))
+    return tables
+
+
+def _phase1_cached(
+    rc: RunConfig, ex: Executor, inc, exc, log
+) -> dict[str, TensorTable]:
+    """Phase 1 through the persistent cache: statistics (forward passes) are reused for
+    any run with the same model, calibration tokens and placement, tables for the same
+    phase-1 settings on top. The workdir only records which entries it used."""
+    from . import cache as C
+    from .layerwise import CacheSink, calibrate_layerwise, tables_from_stats
+
+    root = Path(rc.cache_dir)
+    ids = _calib_ids(rc)
+    want_h = rc.cfg.rounding == "gptq" and not rc.cfg.sequential
+    need = "hessian" if want_h else None
+    sent = C.Entry(root, C.stats_key(rc, ids, ex.devices))
+    tent = C.Entry(root, C.tables_key(sent.key, rc.cfg))
+    tables = None
+    if not sent.complete(need):
+        with sent.building():
+            if not sent.complete(need):
+                log(
+                    f"cache: statistics miss ({sent.path}), running the calibration pass"
+                )
+                C.check_space(root, C.estimate_stats_bytes(rc.src, inc, exc), log)
+                sent.begin()
+                try:
+                    model = _load_model(rc, log)
+                    wmap = weight_map(rc.src)
+                    sink = CacheSink(sent.work, rc.sigma_fp16_above)
+                    tables = calibrate_layerwise(
+                        model,
+                        ids,
+                        rc.cfg,
+                        ex,
+                        rc.workdir,
+                        inc,
+                        exc,
+                        rc.limit_layers,
+                        log,
+                        make_resolver(wmap),
+                        sink,
+                    )
+                    del model
+                    missing = [n for n in tables if n not in wmap]
+                    if missing:
+                        raise SystemExit(
+                            f"module names not found in the checkpoint: {missing[:3]}"
+                        )
+                    sink.flush(wait=True)
+                    sent.finish({"hessian": want_h, "tensors": len(tables)})
+                except BaseException:
+                    sent.abort()
+                    raise
+                with tent.building():  # fresh tables: store them under the stats lock
+                    tent.begin()
+                    _save_tables(tables, tent.work / "tables")
+                    tent.finish({"tensors": list(tables)})
+    else:
+        log(f"cache: statistics hit ({sent.path})")
+        sent.touch()
+    if tables is not None:
+        pass
+    elif tent.complete():
+        log(f"cache: tables hit ({tent.path})")
+        tent.touch()
+        tables = _load_tables(tent.path / "tables", tent.info()["tensors"])
+    else:
+        with tent.building():
+            if tent.complete():
+                tables = _load_tables(tent.path / "tables", tent.info()["tensors"])
+            else:
+                log(f"cache: tables miss ({tent.path}), tabulating from the statistics")
+                tent.begin()
+                try:
+                    tables = tables_from_stats(
+                        rc.src, sent.path, rc.cfg, ex, rc.compute_dtype, log
+                    )
+                    _save_tables(tables, tent.work / "tables")
+                    tent.finish({"tensors": list(tables)})
+                except BaseException:
+                    tent.abort()
+                    raise
+    C.write_ref(rc.workdir, stats=sent.path, tables=tent.path)
     return tables
 
 
@@ -281,8 +389,12 @@ def _sequential_encode(rc, ex, tables, picks, log) -> dict:
     )
 
 
-def _qad_encode(rc, ex, tables, picks, sens, log) -> dict:
-    """Phase 3q: layer-wise QAD (spec 13); returns ``{name: HI2Tensor}``."""
+def _qad_encode(
+    rc, ex, tables, picks, sens, log, target_bpw=None, ratio=None, tag=""
+) -> dict:
+    """Phase 3q: layer-wise QAD (spec 13); returns ``{name: HI2Tensor}``. ``tag`` names
+    the output in multi-output mode (own per-layer artifacts ``workdir/qad<tag>`` and
+    report ``workdir/qad_report<tag>.json``)."""
     from transformers import AutoTokenizer
 
     from .qad import fingerprint, qad_fingerprint_fields, qad_layerwise
@@ -318,8 +430,8 @@ def _qad_encode(rc, ex, tables, picks, sens, log) -> dict:
     fp = fingerprint(
         {
             "phase1": _phase1_key(rc),
-            "target_bpw": rc.target_bpw,
-            "max_error_ratio": rc.max_error_ratio,
+            "target_bpw": target_bpw,
+            "max_error_ratio": ratio,
             "sens": sens,
             "picks": fingerprint({k: v.tolist() for k, v in sorted(picks.items())}),
             "qad": qad_fingerprint_fields(qc),
@@ -342,8 +454,9 @@ def _qad_encode(rc, ex, tables, picks, sens, log) -> dict:
         fp,
         rc.limit_layers,
         log,
+        qdir=rc.workdir / f"qad{tag}",
     )
-    (rc.workdir / "qad_report.json").write_text(json.dumps(out.layers, indent=1))
+    (rc.workdir / f"qad_report{tag}.json").write_text(json.dumps(out.layers, indent=1))
     return out.tensors
 
 
@@ -527,7 +640,110 @@ def _expert_summary(report: dict[str, dict]) -> dict:
     return {"expert": agg(ex), "non_expert": agg(dense)}
 
 
+def _probe(rc: RunConfig, ex: Executor, tables, weights, log) -> dict | None:
+    """Phase 2a: the sensitivity probe, reused from the cache (``probe`` entry keyed by
+    the tables and the probe settings and tokens) or from the workdir."""
+    from .sensitivity import REF_CANDIDATE, probe_sensitivity
+
+    pids = _probe_ids(rc)
+    skey = {
+        "phase1": _phase1_key(rc),
+        "seqs": rc.sens_seqs,
+        "len": rc.sens_len,
+        "floor": rc.sens_floor,
+        "dtype": rc.sens_dtype,
+        "share_floor": rc.expert_share_floor,
+        **({"batch": rc.sens_batch} if rc.sens_batch != 1 else {}),
+    }
+    spath, kpath = rc.workdir / "sensitivity.json", rc.workdir / "sensitivity.key.json"
+
+    def compute():
+        return probe_sensitivity(
+            rc.src,
+            tables,
+            rc.workdir,
+            pids,
+            rc.cfg,
+            ex,
+            floor=rc.sens_floor,
+            log=log,
+            units=probe_units(tables, weights),
+            dtype=getattr(torch, rc.sens_dtype),
+            batch=rc.sens_batch,
+        )
+
+    ref = rc.workdir / "cache_ref.json"
+    if rc.cache_dir is not None and ref.exists():
+        from . import cache as C
+
+        tkey = json.loads(
+            (Path(json.loads(ref.read_text())["tables"]) / "key.json").read_text()
+        )
+        pent = C.Entry(Path(rc.cache_dir), C.probe_key(tkey, rc, pids, REF_CANDIDATE))
+        with pent.building():
+            if pent.complete():
+                log(f"cache: sensitivity probe hit ({pent.path})")
+                pent.touch()
+                sens = json.loads((pent.path / "sensitivity.json").read_text())
+            else:
+                log(f"cache: sensitivity probe miss ({pent.path})")
+                log("phase 2a: probing per-tensor sensitivity")
+                sens = compute()
+                pent.begin()
+                (pent.work / "sensitivity.json").write_text(json.dumps(sens, indent=1))
+                pent.finish({})
+        C.write_ref(rc.workdir, probe=pent.path)
+    elif spath.exists() and kpath.exists() and json.loads(kpath.read_text()) == skey:
+        log("phase 2a: reusing the sensitivity probe of this workdir")
+        return json.loads(spath.read_text())
+    else:
+        log("phase 2a: probing per-tensor sensitivity")
+        sens = compute()
+    spath.write_text(json.dumps(sens, indent=1))
+    kpath.write_text(json.dumps(skey))
+    return sens
+
+
+def _allocate(rc: RunConfig, tables, sens, target_bpw, ratio, log):
+    if target_bpw is None:
+        ratio = DEFAULT_ERROR_RATIO if ratio is None else ratio
+        log(
+            f"phase 2: quality allocation over {len(tables)} tensors, "
+            f"weighted error <= {ratio:g} x the best achievable"
+        )
+        alloc = allocate_by_quality(list(tables.values()), ratio, sens)
+        if not alloc.feasible:
+            log("  warning: ratio below 1 is unreachable; using the most accurate")
+    else:
+        log(
+            f"phase 2: global allocation over {len(tables)} tensors, "
+            f"target {target_bpw} bpw"
+        )
+        alloc = allocate_global(list(tables.values()), target_bpw, sens)
+        if not alloc.feasible:
+            log(
+                "  warning: target is below the cheapest configuration; using the cheapest"
+            )
+    mix = ", ".join(
+        f"INT{nb} {100 * f:.1f}%"
+        for nb, f in sorted((alloc.frac_by_bits or {}).items())
+    )
+    log(
+        f"  allocation bpw {alloc.bpw:.4f} error ratio {alloc.error_ratio:.3f} "
+        f"rows: {mix}"
+    )
+    return alloc
+
+
+def output_dir(dst: Path, ratio: float) -> Path:
+    """Output of one ratio in multi-output mode: ``<dst>-r<ratio>``."""
+    return Path(f"{dst}-r{ratio:g}")
+
+
 def run(rc: RunConfig, log=print) -> dict:
+    """Quantize. With ``rc.max_error_ratios`` (several values) phase 1 and the probe
+    run once and every ratio is allocated and written to ``<dst>-r<ratio>`` in one
+    encode pass; the return value is then ``{"outputs": {dir: summary}}``."""
     t_start = time.time()
     rc.workdir.mkdir(parents=True, exist_ok=True)
     ex = Executor(rc.devices)
@@ -536,10 +752,19 @@ def run(rc: RunConfig, log=print) -> dict:
         check_inputs(rc, log)  # fails early, or drops QAD for a data-free run
     if rc.qad is not None:
         _log_qad_plan(rc, ex, log)
+        if rc.max_error_ratios is not None and len(rc.max_error_ratios) > 1:
+            log(
+                f"warning: QAD runs once per output: {len(rc.max_error_ratios)} ratios = "
+                f"{len(rc.max_error_ratios)} QAD passes in sequence (the estimate above "
+                "is per pass); pass --no-qad for a quick PTQ sweep"
+            )
     if rc.cfg.rounding == "gptq" and not calibrated:
         log("no calibration data: using nearest rounding")
         rc.cfg.rounding = "nearest"
         rc.cfg.sequential = False
+    multi = rc.max_error_ratios is not None and len(rc.max_error_ratios) > 1
+    if rc.target_bpw is not None and (rc.max_error_ratio is not None or multi):
+        raise ValueError("give either target_bpw or max_error_ratio, not both")
     log(
         f"phase 1: tabulating on {[str(d) for d in ex.devices]}"
         f"{'' if calibrated else ' (data-free)'}"
@@ -558,118 +783,89 @@ def run(rc: RunConfig, log=print) -> dict:
     if rc.sensitivity == "probe":
         if not calibrated:
             raise SystemExit("--sensitivity probe needs calibration data (--calib)")
-        from .sensitivity import probe_sensitivity
-
-        skey = {
-            "phase1": _phase1_key(rc),
-            "seqs": rc.sens_seqs,
-            "len": rc.sens_len,
-            "floor": rc.sens_floor,
-            "dtype": rc.sens_dtype,
-            "share_floor": rc.expert_share_floor,
-        }
-        spath, kpath = (
-            rc.workdir / "sensitivity.json",
-            rc.workdir / "sensitivity.key.json",
-        )
-        if spath.exists() and kpath.exists() and json.loads(kpath.read_text()) == skey:
-            log("phase 2a: reusing the sensitivity probe of this workdir")
-            sens = json.loads(spath.read_text())
-        else:
-            log("phase 2a: probing per-tensor sensitivity")
-            sens = probe_sensitivity(
-                rc.src,
-                tables,
-                rc.workdir,
-                _probe_ids(rc),
-                rc.cfg,
-                ex,
-                floor=rc.sens_floor,
-                log=log,
-                units=probe_units(tables, weights),
-                dtype=getattr(torch, rc.sens_dtype),
-            )
-            spath.write_text(json.dumps(sens, indent=1))
-            kpath.write_text(json.dumps(skey))
-    if rc.target_bpw is not None and rc.max_error_ratio is not None:
-        raise ValueError("give either target_bpw or max_error_ratio, not both")
-    if rc.target_bpw is None:
-        ratio = (
-            DEFAULT_ERROR_RATIO if rc.max_error_ratio is None else rc.max_error_ratio
-        )
-        log(
-            f"phase 2: quality allocation over {len(tables)} tensors, "
-            f"weighted error <= {ratio:g} x the best achievable"
-        )
-        alloc = allocate_by_quality(list(tables.values()), ratio, sens)
-        if not alloc.feasible:
-            log("  warning: ratio below 1 is unreachable; using the most accurate")
+        sens = _probe(rc, ex, tables, weights, log)
+    t_probe = time.time()
+    if multi:
+        targets = [(None, r, output_dir(rc.dst, r)) for r in rc.max_error_ratios]
     else:
-        log(
-            f"phase 2: global allocation over {len(tables)} tensors, "
-            f"target {rc.target_bpw} bpw"
-        )
-        alloc = allocate_global(list(tables.values()), rc.target_bpw, sens)
-        if not alloc.feasible:
-            log(
-                "  warning: target is below the cheapest configuration; using the cheapest"
+        ratio = rc.max_error_ratio
+        if ratio is None and rc.max_error_ratios:
+            ratio = rc.max_error_ratios[0]
+        targets = [(rc.target_bpw, ratio, rc.dst)]
+    outs, allocs = [], []
+    for target_bpw, ratio, dst in targets:
+        alloc = _allocate(rc, tables, sens, target_bpw, ratio, log)
+        pre = None
+        if rc.qad is not None:
+            what = (
+                f" for ratio {ratio:g} ({len(targets)} outputs, one QAD each)"
+                if multi
+                else ""
             )
-    mix = ", ".join(
-        f"INT{nb} {100 * f:.1f}%"
-        for nb, f in sorted((alloc.frac_by_bits or {}).items())
-    )
-    log(
-        f"  allocation bpw {alloc.bpw:.4f} error ratio {alloc.error_ratio:.3f} "
-        f"rows: {mix}"
-    )
-    pre = None
-    if rc.qad is not None:
-        log("phase 3q: layer-wise quantization-aware distillation (spec 13)")
-        pre = _qad_encode(rc, ex, tables, alloc.picks, sens, log)
-    elif rc.cfg.rounding == "gptq" and rc.cfg.sequential:
-        log("phase 3a: sequential encode pass (spec 8.4)")
-        pre = _sequential_encode(rc, ex, tables, alloc.picks, log)
-    log("phase 3: encoding and writing")
-    meta = {
-        "mode": "flex",
-        "target_bpw": rc.target_bpw,
-        "max_error_ratio": rc.max_error_ratio,
-        "allocation_error_ratio": alloc.error_ratio,
-        "calibrated": calibrated,
-        "rounding": rc.cfg.rounding,
-        "sequential": rc.cfg.sequential,
-        "smooth": rc.cfg.smooth,
-        "rotation": rc.cfg.rotation,
-        "calib_tokens": rc.calib_samples * rc.seq_len if calibrated else 0,
-    }
-    if rc.qad is not None:
-        from dataclasses import asdict
-
-        meta["qad"] = asdict(rc.qad) | {
-            "tokens": (rc.qad.samples + rc.qad.val) * rc.seq_len
+            log(f"phase 3q: layer-wise quantization-aware distillation (spec 13){what}")
+            tag = f"-r{ratio:g}" if multi else ""
+            pre = _qad_encode(
+                rc, ex, tables, alloc.picks, sens, log, target_bpw, ratio, tag
+            )
+        elif rc.cfg.rounding == "gptq" and rc.cfg.sequential:
+            log("phase 3a: sequential encode pass (spec 8.4)")
+            pre = _sequential_encode(rc, ex, tables, alloc.picks, log)
+        meta = {
+            "mode": "flex",
+            "target_bpw": target_bpw,
+            "max_error_ratio": ratio
+            if (multi or rc.max_error_ratio is not None)
+            else None,
+            "allocation_error_ratio": alloc.error_ratio,
+            "calibrated": calibrated,
+            "rounding": rc.cfg.rounding,
+            "sequential": rc.cfg.sequential,
+            "smooth": rc.cfg.smooth,
+            "rotation": rc.cfg.rotation,
+            "calib_tokens": rc.calib_samples * rc.seq_len if calibrated else 0,
         }
-    report = write_checkpoint(
-        rc.src, rc.dst, rc.workdir, tables, alloc.picks, rc.cfg, ex, meta, log, pre
-    )
-    summary = summarize(report) | {
-        "allocation_bpw": alloc.bpw,
-        "feasible": alloc.feasible,
-        "allocation_error_ratio": alloc.error_ratio,
-        "frac_rows_by_bits": alloc.frac_by_bits,
-        "runtime_s": {
-            "phase1": round(t_phase1 - t_start, 1),
-            "total": round(time.time() - t_start, 1),
-        },
-        "peak_memory_gib": _peak_memory(ex),
-    }
-    tok = rc.workdir / "expert_tokens.json"
-    if weights:
-        summary["experts"] = _expert_summary(report)
-        if tok.exists():
-            cov = json.loads(tok.read_text())
-            summary["experts"]["fallback_tensors"] = len(cov["fallback"])
-            summary["experts"]["coverage"] = cov["coverage"]
-    (rc.dst / "hi2_report.json").write_text(
-        json.dumps({"summary": summary, "tensors": report}, indent=2)
-    )
-    return summary
+        if rc.qad is not None:
+            from dataclasses import asdict
+
+            meta["qad"] = asdict(rc.qad) | {
+                "tokens": (rc.qad.samples + rc.qad.val) * rc.seq_len
+            }
+        done = rc.workdir / ("shards_done" if not multi else f"shards_done-r{ratio:g}")
+        outs.append(Output(dst, alloc.picks, meta, done, pre))
+        allocs.append(alloc)
+    t_alloc = time.time()
+    log(f"phase 3: encoding and writing {len(outs)} checkpoint(s)")
+    write_checkpoints(rc.src, outs, rc.workdir, tables, rc.cfg, ex, log)
+    t_end = time.time()
+    tok = StatsView(rc.workdir).expert_tokens_path()
+    summaries = {}
+    for o, alloc in zip(outs, allocs):
+        report = o.report
+        summary = summarize(report) | {
+            "allocation_bpw": alloc.bpw,
+            "feasible": alloc.feasible,
+            "allocation_error_ratio": alloc.error_ratio,
+            "frac_rows_by_bits": alloc.frac_by_bits,
+            "runtime_s": {
+                "phase1": round(t_phase1 - t_start, 1),
+                "probe": round(t_probe - t_phase1, 1),
+                "allocate": round(t_alloc - t_probe, 1),
+                "encode": round(t_end - t_alloc, 1),
+                "total": round(t_end - t_start, 1),
+                "outputs_in_this_run": len(outs),
+            },
+            "peak_memory_gib": _peak_memory(ex),
+        }
+        if weights:
+            summary["experts"] = _expert_summary(report)
+            if tok is not None:
+                cov = json.loads(tok.read_text())
+                summary["experts"]["fallback_tensors"] = len(cov["fallback"])
+                summary["experts"]["coverage"] = cov["coverage"]
+        (o.dst / "hi2_report.json").write_text(
+            json.dumps({"summary": summary, "tensors": report}, indent=2)
+        )
+        summaries[str(o.dst)] = summary
+    if multi:
+        return {"outputs": summaries}
+    return summaries[str(outs[0].dst)]

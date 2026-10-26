@@ -40,6 +40,58 @@ def _costs(t: TensorTable, s: float):
     return cost.double(), bits
 
 
+def _argmin0(v: torch.Tensor) -> torch.Tensor:
+    """``v.argmin(0)`` (first index of the minimum, ``v`` without NaN) as C-1 vector
+    compares: torch's strided dim-0 argmin is ~30x slower on CPU for ``[6, 10^5]``."""
+    best = v[0].clone()
+    idx = torch.zeros(v.shape[1], dtype=torch.int64)
+    for c in range(1, v.shape[0]):
+        m = v[c] < best
+        best = torch.where(m, v[c], best)
+        idx.masked_fill_(m, c)
+    return idx
+
+
+class _Flat:
+    """All tables' costs and bits side by side (``[C, sum R]``, missing candidates of a
+    table padded with an infinite cost), so a multiplier is solved with one argmin
+    instead of one per tensor. The per-tensor sums are taken over the same values in
+    the same order as before, so the bisection, and every pick, is unchanged."""
+
+    def __init__(self, data):
+        c = max(cost.shape[0] for _, cost, _ in data)
+        self.spans = []
+        costs, bits = [], []
+        off = 0
+        for t, cost, b in data:
+            r = cost.shape[1]
+            pad = c - cost.shape[0]
+            cc = torch.cat([cost, torch.full((pad, r), float("inf"), dtype=cost.dtype)])
+            bb = (
+                torch.cat([b, torch.zeros(pad, dtype=b.dtype)])
+                .unsqueeze(1)
+                .expand(c, r)
+            )
+            costs.append(cc)
+            bits.append(bb)
+            self.spans.append((t.name, off, off + r))
+            off += r
+        self.cost = torch.cat(costs, 1)
+        self.bits = torch.cat(bits, 1).contiguous()
+
+    def solve(self, lam: float):
+        """``(picks, picked bits per tensor, picked cost per tensor)``."""
+        p = _argmin0(self.cost + lam * self.bits)
+        pb = self.bits.gather(0, p[None])[0]
+        pc = self.cost.gather(0, p[None])[0]
+        picks, nbits, err = {}, [], []
+        for name, a, b in self.spans:
+            picks[name] = p[a:b].clone()
+            nbits.append(pb[a:b].sum().item())
+            err.append(pc[a:b].sum().item())
+        return picks, nbits, err
+
+
 def _summary(data, picks):
     """Weighted error relative to the best achievable, and the row share per width."""
     err = floor = 0.0
@@ -78,12 +130,13 @@ def allocate_by_quality(
     floor = sum(cost.min(0).values.sum().item() for _, cost, _ in data)
     budget = max_error_ratio * floor
 
+    flat = _Flat(data)
+
     def solve(lam: float):
-        picks, err = {}, 0.0
-        for t, cost, bits in data:
-            p = (cost + lam * bits.unsqueeze(1)).argmin(0)
-            picks[t.name] = p
-            err += cost[p, torch.arange(p.numel())].sum().item()
+        picks, _, errs = flat.solve(lam)
+        err = 0.0
+        for e in errs:
+            err += e
         return picks, err
 
     lam_hi = 1.0
@@ -134,12 +187,13 @@ def allocate_global(
     )
     budget = target_bpw * total_w - overhead
 
+    flat = _Flat(data)
+
     def solve(lam: float):
-        picks, bits_total = {}, 0.0
-        for t, cost, bits in data:
-            p = (cost + lam * bits.unsqueeze(1)).argmin(0)
-            picks[t.name] = p
-            bits_total += bits[p].sum().item()
+        picks, nbits, _ = flat.solve(lam)
+        bits_total = 0.0
+        for b in nbits:
+            bits_total += b
         return picks, bits_total
 
     lam_hi = 1.0

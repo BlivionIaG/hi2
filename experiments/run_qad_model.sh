@@ -17,7 +17,7 @@ export PYTHONPATH=$HERE OMP_NUM_THREADS=32
 mkdir -p "$OUT"
 if [ -n "${SHARE_FROM:-}" ]; then
   mkdir -p "$OUT/$TAG.work"
-  for f in tables stats hessian phase1.done sensitivity.json sensitivity.done; do
+  for f in tables stats hessian phase1.json sensitivity.json sensitivity.key.json; do
     [ -e "$SHARE_FROM/$f" ] && cp -al "$SHARE_FROM/$f" "$OUT/$TAG.work/"
   done
 fi

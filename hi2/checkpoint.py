@@ -7,12 +7,13 @@ and verification. Tensor names follow spec 2.4 (``<name>.hi2_<field>``).
 
 import json
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import regex as re
 import torch
 
-from .calibrate import Config, TensorTable, encode_with_picks
+from .calibrate import Config, EncodeRequest, TensorTable, encode_many
 from .executor import Executor
 from .format import FIELDS, HI2Tensor, dequantize, tensor_bpw
 from .stats import ColumnStats
@@ -113,6 +114,23 @@ def table_stats_path(workdir: Path, name: str) -> Path:
     return workdir / "stats" / (name.replace("/", "_") + ".pt")
 
 
+# tensors encoded together (u factors, weights and temporaries on the device)
+ENCODE_BATCH_BYTES = int(float(os.environ.get("HI2_ENCODE_BATCH_GB", "6")) * 2**30)
+
+
+@dataclass
+class Output:
+    """One checkpoint written by :func:`write_checkpoints`."""
+
+    dst: Path
+    picks: dict[str, torch.Tensor]
+    meta: dict
+    done_dir: Path  # per-shard "finished" markers (resume)
+    pre_encoded: dict | None = None
+    report: dict = field(default_factory=dict)
+    new_map: dict = field(default_factory=dict)
+
+
 def write_checkpoint(
     src: Path,
     dst: Path,
@@ -127,77 +145,200 @@ def write_checkpoint(
 ) -> dict:
     """Phase 3: stream shards, encode the tables' tensors with their picks (or take
     them from ``pre_encoded``), copy the rest. Existing output shards are kept."""
+    out = Output(dst, picks, meta, workdir / "shards_done", pre_encoded)
+    write_checkpoints(src, [out], workdir, tables, cfg, ex, log)
+    return out.report
+
+
+def _requests_for(names, path, view, tables, outs, cfg):
+    """Load the source tensors, statistics and Hessians of ``names`` (one shard file)
+    and build an :class:`EncodeRequest` per tensor and output that still needs it."""
+    from safetensors import safe_open
+
+    with safe_open(path, "pt") as f:
+        return _requests_from(names, f, view, tables, outs, cfg)
+
+
+def _requests_from(names, f, view, tables, outs, cfg):
+    reqs, slots = [], []
+    loaded: dict[str, torch.Tensor] = {}
+    for name in names:
+        need = [
+            o for o in outs if not (o.pre_encoded is not None and name in o.pre_encoded)
+        ]
+        if not need:
+            continue
+        w = f.get_tensor(name)
+        st = view.stats_state(name)
+        stats = None
+        if st is not None and st["n"] > 0:
+            stats = ColumnStats.from_state(st, "cpu")
+        sigma = sid = None
+        if cfg.rounding == "gptq":
+            sid = view.sigma_id(name)
+            if sid is not None:  # one load per shared input (gate/up, q/k/v)
+                if sid not in loaded:
+                    loaded[sid] = view.sigma(name)
+                sigma = loaded[sid]
+        for o in need:
+            reqs.append(
+                EncodeRequest(w, stats, tables[name], o.picks[name], sigma, sid)
+            )
+            slots.append((name, o))
+    return reqs, slots
+
+
+def _batches(names, tables, outs, budget):
+    """Consecutive tensors of a shard grouped so that the factors (K^2) and weights of
+    a group stay under ``budget`` bytes (fp32) per device."""
+    cur, size = [], 0
+    for name in names:
+        r, k = tables[name].shape
+        b = 4 * (k * k + 3 * r * k * len(outs))
+        if cur and size + b > budget:
+            yield cur
+            cur, size = [], 0
+        cur.append(name)
+        size += b
+    if cur:
+        yield cur
+
+
+def write_checkpoints(
+    src: Path,
+    outs: list[Output],
+    workdir: Path,
+    tables: dict[str, TensorTable],
+    cfg: Config,
+    ex: Executor,
+    log=print,
+) -> None:
+    """Phase 3 for one or several outputs (allocations) in one pass over the source:
+    each shard is read once, every tensor's Hessian is loaded and factorised once for
+    all outputs and all tensors sharing its input, and the tensors of a shard are
+    encoded in batches (:func:`hi2.calibrate.encode_many`) while the next batch is read
+    from disk. Existing output shards are kept."""
+    from concurrent.futures import ThreadPoolExecutor
+
     from safetensors import safe_open
     from safetensors.torch import save_file
 
+    from .cache import StatsView
+
+    view = StatsView(workdir)
     wmap = weight_map(src)
     shards = sorted(set(wmap.values()))
-    dst.mkdir(parents=True, exist_ok=True)
-    new_map: dict[str, str] = {}
-    report: dict[str, dict] = {}
+    for o in outs:
+        o.dst.mkdir(parents=True, exist_ok=True)
+    warned = False
+    io = ThreadPoolExecutor(1)
     for shard in shards:
         names = [n for n, s in wmap.items() if s == shard]
-        done = (dst / shard).exists() and (workdir / "shards_done" / shard).exists()
-        out: dict[str, torch.Tensor] = {}
+        todo = [
+            o
+            for o in outs
+            if not ((o.dst / shard).exists() and (o.done_dir / shard).exists())
+        ]
+        data: dict[int, dict[str, torch.Tensor | None]] = {id(o): {} for o in outs}
         with safe_open(src / shard, "pt") as f:
             for name in names:
-                if name not in tables:
-                    if not done:
-                        out[name] = f.get_tensor(name)
-                    else:
-                        out[name] = None
+                if name in tables:
                     continue
-                table, p = tables[name], picks[name]
-                base = name.removesuffix(".weight")
-                if not done:
-                    if pre_encoded is not None and name in pre_encoded:
-                        t = pre_encoded[name]
-                    else:
-                        w = f.get_tensor(name)
-                        sp = table_stats_path(workdir, name)
-                        stats = None
-                        if sp.exists():
-                            stats = ColumnStats.from_state(torch.load(sp), "cpu")
-                        hp = table_hessian_path(workdir, name)
-                        sigma = torch.load(hp) if hp.exists() else None
-                        if cfg.rounding == "gptq" and sigma is None:
-                            log(f"warning: {name} has no Hessian; nearest rounding")
-                        t = encode_with_picks(w, stats, table, p, cfg, ex, sigma)
-                    out.update(to_tensors(t, base))
-                    report[name] = _tensor_report(table, p, t)
-                    log(
-                        f"{name} {tuple(table.shape)} bpw={report[name]['bpw']:.3f} "
-                        f"rel_err={report[name]['pred_rel_err']:.4f} "
-                        f"int4={report[name]['frac_int4']:.2f}"
-                    )
-                else:
+                t = f.get_tensor(name) if todo else None
+                for o in outs:
+                    data[id(o)][name] = t if o in todo else None
+            enc_names = [n for n in names if n in tables]
+            for o in outs:
+                if o in todo:
+                    continue
+                for name in enc_names:  # finished shard: only the index entries
+                    base = name.removesuffix(".weight")
                     for fld in FIELDS:
-                        out[f"{base}.hi2_{fld}"] = None
-                    if table.col_scale is not None:
-                        out[f"{base}.hi2_col_scale"] = None
-        if not done:
-            save_file(out, str(dst / shard), metadata={"format": "pt"})
-            (workdir / "shards_done").mkdir(parents=True, exist_ok=True)
-            (workdir / "shards_done" / shard).write_text("ok")
-        for k in out:
-            new_map[k] = shard
-    index = {"metadata": {}, "weight_map": new_map}
-    (dst / "model.safetensors.index.json").write_text(json.dumps(index, indent=2))
+                        data[id(o)][f"{base}.hi2_{fld}"] = None
+                    if tables[name].col_scale is not None:
+                        data[id(o)][f"{base}.hi2_col_scale"] = None
+            if todo:
+                if cfg.rounding == "gptq" and not warned:
+                    missing = [n for n in enc_names if view.sigma_path(n) is None]
+                    if missing:
+                        log(
+                            f"warning: {len(missing)} tensors have no Hessian; nearest rounding"
+                        )
+                        warned = True
+                groups = list(_batches(enc_names, tables, todo, ENCODE_BATCH_BYTES))
+                sp = src / shard
+                nxt = (
+                    io.submit(_requests_for, groups[0], sp, view, tables, todo, cfg)
+                    if groups
+                    else None
+                )
+                for gi, group in enumerate(groups):
+                    reqs, slots = nxt.result()
+                    if gi + 1 < len(groups):
+                        nxt = io.submit(
+                            _requests_for, groups[gi + 1], sp, view, tables, todo, cfg
+                        )
+                    encoded = encode_many(reqs, cfg, ex) if reqs else []
+                    by = {(n, id(o)): t for (n, o), t in zip(slots, encoded)}
+                    for name in group:
+                        base = name.removesuffix(".weight")
+                        for o in todo:
+                            if o.pre_encoded is not None and name in o.pre_encoded:
+                                t = o.pre_encoded[name]
+                            else:
+                                t = by[(name, id(o))]
+                            data[id(o)].update(to_tensors(t, base))
+                            o.report[name] = _tensor_report(
+                                tables[name], o.picks[name], t
+                            )
+                            rep = o.report[name]
+                            tag = "" if len(outs) == 1 else f"[{o.dst.name}] "
+                            log(
+                                f"{tag}{name} {tuple(tables[name].shape)} bpw={rep['bpw']:.3f} "
+                                f"rel_err={rep['pred_rel_err']:.4f} "
+                                f"int4={rep['frac_int4']:.2f}"
+                            )
+                    del reqs, encoded, by
+        for o in outs:
+            out = data[id(o)]
+            if o in todo:
+                ordered = {}
+                for name in names:  # keep the source order of tensors in the shard
+                    if name in tables:
+                        base = name.removesuffix(".weight") + ".hi2_"
+                        ordered.update(
+                            {k: v for k, v in out.items() if k.startswith(base)}
+                        )
+                    else:
+                        ordered[name] = out[name]
+                save_file(ordered, str(o.dst / shard), metadata={"format": "pt"})
+                o.done_dir.mkdir(parents=True, exist_ok=True)
+                (o.done_dir / shard).write_text("ok")
+                out = ordered
+            for k in out:
+                o.new_map[k] = shard
+    io.shutdown()
+    for o in outs:
+        _finish_output(src, o, shards)
+
+
+def _finish_output(src: Path, o: Output, shards) -> None:
+    index = {"metadata": {}, "weight_map": o.new_map}
+    (o.dst / "model.safetensors.index.json").write_text(json.dumps(index, indent=2))
     cfgj = json.loads((src / "config.json").read_text())
     cfgj["quantization_config"] = {
         "quant_method": "rdna_hint_flex",
         "version": SPEC_VERSION,
-        **meta,
+        **o.meta,
     }
-    (dst / "config.json").write_text(json.dumps(cfgj, indent=2))
+    (o.dst / "config.json").write_text(json.dumps(cfgj, indent=2))
     skip = {"config.json", "model.safetensors.index.json", *shards}
     for entry in src.iterdir():
         if entry.name in skip or entry.name.startswith("."):
             continue
-        link = dst / entry.name
+        link = o.dst / entry.name
         if not link.exists():
             os.symlink(entry.resolve(), link)
-    return report
 
 
 def _tensor_report(table: TensorTable, picks: torch.Tensor, t: HI2Tensor) -> dict:

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import torch
 
 from .encode import encode_rows
-from .executor import Executor
+from .executor import Executor, activate
 from .format import (
     GROUP,
     HI2Tensor,
@@ -209,6 +209,127 @@ def build_table(
     )
 
 
+@dataclass
+class EncodeRequest:
+    """One tensor for :func:`encode_many`. Requests with the same ``sigma_id`` (the same
+    input: q/k/v, gate/up, or one tensor encoded for several allocations) and the same
+    smoothing vector and flags share one transformed Hessian and one factor."""
+
+    w: torch.Tensor  # [R, K] original basis
+    stats: ColumnStats | None
+    table: TensorTable
+    picks: torch.Tensor  # [R] candidate index per row
+    sigma: torch.Tensor | None = None
+    sigma_id: str | None = None
+    # a dict: receives ``"comp"``, the [R, K] stored-basis values the codes were rounded
+    # from (QAD latent initialisation), see encode_with_picks
+    comp_out: dict | None = None
+
+
+def _factor_key(req: EncodeRequest, i: int):
+    t = req.table
+    cs = None if t.col_scale is None else t.col_scale.numpy().tobytes()
+    sid = req.sigma_id if req.sigma_id is not None else f"#{i}"
+    return sid, cs, t.had.numpy().tobytes()
+
+
+def encode_many(
+    reqs: list[EncodeRequest], cfg: Config, ex: Executor
+) -> list[HI2Tensor]:
+    """Encode several tensors with their allocator picks; the same result as calling
+    :func:`encode_with_picks` on each. Every tensor's rows are sharded across the devices
+    as there; on each device all GPTQ candidate groups of all tensors go through one
+    batched :func:`hi2.hessian.encode_jobs_gptq` call, and the Hessian transform and
+    factorisation are done once per distinct input."""
+    from .hessian import GptqJob, encode_jobs_gptq, inverse_factor, transform_sigma
+
+    use_gptq = [cfg.rounding == "gptq" and r.sigma is not None for r in reqs]
+    prepared = []
+    for r in reqs:
+        w, inv = _smoothed(r.w, r.table.col_scale)
+        prepared.append((w, inv))
+    n_dev = max((len(ex.shards(r.table.shape[0])) for r in reqs), default=1)
+
+    def on_device(i: int):
+        dev = ex.devices[i]
+        activate(dev)
+        factors: dict = {}
+        pieces: dict[int, list] = {}
+        comps: list = []  # (request, rows, [rows, K] values the codes were rounded from)
+        jobs, where = [], []
+        for ri, (r, (w, inv)) in enumerate(zip(reqs, prepared)):
+            shards = ex.shards(r.table.shape[0])
+            if i >= len(shards):
+                continue
+            _, lo, hi = shards[i]
+            had, k = r.table.had, r.table.shape[1]
+            wt = w[lo:hi].to(dev, torch.float32)
+            wt = fwht_groups(wt, had) if had.any() else wt
+            if use_gptq[ri]:
+                fk = _factor_key(r, ri)
+                if fk not in factors:
+                    hs = transform_sigma(r.sigma.to(dev), r.table.col_scale, had)
+                    d = hs.diagonal().clone()
+                    perm = None
+                    if cfg.act_order:
+                        perm = torch.argsort(d, descending=True)
+                        hs = hs[perm][:, perm]
+                    u = inverse_factor(hs, cfg.damp)
+                    del hs
+                    factors[fk] = (d, u, perm)
+                d, u, perm = factors[fk]
+            else:
+                d = _weights(r.stats, k, had, dev, inv)
+            out = pieces.setdefault(ri, [])
+            for ci, (nb, b) in enumerate(r.table.candidates):
+                rows = (r.picks[lo:hi] == ci).nonzero().flatten()
+                if rows.numel() == 0:
+                    continue
+                if use_gptq[ri]:
+                    jobs.append(GptqJob(wt[rows.to(dev)], d, u, nb, b, perm))
+                    where.append((ri, rows + lo))
+                    out.append(None)  # placeholder keeps the candidate order
+                else:
+                    enc = encode_rows(wt[rows.to(dev)], d, nb, b, cfg.effort)
+                    out.append((rows + lo, enc.codes, enc.params, enc.consts))
+                    if r.comp_out is not None:
+                        comps.append((ri, rows + lo, wt[rows.to(dev)].float().cpu()))
+        want = any(reqs[ri].comp_out is not None for ri, _ in where)
+        encs = encode_jobs_gptq(jobs, cfg.effort, comp=want) if jobs else []
+        slot = {
+            ri: iter([j for j, p in enumerate(pieces[ri]) if p is None])
+            for ri in pieces
+        }
+        for (ri, rows), enc in zip(where, encs):
+            pieces[ri][next(slot[ri])] = (rows, enc.codes, enc.params, enc.consts)
+            if reqs[ri].comp_out is not None:
+                comps.append((ri, rows, enc.comp.float().cpu()))
+        return pieces, comps
+
+    if n_dev == 1:
+        per_dev = [on_device(0)]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(n_dev) as pool:
+            per_dev = list(pool.map(on_device, range(n_dev)))
+    out = []
+    for ri, r in enumerate(reqs):
+        if r.comp_out is not None:
+            full = torch.zeros(r.table.shape, dtype=torch.float32)
+            for _, cs in per_dev:
+                for rj, rows, c in cs:
+                    if rj == ri:
+                        full[rows.cpu()] = c
+            r.comp_out["comp"] = full
+        pieces = [p for pd, _ in per_dev for p in pd.get(ri, [])]
+        t = r.table
+        nbits = torch.tensor([t.candidates[i][0] for i in r.picks.tolist()])
+        block = torch.tensor([t.candidates[i][1] for i in r.picks.tolist()])
+        out.append(assemble(pieces, nbits, block, t.had, t.shape[1], t.col_scale))
+    return out
+
+
 def encode_with_picks(
     w: torch.Tensor,
     stats: ColumnStats | None,
@@ -224,6 +345,22 @@ def encode_with_picks(
     With ``comp_out`` (a dict), ``comp_out["comp"]`` receives the ``[R, K]`` stored-basis
     values the codes were rounded from (the compensated weights under gptq, the
     transformed weights under nearest rounding): the QAD latent initialisation."""
+    req = EncodeRequest(w, stats, table, picks, sigma, comp_out=comp_out)
+    return encode_many([req], cfg, ex)[0]
+
+
+def encode_with_picks_reference(
+    w: torch.Tensor,
+    stats: ColumnStats | None,
+    table: TensorTable,
+    picks: torch.Tensor,
+    cfg: Config,
+    ex: Executor,
+    sigma: torch.Tensor | None = None,
+    comp_out: dict | None = None,
+) -> HI2Tensor:
+    """The per-tensor implementation before :func:`encode_many`, kept as the
+    reference of the equality tests (``comp_out`` as in :func:`encode_with_picks`)."""
     r, k = w.shape
     had = table.had
     w, inv = _smoothed(w, table.col_scale)
@@ -236,7 +373,10 @@ def encode_with_picks(
         wt = w[lo:hi].to(dev, torch.float32)
         wt = fwht_groups(wt, had) if had.any() else wt
         if use_gptq:
-            from .hessian import encode_rows_gptq, inverse_factor, transform_sigma
+            from .hessian import (
+                encode_rows_gptq_reference as encode_rows_gptq,
+            )
+            from .hessian import inverse_factor, transform_sigma
 
             hs = transform_sigma(sigma.to(dev), table.col_scale, had)
             d = hs.diagonal().clone()

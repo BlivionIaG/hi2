@@ -18,9 +18,57 @@ from .pipeline import RunConfig, plan, run
 from .qad import PRESETS as QAD_PRESETS
 from .qad import make_config
 
+# candidate presets: the (nbits, block) pairs each one removes
+CANDIDATE_PRESETS = {"all": set(), "lean": {(4, 16)}}
+
 
 def _ints(s: str) -> list[int]:
     return [int(x) for x in s.split(",")]
+
+
+def _floats(s: str) -> list[float]:
+    return [float(x) for x in s.split(",")]
+
+
+def cache_command(a) -> dict:
+    from . import cache as C
+
+    root = a.cache_dir or C.default_root()
+    if a.action == "prune":
+        gone = C.prune(root, a.older_than, a.keep_gb, a.digest, a.dry_run)
+        return {
+            "root": str(root),
+            "dry_run": a.dry_run,
+            "removed": [f"{e['kind']}/{e['digest']}" for e in gone],
+            "freed_gib": round(sum(e["bytes"] for e in gone) / 2**30, 3),
+        }
+    es = C.entries(root)
+    by_kind: dict[str, float] = {}
+    for e in es:
+        by_kind[e["kind"]] = by_kind.get(e["kind"], 0) + e["bytes"] / 2**30
+    out = {
+        "root": str(root),
+        "entries": len(es),
+        "gib": round(sum(e["bytes"] for e in es) / 2**30, 3),
+        "gib_by_kind": {k: round(v, 3) for k, v in by_kind.items()},
+    }
+    if a.action == "list":
+        import time
+
+        out["list"] = [
+            {
+                "entry": f"{e['kind']}/{e['digest']}",
+                "gib": round(e["bytes"] / 2**30, 3),
+                "complete": e["complete"],
+                "last_used": time.strftime(
+                    "%Y-%m-%d %H:%M", time.localtime(e["last_used"])
+                ),
+                "model": (e["key"] or {}).get("_src"),
+                "calib": (e["key"] or {}).get("_calib"),
+            }
+            for e in es
+        ]
+    return out
 
 
 def resolve_devices(spec: str) -> list[str]:
@@ -98,11 +146,12 @@ def main(argv=None):
     )
     q.add_argument(
         "--max-error-ratio",
-        type=float,
+        type=_floats,
         default=None,
         help="quality target: the fewest bits whose weighted error is at most this "
         "multiple of the best achievable (rows that matter less get INT2, the rest "
-        "INT4); the bpw is a result",
+        "INT4); the bpw is a result. Several values (a,b,c) write one checkpoint per "
+        "ratio to <dst>-r<ratio> from one phase 1, probe and encode pass",
     )
     q.add_argument(
         "--rotation",
@@ -133,6 +182,13 @@ def main(argv=None):
     )
     q.add_argument("--sens-seqs", type=int, default=8)
     q.add_argument("--sens-len", type=int, default=512)
+    q.add_argument(
+        "--sens-batch",
+        type=int,
+        default=1,
+        help="probe sequences per forward pass (1 = exact original probe; more is "
+        "faster, logits round differently)",
+    )
     q.add_argument(
         "--sens-floor",
         type=float,
@@ -178,6 +234,32 @@ def main(argv=None):
     )
     q.add_argument(
         "--blocks", type=_ints, default=[16, 32, 64], help="allowed block sizes"
+    )
+    q.add_argument(
+        "--candidates",
+        choices=sorted(CANDIDATE_PRESETS),
+        default="all",
+        help="candidate preset on top of --bits/--blocks: lean drops INT4/B16, which "
+        "holds 0.1-0.8%% of the weights at 3-3.5 bpw (docs/rdna2/hi2-speed.md)",
+    )
+    q.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="persistent cache of statistics/Hessians, tables and probe results "
+        "(default $HI2_CACHE_DIR or ~/.cache/hi2); see `hi2 cache`",
+    )
+    q.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="keep statistics and Hessians in the workdir only (the old layout)",
+    )
+    q.add_argument(
+        "--cache-fp16-above",
+        type=int,
+        default=0,
+        help="store cached Sigma in fp16 for inputs wider than this (halves the disk; "
+        "lossy, see docs/rdna2/hi2-speed.md); 0 = fp32",
     )
     q.add_argument("--include", default=None, help="regex: only these weights")
     q.add_argument("--exclude", default=DEFAULT_EXCLUDE, help="regex: keep dense")
@@ -266,8 +348,17 @@ def main(argv=None):
         default="float32",
         help="dtype of both models (float16 when an fp32 copy does not fit the device)",
     )
+    c = sub.add_parser("cache", help="list, size or prune the persistent cache")
+    c.add_argument("action", choices=("list", "size", "prune"))
+    c.add_argument("--cache-dir", type=Path, default=None)
+    c.add_argument("--older-than", type=float, default=None, help="days unused")
+    c.add_argument("--keep-gb", type=float, default=None, help="prune LRU down to this")
+    c.add_argument("--digest", action="append", default=None, help="remove this entry")
+    c.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
-    if a.cmd == "export-dense":
+    if a.cmd == "cache":
+        out = cache_command(a)
+    elif a.cmd == "export-dense":
         export_dense(a.src, a.dst, a.out)
         out = {"exported": str(a.out)}
     elif a.cmd == "eval":
@@ -282,7 +373,16 @@ def main(argv=None):
             dtype=a.dtype,
         )
     elif a.cmd == "quantize":
-        cands = [(nb, b) for nb, b in SELECTABLE if nb in a.bits and b in a.blocks]
+        from .cache import default_root
+
+        ratios = a.max_error_ratio
+        cands = [
+            (nb, b)
+            for nb, b in SELECTABLE
+            if nb in a.bits
+            and b in a.blocks
+            and (nb, b) not in CANDIDATE_PRESETS[a.candidates]
+        ]
         if not cands:
             raise SystemExit("--bits/--blocks leave no candidate configuration")
         qc = make_config(a.qad_preset, _qad_overrides(a)) if a.qad else None
@@ -297,7 +397,10 @@ def main(argv=None):
             calib_samples=a.calib_samples,
             seq_len=a.seq_len,
             target_bpw=a.target_bpw,
-            max_error_ratio=a.max_error_ratio,
+            max_error_ratio=ratios[0] if ratios and len(ratios) == 1 else None,
+            max_error_ratios=ratios if ratios and len(ratios) > 1 else None,
+            sigma_fp16_above=a.cache_fp16_above,
+            cache_dir=None if a.no_cache else (a.cache_dir or default_root()),
             include=a.include,
             exclude=a.exclude,
             limit_layers=a.limit_layers,
@@ -306,6 +409,7 @@ def main(argv=None):
             sens_seqs=a.sens_seqs,
             sens_len=a.sens_len,
             sens_floor=a.sens_floor,
+            sens_batch=a.sens_batch,
             sens_dtype=a.sens_dtype,
             expert_share_floor=a.expert_share_floor,
             cfg=Config(

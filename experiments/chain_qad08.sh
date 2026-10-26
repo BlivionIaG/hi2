@@ -7,7 +7,7 @@
 # allocation and QAD run. Runs queue per GPU (mkdir locks).
 # usage: chain_qad08.sh <share workdir> <ratio> "<gpus>" <round tag> "<tag|args>" ...   (box paths)
 #   e.g. chain_qad08.sh $B/runs35/q35-ptq-mixq.work 5 "4 5" r1 "def|--qad" "lr3e-5|--qad --qad-lr 3e-5"
-# MODEL / OUT default to Qwen3.5-0.8B / runs35.
+# MODEL / OUT default to Qwen3.5-0.8B / runs35. QAD is on by default: a PTQ row needs "tag|--no-qad".
 set -u
 B=/home/chenco_adm/w4a8_runs/hadamard-int2
 SHARE=$1; RATIO=$2; read -ra GV <<< "$3"; RT=$4; shift 4

@@ -154,8 +154,11 @@ def assemble(
     """Build flat buffers from per-config row groups.
 
     Each piece is ``(rows, codes[r, K] uint8, params[r, nb, 2] uint8,
-    consts[r, 3] fp16)`` for rows sharing one ``(nbits, B)``.
+    consts[r, 3] fp16)`` for rows sharing one ``(nbits, B)``. The buffers are built on
+    the device of the first piece's codes (integer packing and scatters: the same
+    result on any device) and returned on the CPU.
     """
+    dev = pieces[0][1].device if pieces else torch.device("cpu")
     r = row_nbits.numel()
     nb = row_nbits.to(torch.int64)
     words = (k * nb) // 32
@@ -164,26 +167,30 @@ def assemble(
     code_off[1:] = torch.cumsum(words, 0)
     param_off = torch.zeros(r + 1, dtype=torch.int64)
     param_off[1:] = torch.cumsum(blocks, 0)
-    codes = torch.zeros(int(code_off[-1]), dtype=torch.int32)
-    params = torch.zeros(int(param_off[-1]) * 2, dtype=torch.uint8)
-    consts = torch.zeros(r, 3, dtype=torch.float16)
+    code_off_d, param_off_d = code_off.to(dev), param_off.to(dev)
+    codes = torch.zeros(int(code_off[-1]), dtype=torch.int32, device=dev)
+    params = torch.zeros(int(param_off[-1]) * 2, dtype=torch.uint8, device=dev)
+    consts = torch.zeros(r, 3, dtype=torch.float16, device=dev)
     for rows, c, p, rc in pieces:
-        rows = rows.cpu()
-        nbits = int(nb[rows[0]])
+        rows_c = rows.cpu()
+        rows = rows.to(dev)
+        nbits = int(nb[rows_c[0]])
         wr = k * nbits // 32
-        widx = code_off[rows].unsqueeze(1) + torch.arange(wr)
-        codes[widx.reshape(-1)] = pack_codes(c.cpu(), nbits).reshape(-1)
-        nblk = int(blocks[rows[0]])
-        pidx = (param_off[rows].unsqueeze(1) + torch.arange(nblk)).unsqueeze(-1) * 2
-        pidx = pidx + torch.arange(2)
-        params[pidx.reshape(-1)] = p.cpu().reshape(-1)
-        consts[rows] = rc.cpu()
+        widx = code_off_d[rows].unsqueeze(1) + torch.arange(wr, device=dev)
+        codes[widx.reshape(-1)] = pack_codes(c.to(dev), nbits).reshape(-1)
+        nblk = int(blocks[rows_c[0]])
+        pidx = (
+            param_off_d[rows].unsqueeze(1) + torch.arange(nblk, device=dev)
+        ).unsqueeze(-1) * 2
+        pidx = pidx + torch.arange(2, device=dev)
+        params[pidx.reshape(-1)] = p.to(dev).reshape(-1)
+        consts[rows] = rc.to(dev)
     return HI2Tensor(
-        codes=codes,
+        codes=codes.cpu(),
         code_off=code_off.to(torch.int32),
-        blk_params=params,
+        blk_params=params.cpu(),
         param_off=param_off.to(torch.int32),
-        row_consts=consts,
+        row_consts=consts.cpu(),
         row_nbits=row_nbits.to(torch.uint8),
         row_block=row_block.to(torch.uint8),
         had=had.to(torch.uint8).reshape(-1),
@@ -192,10 +199,22 @@ def assemble(
     )
 
 
-def dequantize_stored(t: HI2Tensor) -> torch.Tensor:
-    """fp16 reconstruction in the stored (rotated) basis as float64 ``[R, K]``."""
+def _on(t: HI2Tensor, device) -> HI2Tensor:
+    if device is None:
+        return t
+    fields = {f: getattr(t, f).to(device) for f in FIELDS}
+    cs = None if t.col_scale is None else t.col_scale.to(device)
+    return HI2Tensor(**fields, shape=t.shape, col_scale=cs)
+
+
+def dequantize_stored(t: HI2Tensor, device=None) -> torch.Tensor:
+    """fp16 reconstruction in the stored (rotated) basis as float64 ``[R, K]``
+    (computed on ``device`` if given; every step is exact in float64, so the result
+    does not depend on the device)."""
+    t = _on(t, device)
+    dev = t.codes.device
     r, k = t.shape
-    out = torch.zeros(r, k, dtype=torch.float64)
+    out = torch.zeros(r, k, dtype=torch.float64, device=dev)
     nb = t.row_nbits.to(torch.int64)
     bl = t.row_block.to(torch.int64)
     for nbits in sorted(set(nb.tolist())):
@@ -204,14 +223,17 @@ def dequantize_stored(t: HI2Tensor) -> torch.Tensor:
             if rows.numel() == 0:
                 continue
             wr = k * nbits // 32
-            widx = t.code_off[rows].to(torch.int64).unsqueeze(1) + torch.arange(wr)
+            widx = t.code_off[rows].to(torch.int64).unsqueeze(1) + torch.arange(
+                wr, device=dev
+            )
             codes = unpack_codes(t.codes[widx], nbits).reshape(
                 rows.numel(), k // bs, bs
             )
             nblk = k // bs
             pidx = (
-                t.param_off[rows].to(torch.int64).unsqueeze(1) + torch.arange(nblk)
-            ).unsqueeze(-1) * 2 + torch.arange(2)
+                t.param_off[rows].to(torch.int64).unsqueeze(1)
+                + torch.arange(nblk, device=dev)
+            ).unsqueeze(-1) * 2 + torch.arange(2, device=dev)
             p = t.blk_params[pidx]  # [r, nblk, 2]
             rc = t.row_consts[rows].unsqueeze(1)  # [r, 1, 3]
             lo, step = decode_params(
@@ -221,12 +243,14 @@ def dequantize_stored(t: HI2Tensor) -> torch.Tensor:
     return out
 
 
-def dequantize(t: HI2Tensor) -> torch.Tensor:
+def dequantize(t: HI2Tensor, device=None) -> torch.Tensor:
     """Reconstruction in the original basis (the transform is its own inverse; the
-    smoothing vector, if any, is divided back out)."""
-    w = fwht_groups(dequantize_stored(t), t.had)
+    smoothing vector, if any, is divided back out). On ``device`` if given: the
+    Hadamard products are by 1/4 and sums of 16 fp16 values, exact in float64, and the
+    division is correctly rounded, so any device gives the same result."""
+    w = fwht_groups(dequantize_stored(t, device), t.had)
     if t.col_scale is not None:
-        w = w / t.col_scale.double()
+        w = w / t.col_scale.to(w.device).double()
     return w
 
 

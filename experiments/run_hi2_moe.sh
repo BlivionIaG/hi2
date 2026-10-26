@@ -30,14 +30,14 @@ quant() {  # tag, allocation flags...
   local tag=$1; shift
   rm -rf "${OUT:?}/$tag"
   date +%s > "$OUT/$tag.t0"
-  /usr/bin/time -v "$V/bin/python" -m hi2 quantize "$MODEL" "$OUT/$tag" "${COMMON[@]}" "$@" \
+  /usr/bin/time -v "$V/bin/python" -m hi2 quantize "$MODEL" "$OUT/$tag" "${COMMON[@]}" --no-qad "$@" \
     > "$OUT/$tag.quant.log" 2>&1
   echo "quant_exit=$?" >> "$OUT/$tag.quant.log"
   date +%s > "$OUT/$tag.t1"
 }
 quant "olmoe-r$RATIO" --max-error-ratio "$RATIO"
 quant "olmoe-b$BPW" --target-bpw "$BPW"
-rm -rf "$WORK/hessian"  # about 20 GB of per-expert Hessians, only needed by quantize
+rm -rf "$WORK/hessian"  # --no-cache layout only; with the cache they are kept for reuse
 rmdir "$LOCK"; trap - EXIT
 if [ "$EVAL_DEVICE" != cpu ]; then
   until mkdir "$LOCK" 2>/dev/null; do sleep 60; done

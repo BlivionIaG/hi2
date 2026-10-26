@@ -37,7 +37,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from .calibrate import Config, TensorTable, encode_with_picks
+from .calibrate import Config, TensorTable
 from .format import (
     HI2Tensor,
     assemble,
@@ -87,8 +87,10 @@ class QadConfig:
 
 
 # Chosen on Qwen3.5-0.8B at 3.0 bpw (docs/rdna2/hi2-qad.md); everything else default.
+# fast = half the steps spent where layers still gain, with early stopping (better than a
+# uniform 100 steps at the same time); no reduced budget stayed within noise of default.
 PRESETS: dict[str, dict] = {
-    "fast": dict(steps=100, samples=128),
+    "fast": dict(budget=0.5, min_gain=0.01, min_steps=75, eval_every=50),
     "default": dict(),
     "thorough": dict(steps=600, batch=8, samples=512),
 }
@@ -703,11 +705,17 @@ def qad_layerwise(
     fp: str,
     limit_layers: int | None = None,
     log=print,
+    qdir: Path | None = None,
 ) -> QadResult:
     """Train every selected decoder layer in order (see the module docstring); layers
     not selected keep their PTQ encoding. Per-layer results are written to
-    ``workdir/qad/layerNNN.pt`` and reused on a re-run with the same fingerprint."""
-    from .checkpoint import is_eligible, table_hessian_path, table_stats_path
+    ``qdir/layerNNN.pt`` (default ``workdir/qad``) and reused on a re-run with the same
+    fingerprint. The PTQ initialisation reads the statistics and Hessians through
+    :class:`hi2.cache.StatsView` (the persistent cache or the workdir) and encodes all
+    Linears of a layer in one batched :func:`hi2.calibrate.encode_many` call."""
+    from .cache import StatsView
+    from .calibrate import EncodeRequest, encode_many
+    from .checkpoint import is_eligible
     from .layerwise import capture_inputs, find_layers
     from .stats import ColumnStats
 
@@ -726,7 +734,8 @@ def qad_layerwise(
     # by position, so the tail would be one domain)
     val_idx = sorted(range(n - 1, -1, -max(1, n // qc.val))[: qc.val])
     train_idx = [i for i in range(n) if i not in set(val_idx)]
-    qdir = workdir / "qad"
+    qdir = qdir or workdir / "qad"
+    view = StatsView(workdir)
     qdir.mkdir(parents=True, exist_ok=True)
     res = QadResult()
     t_start, trained_time, trained_n = time.time(), 0.0, 0
@@ -765,26 +774,28 @@ def qad_layerwise(
                 budget.record(info)
         else:
             tl = time.time()
-            inits, comps = {}, {}
+            reqs, loaded = [], {}
             for name, ckpt in linears.items():
                 w = layer.get_submodule(name).weight.detach().float().cpu()
-                hp = table_hessian_path(workdir, ckpt)
-                sigma = torch.load(hp) if hp.exists() else None
-                sp = table_stats_path(workdir, ckpt)
-                stats = (
-                    ColumnStats.from_state(torch.load(sp), "cpu")
-                    if sp.exists()
-                    else None
-                )
+                sid = view.sigma_id(ckpt)
+                if sid is not None and sid not in loaded:  # one load per shared input
+                    loaded[sid] = view.sigma(ckpt)
+                sigma = loaded.get(sid) if sid is not None else None
+                st = view.stats_state(ckpt)
+                stats = ColumnStats.from_state(st, "cpu") if st is not None else None
                 if cfg.rounding == "gptq" and sigma is None:
                     log(
                         f"warning: {ckpt} has no Hessian; nearest-rounding initialisation"
                     )
-                co: dict = {}
-                inits[name] = encode_with_picks(
-                    w, stats, tables[ckpt], picks[ckpt], cfg, ex, sigma, co
+                reqs.append(
+                    EncodeRequest(
+                        w, stats, tables[ckpt], picks[ckpt], sigma, sid, comp_out={}
+                    )
                 )
-                comps[name] = co["comp"]
+            encoded = encode_many(reqs, cfg, ex) if reqs else []
+            inits = dict(zip(linears, encoded))
+            comps = {name: r.comp_out["comp"] for name, r in zip(linears, reqs)}
+            del reqs, loaded
             if li in train_set and linears:
                 fq = {
                     name: FakeQuantLinear(
