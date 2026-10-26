@@ -217,8 +217,13 @@ def encode_with_picks(
     cfg: Config,
     ex: Executor,
     sigma: torch.Tensor | None = None,
+    comp_out: dict | None = None,
 ) -> HI2Tensor:
-    """Encode rows with the candidate index ``picks[r]`` chosen by the allocator."""
+    """Encode rows with the candidate index ``picks[r]`` chosen by the allocator.
+
+    With ``comp_out`` (a dict), ``comp_out["comp"]`` receives the ``[R, K]`` stored-basis
+    values the codes were rounded from (the compensated weights under gptq, the
+    transformed weights under nearest rounding): the QAD latent initialisation."""
     r, k = w.shape
     had = table.had
     w, inv = _smoothed(w, table.col_scale)
@@ -255,7 +260,16 @@ def encode_with_picks(
             pieces.append(
                 (rows + lo, enc.codes.cpu(), enc.params.cpu(), enc.consts.cpu())
             )
+            if comp_out is not None:
+                c = enc.comp if enc.comp is not None else wt[rows.to(dev)]
+                comps.append((rows + lo, c.float().cpu()))
         return pieces
 
+    comps: list = []
     pieces = [p for part in ex.map_rows(shard, r) for p in part]
+    if comp_out is not None:
+        full = torch.zeros(r, k, dtype=torch.float32)
+        for rows, c in comps:
+            full[rows] = c
+        comp_out["comp"] = full
     return assemble(pieces, nbits, block, had, k, table.col_scale)

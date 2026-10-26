@@ -54,18 +54,36 @@ class RunConfig:
     # MoE: lower bound of an expert's routed-token share (relative to uniform routing)
     # in its allocation weight
     expert_share_floor: float = 0.05
+    # layer-wise quantization-aware distillation after the allocation (spec 13); None = off
+    qad: object | None = None  # hi2.qad.QadConfig
 
 
-def load_calibration_ids(
-    path: Path, tokenizer, samples: int, seq_len: int
-) -> torch.Tensor:
-    """``[samples, seq_len]`` token ids from a .txt file or a .jsonl with ``text``."""
-    if path.suffix == ".jsonl":
-        text = "\n\n".join(
-            json.loads(ln)["text"] for ln in path.read_text().splitlines() if ln
-        )
-    else:
-        text = path.read_text()
+def calib_paths(path) -> list[Path]:
+    """One path, a list of paths, or a comma-separated string of paths."""
+    if isinstance(path, (list, tuple)):
+        return [Path(p) for p in path]
+    return [Path(p) for p in str(path).split(",") if p]
+
+
+def read_calibration_text(path) -> str:
+    """Text of one or several .txt / .jsonl (``text`` field) files, concatenated."""
+    parts = []
+    for p in calib_paths(path):
+        if p.suffix == ".jsonl":
+            parts.append(
+                "\n\n".join(
+                    json.loads(ln)["text"] for ln in p.read_text().splitlines() if ln
+                )
+            )
+        else:
+            parts.append(p.read_text())
+    return "\n\n".join(parts)
+
+
+def load_calibration_ids(path, tokenizer, samples: int, seq_len: int) -> torch.Tensor:
+    """``[samples, seq_len]`` token ids from .txt files or .jsonl files with ``text``
+    (several files are concatenated in the order given)."""
+    text = read_calibration_text(path)
     ids = tokenizer(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
     need = samples * seq_len
     if ids.numel() < need:
@@ -74,6 +92,38 @@ def load_calibration_ids(
             f"({samples} x {seq_len}); lower --calib-samples or --seq-len"
         )
     return ids[:need].reshape(samples, seq_len)
+
+
+def _windows(text, tokenizer, samples, seq_len, gen, what) -> torch.Tensor:
+    ids = tokenizer(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
+    n_win = ids.numel() // seq_len
+    if n_win < samples:
+        raise SystemExit(
+            f"{what} has {ids.numel()} tokens = {n_win} windows of {seq_len}, need "
+            f"{samples}; add text or lower --qad-samples / --seq-len"
+        )
+    pick = torch.randperm(n_win, generator=gen)[:samples]
+    return ids[: n_win * seq_len].reshape(n_win, seq_len)[pick.sort().values]
+
+
+def sample_calibration_windows(
+    path, tokenizer, samples: int, seq_len: int, seed: int = 0, balanced: bool = False
+) -> torch.Tensor:
+    """``[samples, seq_len]`` token ids: non-overlapping windows drawn uniformly (seeded)
+    from the whole calibration text, so every domain of a concatenated file is
+    represented, not only its head. ``balanced`` draws the same number of windows from
+    each calibration file instead (domain balance regardless of file sizes)."""
+    gen = torch.Generator().manual_seed(seed)
+    paths = calib_paths(path)
+    if not balanced or len(paths) == 1:
+        text = read_calibration_text(path)
+        return _windows(text, tokenizer, samples, seq_len, gen, "calibration text")
+    parts = []
+    for i, p in enumerate(paths):
+        n = samples // len(paths) + (1 if i < samples % len(paths) else 0)
+        text = read_calibration_text(p)
+        parts.append(_windows(text, tokenizer, n, seq_len, gen, str(p)))
+    return torch.cat(parts)
 
 
 def _phase1_key(rc: RunConfig) -> dict:
@@ -231,6 +281,192 @@ def _sequential_encode(rc, ex, tables, picks, log) -> dict:
     )
 
 
+def _qad_encode(rc, ex, tables, picks, sens, log) -> dict:
+    """Phase 3q: layer-wise QAD (spec 13); returns ``{name: HI2Tensor}``."""
+    from transformers import AutoTokenizer
+
+    from .qad import fingerprint, qad_fingerprint_fields, qad_layerwise
+
+    qc = rc.qad
+    n_seq = qc.samples + qc.val
+    if rc.calib_ids is not None:
+        ids = rc.calib_ids
+        if ids.shape[0] < n_seq:
+            raise SystemExit(
+                f"QAD needs {n_seq} calibration sequences (samples + val), got {ids.shape[0]}"
+            )
+        ids = ids[:n_seq]
+    elif qc.sampling == "head":
+        ids = load_calibration_ids(
+            rc.calib, AutoTokenizer.from_pretrained(rc.src), n_seq, rc.seq_len
+        )
+    else:
+        bal = qc.sampling == "balanced"
+        ids = sample_calibration_windows(
+            rc.calib,
+            AutoTokenizer.from_pretrained(rc.src),
+            n_seq,
+            rc.seq_len,
+            qc.seed,
+            bal,
+        )
+        how = "in equal shares per calibration file" if bal else "from the whole text"
+        log(
+            f"QAD data: {n_seq} random non-overlapping {rc.seq_len}-token windows {how}"
+        )
+    model = _load_model(rc, log)
+    fp = fingerprint(
+        {
+            "phase1": _phase1_key(rc),
+            "target_bpw": rc.target_bpw,
+            "max_error_ratio": rc.max_error_ratio,
+            "sens": sens,
+            "picks": fingerprint({k: v.tolist() for k, v in sorted(picks.items())}),
+            "qad": qad_fingerprint_fields(qc),
+            "n_seq": n_seq,
+        }
+    )
+    inc = re.compile(rc.include) if rc.include else None
+    out = qad_layerwise(
+        model,
+        ids,
+        tables,
+        picks,
+        rc.cfg,
+        qc,
+        ex,
+        rc.workdir,
+        inc,
+        re.compile(rc.exclude),
+        make_resolver(weight_map(rc.src)),
+        fp,
+        rc.limit_layers,
+        log,
+    )
+    (rc.workdir / "qad_report.json").write_text(json.dumps(out.layers, indent=1))
+    return out.tensors
+
+
+def _text_config(src: Path) -> dict:
+    cfg = json.loads((Path(src) / "config.json").read_text())
+    return cfg.get("text_config", cfg)
+
+
+def check_inputs(rc: RunConfig, log=print) -> dict:
+    """Fail early (before hours of work) on a missing model, too little calibration
+    text, or an impossible QAD setting; returns the facts the plan prints."""
+    if not (Path(rc.src) / "config.json").exists():
+        raise SystemExit(
+            f"{rc.src} is not a Hugging Face model directory (no config.json)"
+        )
+    calibrated = rc.calib is not None or rc.calib_ids is not None
+    if rc.qad is not None and not calibrated:
+        log(
+            "warning: QAD needs calibration text (--calib FILE[,FILE...]); this data-free "
+            "run falls back to PTQ only (tools/hi2/experiments/build_calib_mix.py builds a "
+            "mixed-domain calibration file)"
+        )
+        rc.qad = None
+    if rc.qad is not None and rc.cfg.sequential:
+        raise SystemExit("QAD already runs on the quantized prefix; drop --sequential")
+    facts: dict = {"calibrated": calibrated}
+    need = rc.calib_samples * rc.seq_len if calibrated else 0
+    if rc.qad is not None:
+        need = max(need, (rc.qad.samples + rc.qad.val) * rc.seq_len)
+    if rc.calib is not None:
+        for p in calib_paths(rc.calib):
+            if not p.exists():
+                raise SystemExit(f"calibration file {p} does not exist")
+        from transformers import AutoTokenizer
+
+        tok = AutoTokenizer.from_pretrained(rc.src)
+        have = tok(
+            read_calibration_text(rc.calib),
+            return_tensors="pt",
+            add_special_tokens=False,
+        ).input_ids.shape[1]
+        facts["calib_tokens_available"] = have
+        if have < need:
+            what = (
+                "--qad-samples (+ held-out)"
+                if rc.qad is not None
+                else "--calib-samples"
+            )
+            raise SystemExit(
+                f"calibration text has {have} tokens, need {need}: add text (several files "
+                f"can be given, comma-separated) or lower {what} / --seq-len"
+            )
+    elif rc.calib_ids is not None:
+        have = rc.calib_ids.shape[0]
+        n = rc.qad.samples + rc.qad.val if rc.qad is not None else rc.calib_samples
+        if have < n:
+            raise SystemExit(f"{have} calibration sequences given, need {n}")
+    facts["calib_tokens_needed"] = need
+    return facts
+
+
+def _log_qad_plan(rc: RunConfig, ex: Executor, log) -> None:
+    from .qad import estimate_seconds
+
+    try:
+        sec, _ = estimate_seconds(
+            rc.src, rc.qad, rc.seq_len, rc.include, rc.exclude, ex.primary.type != "cpu"
+        )
+        est = (
+            f"roughly {sec / 3600:.1f} h"
+            if sec >= 5400
+            else f"roughly {sec / 60:.0f} min"
+        )
+    except Exception as e:  # the estimate is informative only
+        est = f"unknown ({e})"
+    log(
+        f"QAD is on (default): after PTQ every decoder layer is distilled against the "
+        f"unquantized model, {est} on {ex.primary} on top of PTQ; pass --no-qad for PTQ only"
+    )
+
+
+def plan(rc: RunConfig, log=print) -> dict:
+    """``--dry-run``: validate and describe the run without doing it."""
+    from dataclasses import asdict
+
+    facts = check_inputs(rc, log)
+    tc = _text_config(rc.src)
+    hidden, n_layers = tc.get("hidden_size"), tc.get("num_hidden_layers")
+    if rc.limit_layers is not None and n_layers:
+        n_layers = min(n_layers, rc.limit_layers)
+    out = {
+        "src": str(rc.src),
+        "dst": str(rc.dst),
+        "workdir": str(rc.workdir),
+        "devices": rc.devices,
+        "target_bpw": rc.target_bpw,
+        "max_error_ratio": rc.max_error_ratio,
+        "sensitivity": rc.sensitivity,
+        "rounding": rc.cfg.rounding,
+        "layers": n_layers,
+        **facts,
+    }
+    if rc.qad is not None and hidden:
+        from .qad import parse_layers
+
+        qc = rc.qad
+        n_seq = qc.samples + qc.val
+        out["qad"] = asdict(qc)
+        out["qad_trained_layers"] = len(
+            [
+                i
+                for i in parse_layers(qc.layers, tc["num_hidden_layers"])
+                if i < n_layers
+            ]
+        )
+        out["qad_hidden_state_ram_gib_fp32"] = round(
+            4 * n_seq * rc.seq_len * hidden * 4 / 2**30, 2
+        )
+        out["resume"] = "per layer under <workdir>/qad (re-run the same command)"
+    log("dry run: nothing written")
+    return out
+
+
 def _dtype(s: str) -> torch.dtype:
     return {"F32": torch.float32, "F16": torch.float16, "BF16": torch.bfloat16}.get(
         s, torch.int8
@@ -296,6 +532,10 @@ def run(rc: RunConfig, log=print) -> dict:
     rc.workdir.mkdir(parents=True, exist_ok=True)
     ex = Executor(rc.devices)
     calibrated = rc.calib is not None or rc.calib_ids is not None
+    if rc.qad is not None:
+        check_inputs(rc, log)  # fails early, or drops QAD for a data-free run
+    if rc.qad is not None:
+        _log_qad_plan(rc, ex, log)
     if rc.cfg.rounding == "gptq" and not calibrated:
         log("no calibration data: using nearest rounding")
         rc.cfg.rounding = "nearest"
@@ -383,7 +623,10 @@ def run(rc: RunConfig, log=print) -> dict:
         f"rows: {mix}"
     )
     pre = None
-    if rc.cfg.rounding == "gptq" and rc.cfg.sequential:
+    if rc.qad is not None:
+        log("phase 3q: layer-wise quantization-aware distillation (spec 13)")
+        pre = _qad_encode(rc, ex, tables, alloc.picks, sens, log)
+    elif rc.cfg.rounding == "gptq" and rc.cfg.sequential:
         log("phase 3a: sequential encode pass (spec 8.4)")
         pre = _sequential_encode(rc, ex, tables, alloc.picks, log)
     log("phase 3: encoding and writing")
@@ -399,6 +642,12 @@ def run(rc: RunConfig, log=print) -> dict:
         "rotation": rc.cfg.rotation,
         "calib_tokens": rc.calib_samples * rc.seq_len if calibrated else 0,
     }
+    if rc.qad is not None:
+        from dataclasses import asdict
+
+        meta["qad"] = asdict(rc.qad) | {
+            "tokens": (rc.qad.samples + rc.qad.val) * rc.seq_len
+        }
     report = write_checkpoint(
         rc.src, rc.dst, rc.workdir, tables, alloc.picks, rc.cfg, ex, meta, log, pre
     )

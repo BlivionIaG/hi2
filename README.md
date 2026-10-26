@@ -29,6 +29,7 @@ without loading the model.
 
 | Goal | Flags |
 | --- | --- |
+| Automatic (default) | `--devices auto`: every visible GPU (narrow with `HIP_VISIBLE_DEVICES`), else the CPU |
 | CPU / RAM only | `--devices cpu` |
 | One GPU | `--devices cuda:0` (pick the physical GPU with `HIP_VISIBLE_DEVICES`) |
 | Several GPUs (2, 4, ...) | `--devices cuda:0,cuda:1,...`: calibration sequences are split across devices and every tensor's rows are sharded across them. Results are identical to one device |
@@ -72,6 +73,28 @@ tensor-parallel forward pass (a single layer fits one GPU).
   that is not in the calibration region (`--skip-tokens`).
 * `eval` dequantizes back to dense weights and runs the original architecture: it
   checks the format numerically, it is not a kernel test.
+
+## Quantization-aware distillation (`--qad`)
+
+One command from a Hugging Face model to a QAD checkpoint (quality allocation, sensitivity
+probe, Hessian-aware PTQ, then layer-by-layer distillation against the unquantized model):
+
+```bash
+python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --qad
+python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --qad --dry-run  # plan only
+python -m hi2 eval <hf_model_dir> <out_dir> --text heldout.txt --device cuda:0
+python -m hi2 export-dense <hf_model_dir> <out_dir> <dense_dir>
+```
+
+The result is a normal v3.2 checkpoint (no format change). Each decoder layer is trained
+with the exact fake-quantized decode of the format (straight-through gradients) so that
+its output on the quantized prefix's hidden states matches the unquantized layer; the
+row picks, row constants, smoothing vectors and rotation flags stay as PTQ chose them.
+`--qad-preset fast|default|thorough`, `--qad-samples`, `--qad-layers` and
+`--qad-config file.json` are the knobs; the run is resumable per layer (re-run the same
+command). Calibration text is required (`--qad` without it fails immediately); QAD draws
+random windows from the whole text, so a concatenated multi-domain file is fully used.
+Design, measurements, runtimes and memory: `docs/rdna2/hi2-qad.md`.
 
 ## Experiments
 

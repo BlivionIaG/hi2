@@ -117,9 +117,11 @@ def encode_rows_gptq(
         )
         lo_d, step_d = lo_d.float(), step_d.float()
         codes = torch.zeros_like(wc)
+        comp = torch.zeros_like(wc)  # compensated value each code was rounded from
         if perm is not None:
             wc = wc[:, perm]
             blk_of = (perm // block).tolist()
+            perm_l = perm.tolist()
             codes_p = torch.zeros_like(wc)
         for i1 in range(0, k, BLOCK_COLUMNS):
             i2 = min(i1 + BLOCK_COLUMNS, k)
@@ -135,6 +137,7 @@ def encode_rows_gptq(
                 q = torch.where(st_j == 0, torch.zeros_like(q), q)
                 wq = (lo_j + q * st_j).to(torch.float16).float()
                 (codes_p if perm is not None else codes)[:, j] = q
+                comp[:, perm_l[j] if perm is not None else j] = col
                 e = (col - wq) / u1[i, i]
                 w1[:, i:] -= e[:, None] * u1[i, i:][None, :]
                 err1[:, i] = e
@@ -153,6 +156,7 @@ def encode_rows_gptq(
                 torch.stack([lo_u8, step_u8], dim=-1),
                 consts,
                 sse,
+                comp,
             )
         )
     if len(outs) == 1:
@@ -160,7 +164,7 @@ def encode_rows_gptq(
     return Encoded(
         *(
             torch.cat([getattr(o, f) for o in outs])
-            for f in ("codes", "params", "consts", "sse")
+            for f in ("codes", "params", "consts", "sse", "comp")
         )
     )
 

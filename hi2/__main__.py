@@ -1,24 +1,63 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # ruff: noqa: E501
-"""``python -m hi2 quantize|verify`` (run from tools/hi2 or with it on PYTHONPATH)."""
+"""``python -m hi2 quantize|verify|eval|export-dense`` (run from tools/hi2 or with it on
+PYTHONPATH). ``quantize`` runs layer-wise quantization-aware distillation after PTQ by
+default when calibration text is given (``--no-qad`` for PTQ only)."""
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .calibrate import SELECTABLE, Config
 from .checkpoint import DEFAULT_EXCLUDE, export_dense, verify_checkpoint
 from .encode import EFFORT
 from .evalq import evaluate
-from .pipeline import RunConfig, run
+from .pipeline import RunConfig, plan, run
+from .qad import PRESETS as QAD_PRESETS
+from .qad import make_config
 
 
 def _ints(s: str) -> list[int]:
     return [int(x) for x in s.split(",")]
 
 
+def resolve_devices(spec: str) -> list[str]:
+    """``auto`` = every visible GPU (narrow it with HIP_VISIBLE_DEVICES /
+    CUDA_VISIBLE_DEVICES), else the CPU; otherwise a comma-separated list."""
+    if spec != "auto":
+        return [d for d in spec.split(",") if d]
+    import torch
+
+    n = torch.accelerator.device_count() if torch.accelerator.is_available() else 0
+    return [f"cuda:{i}" for i in range(n)] or ["cpu"]
+
+
+def _qad_overrides(a) -> dict:
+    over = {}
+    if a.qad_config is not None:
+        over.update(json.loads(Path(a.qad_config).read_text()))
+    for key, val in (
+        ("steps", a.qad_steps),
+        ("lr_w", a.qad_lr),
+        ("lr_p", a.qad_lr_params),
+        ("batch", a.qad_batch),
+        ("samples", a.qad_samples),
+        ("budget", a.qad_budget),
+        ("init", a.qad_init),
+        ("layers", a.qad_layers),
+    ):
+        if val is not None:
+            over[key] = val
+    return over
+
+
 def main(argv=None):
+    if hasattr(
+        sys.stdout, "reconfigure"
+    ):  # progress lines show up promptly in log files
+        sys.stdout.reconfigure(line_buffering=True)
     ap = argparse.ArgumentParser(prog="hi2")
     sub = ap.add_subparsers(dest="cmd", required=True)
     q = sub.add_parser("quantize", help="HF checkpoint -> HI2 flex checkpoint")
@@ -32,16 +71,16 @@ def main(argv=None):
     )
     q.add_argument(
         "--devices",
-        default="cpu",
-        help="cpu, cuda:0, or a list such as cuda:0,cuda:1 (HIP on ROCm). "
-        "Several devices split calibration sequences and shard each "
-        "tensor's rows",
+        default="auto",
+        help="auto (default: every visible GPU, else CPU), cpu, cuda:0, or a list such as "
+        "cuda:0,cuda:1 (HIP on ROCm). Several devices split calibration sequences and "
+        "shard each tensor's rows",
     )
     q.add_argument(
         "--calib",
-        type=Path,
         default=None,
-        help=".txt or .jsonl calibration text; omit for data-free",
+        help=".txt or .jsonl calibration text (several: comma-separated, concatenated "
+        "in order); omit for data-free",
     )
     q.add_argument(
         "--calib-samples",
@@ -88,8 +127,9 @@ def main(argv=None):
     q.add_argument(
         "--sensitivity",
         choices=("none", "probe"),
-        default="none",
-        help="probe = weight the allocation by each tensor's measured KL cost (spec 8.6)",
+        default=None,
+        help="probe = weight the allocation by each tensor's measured KL cost (spec 8.6); "
+        "default probe when calibrated with QAD on, else none",
     )
     q.add_argument("--sens-seqs", type=int, default=8)
     q.add_argument("--sens-len", type=int, default=512)
@@ -145,6 +185,56 @@ def main(argv=None):
     q.add_argument(
         "--compute-dtype", choices=("float32", "float16", "bfloat16"), default="float32"
     )
+    g = q.add_argument_group("quantization-aware distillation (spec 13)")
+    g.add_argument(
+        "--qad",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="on by default: after PTQ, distill every layer against the unquantized model "
+        "(needs --calib; data-free runs fall back to PTQ). --no-qad = PTQ only. "
+        "See docs/rdna2/hi2-qad.md",
+    )
+    g.add_argument(
+        "--qad-preset",
+        choices=list(QAD_PRESETS),
+        default="default",
+        help="fast | default | thorough (steps and sequences per layer)",
+    )
+    g.add_argument(
+        "--qad-budget",
+        type=float,
+        default=None,
+        help="fraction of preset steps x layers to spend; layers that gain little get "
+        "fewer steps and stop early (preset default)",
+    )
+    g.add_argument(
+        "--qad-samples",
+        type=int,
+        default=None,
+        help="training sequences of --seq-len tokens (preset default)",
+    )
+    g.add_argument(
+        "--qad-layers", default=None, help='layers to train, e.g. "0-5,9" (default all)'
+    )
+    g.add_argument(
+        "--qad-config",
+        default=None,
+        help="JSON file of advanced QAD options (fields of hi2.qad.QadConfig)",
+    )
+    for flag, typ in (
+        ("--qad-steps", int),
+        ("--qad-lr", float),
+        ("--qad-lr-params", float),
+        ("--qad-batch", int),
+        ("--qad-init", str),
+    ):
+        g.add_argument(flag, type=typ, default=None, help=argparse.SUPPRESS)
+    q.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="check the inputs (model, calibration tokens, devices, RAM) and print the "
+        "plan without quantizing",
+    )
     v = sub.add_parser("verify", help="reload an HI2 checkpoint and compare")
     v.add_argument("src", type=Path)
     v.add_argument("dst", type=Path)
@@ -195,12 +285,15 @@ def main(argv=None):
         cands = [(nb, b) for nb, b in SELECTABLE if nb in a.bits and b in a.blocks]
         if not cands:
             raise SystemExit("--bits/--blocks leave no candidate configuration")
+        qc = make_config(a.qad_preset, _qad_overrides(a)) if a.qad else None
+        sens = a.sensitivity or ("probe" if a.qad and a.calib else "none")
         rc = RunConfig(
             src=a.src,
             dst=a.dst,
             workdir=a.workdir or Path(str(a.dst) + ".work"),
-            devices=[d for d in a.devices.split(",") if d],
-            calib=a.calib,
+            devices=resolve_devices(a.devices),
+            calib=[Path(p) for p in a.calib.split(",") if p] if a.calib else None,
+            qad=qc,
             calib_samples=a.calib_samples,
             seq_len=a.seq_len,
             target_bpw=a.target_bpw,
@@ -209,7 +302,7 @@ def main(argv=None):
             exclude=a.exclude,
             limit_layers=a.limit_layers,
             compute_dtype=a.compute_dtype,
-            sensitivity=a.sensitivity,
+            sensitivity=sens,
             sens_seqs=a.sens_seqs,
             sens_len=a.sens_len,
             sens_floor=a.sens_floor,
@@ -227,7 +320,7 @@ def main(argv=None):
                 expert_min_tokens=a.expert_min_tokens,
             ),
         )
-        out = run(rc)
+        out = plan(rc) if a.dry_run else run(rc)
     else:
         out = verify_checkpoint(a.src, a.dst, a.max_tensors)
     print(json.dumps(out, indent=2))

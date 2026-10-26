@@ -119,6 +119,9 @@ class Encoded:
     params: torch.Tensor  # uint8 [N, nb, 2]
     consts: torch.Tensor  # fp16 [N, 3]
     sse: torch.Tensor  # float32 [N], activation-weighted squared error
+    # stored-basis values the codes are the nearest rounding of (GPTQ: the error-compensated
+    # weights at the time each column was rounded); used to initialise QAD latents
+    comp: torch.Tensor | None = None
 
 
 def encode_rows(
