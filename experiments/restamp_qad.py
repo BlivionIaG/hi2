@@ -15,7 +15,9 @@ from pathlib import Path
 import torch
 
 src, dst = Path(sys.argv[1]), Path(sys.argv[2])
-recs = {p.name: torch.load(p, weights_only=False) for p in sorted(dst.glob("layer*.pt"))}
+recs = {
+    p.name: torch.load(p, weights_only=False) for p in sorted(dst.glob("layer*.pt"))
+}
 old = {n: torch.load(src / n, weights_only=False) for n in recs}
 fps = {r["fingerprint"] for r in recs.values()}
 old_fp = {r["fingerprint"] for r in old.values()}

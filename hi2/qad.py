@@ -100,7 +100,9 @@ class QadConfig:
     # bytes and the RMSNorm weights (codes frozen); 0 = off.
     final_kl: int = 0
     final_batch: int = 2  # sequences per step
-    final_lr_p: float = 0.02  # ladder bytes, in 8-bit levels per step
+    # ladder bytes, in 8-bit levels per step: 0.02 is the Qwen3.5-4B value (0.05 was best on
+    # Qwen3.5-0.8B but raised the 4B held-out KL above its start)
+    final_lr_p: float = 0.02
     final_lr_norm: float = 5e-5
     final_norms: bool = True
     final_bytes: bool = True
