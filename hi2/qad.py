@@ -86,7 +86,7 @@ class QadConfig:
     sampling: str = "random"
 
 
-# Chosen on Qwen3.5-0.8B at 3.0 bpw (docs/rdna2/hi2-qad.md); everything else default.
+# Chosen on Qwen3.5-0.8B at 3.0 bpw (docs/hi2-qad.md); everything else default.
 # fast = half the steps spent where layers still gain, with early stopping (better than a
 # uniform 100 steps at the same time); no reduced budget stayed within noise of default.
 PRESETS: dict[str, dict] = {

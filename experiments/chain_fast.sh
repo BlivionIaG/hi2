@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2086  # argument lists on purpose
-# Before/after timing runs of the hi2 speed work (docs/rdna2/hi2-speed.md): each job
+# Before/after timing runs of the hi2 speed work (docs/hi2-speed.md): each job
 # waits until one of our GPUs (HIP 2-5) is idle and unlocked, then runs on it.
 # usage: chain_fast.sh JOB...   (jobs: see the case list below)
 B=/home/chenco_adm/w4a8_runs/hadamard-int2

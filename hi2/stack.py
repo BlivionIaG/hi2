@@ -17,7 +17,7 @@ experts of one layer and projection group as one set of arrays,
 * ``part_off`` (int32 ``[E*P + 1]``) gives the rows of each (expert, part) slice.
 
 Only the storage changes: :func:`split_stack` returns the per-expert arrays byte for
-byte, so both layouts dequantize identically. ``docs/rdna2/hi2-moe.md`` is the
+byte, so both layouts dequantize identically. ``docs/hi2-moe.md`` is the
 loader-facing description.
 """
 

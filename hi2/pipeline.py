@@ -480,7 +480,7 @@ def check_inputs(rc: RunConfig, log=print) -> dict:
     if rc.qad is not None and not calibrated:
         log(
             "warning: QAD needs calibration text (--calib FILE[,FILE...]); this data-free "
-            "run falls back to PTQ only (tools/hi2/experiments/build_calib_mix.py builds a "
+            "run falls back to PTQ only (./experiments/build_calib_mix.py builds a "
             "mixed-domain calibration file)"
         )
         rc.qad = None

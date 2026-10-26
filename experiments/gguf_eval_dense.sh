@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Score hi2 runs in llama.cpp with the same command as the GGUF baselines: export the
 # dequantised model as an fp16 HF dir, convert to GGUF f16, run llama-perplexity.
-# usage: HIP_VISIBLE_DEVICES=3 HI2_PATH=<tools/hi2> gguf_eval_dense.sh <hf_model_dir> <runs_dir> <gguf_dir> TAG...
+# usage: HIP_VISIBLE_DEVICES=3 HI2_PATH=<.> gguf_eval_dense.sh <hf_model_dir> <runs_dir> <gguf_dir> TAG...
 set -u
 M=$1; RUNS=$2; G=$3; shift 3
 D=/home/chenco_adm/rocmfpx-rdna2; BIN=$D/build-gfx1030/bin

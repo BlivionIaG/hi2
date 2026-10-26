@@ -1,7 +1,7 @@
 # hi2: HadamardINT2-FP16 v3.2 quantizer (flex)
 
 Standalone (torch, safetensors, regex, transformers for calibration). Implements
-`docs/rdna2/hadamard-int2-v3.2-spec.md` only. Run from `tools/hi2`:
+`docs/hadamard-int2-v3.2-spec.md` only. Run from `.`:
 
 ```bash
 python -m hi2 quantize <hf_model_dir> <out_dir> --calib text.txt --target-bpw 3.0
@@ -61,7 +61,7 @@ tensor-parallel forward pass (a single layer fits one GPU).
   was the best transform at every bit width (and still best, by a smaller margin, with
   `--rounding gptq`). Rotation alone hurts a calibrated encoder under nearest rounding;
   without `--calib` smoothing is skipped and rotation helps a lot. Evidence:
-  `docs/rdna2/hadamard-int2-design-notes.md`.
+  `docs/hadamard-int2-design-notes.md`.
 * The smoothing vector costs `16/R` bits per weight per tensor, and the global
   allocation accounts for it.
 * `--bits` / `--blocks` restrict the candidate set (for example `--bits 4 --blocks 64`
@@ -103,7 +103,7 @@ where layers still gain, with per-layer early stopping), `--qad-samples`, `--qad
 layer (re-run the same command). QAD draws random windows from the whole calibration text,
 so a concatenated multi-domain file is fully used. Runtimes on one V620 (QAD part, `default` / `fast`): Qwen3.5-0.8B 41 / 17 min, Qwen3.5-4B about
 3.1 h / 1.3 h, on top of 10-50 min of PTQ.
-Design, measurements and memory: `docs/rdna2/hi2-qad.md`.
+Design, measurements and memory: `docs/hi2-qad.md`.
 With the cache on, QAD's PTQ initialisation reads the cached statistics and Hessians and
 encodes each layer's Linears in one batched call. `--max-error-ratio a,b,c` with QAD
 runs one QAD pass per output, in sequence (logged, with a time warning; per-layer
@@ -125,7 +125,7 @@ python -m hi2 cache prune [--older-than DAYS] [--keep-gb N] [--digest D] [--dry-
 ```
 
 Bump `STATS_VERSION` / `TABLES_VERSION` / `PROBE_VERSION` in `hi2/cache.py` when the code
-producing an entry changes. Design, key and measurements: `docs/rdna2/hi2-speed.md`.
+producing an entry changes. Design, key and measurements: `docs/hi2-speed.md`.
 `HI2_GPTQ_BACKEND=torch` forces the reference GPTQ loop; the kernel builds on first use
 into `~/.cache/hi2/kernels` (`HI2_KERNEL_DIR`).
 
@@ -136,4 +136,4 @@ rotation and smoothing, GGUF baselines, llama.cpp scoring of HI2 checkpoints, th
 gfx1030 instruction probes) and `experiments/results/` their raw output. They were
 run on a gfx1030 box; paths inside the shell scripts are that box's.
 
-Tests: `cd tools/hi2 && pytest tests`.
+Tests: `cd . && pytest tests`.

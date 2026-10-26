@@ -3,7 +3,7 @@
 # ruff: noqa: E501
 """HadamardINT2-FP16 v3.2: storage format, decode and reference semantics.
 
-Section numbers refer to ``docs/rdna2/hadamard-int2-v3.2-spec.md``.
+Section numbers refer to ``docs/hadamard-int2-v3.2-spec.md``.
 
 * 2.1 blocks of ``B`` in {16, 32, 64} along K, per-row INT2/INT4.
 * 2.2 affine ladder ``w = fp16(lo + code * step)`` with 8-bit block parameters

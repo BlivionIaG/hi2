@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # ruff: noqa: E501
-"""``python -m hi2 quantize|verify|eval|export-dense|restack`` (run from tools/hi2 or with it on
+"""``python -m hi2 quantize|verify|eval|export-dense|restack`` (run from . or with it on
 PYTHONPATH). ``quantize`` runs layer-wise quantization-aware distillation after PTQ by
 default when calibration text is given (``--no-qad`` for PTQ only)."""
 
@@ -240,7 +240,7 @@ def main(argv=None):
         choices=sorted(CANDIDATE_PRESETS),
         default="all",
         help="candidate preset on top of --bits/--blocks: lean drops INT4/B16, which "
-        "holds 0.1-0.8%% of the weights at 3-3.5 bpw (docs/rdna2/hi2-speed.md)",
+        "holds 0.1-0.8%% of the weights at 3-3.5 bpw (docs/hi2-speed.md)",
     )
     q.add_argument(
         "--cache-dir",
@@ -259,7 +259,7 @@ def main(argv=None):
         type=int,
         default=0,
         help="store cached Sigma in fp16 for inputs wider than this (halves the disk; "
-        "lossy, see docs/rdna2/hi2-speed.md); 0 = fp32",
+        "lossy, see docs/hi2-speed.md); 0 = fp32",
     )
     q.add_argument(
         "--moe-layout",
@@ -267,7 +267,7 @@ def main(argv=None):
         default="stacked",
         help="routed experts on disk: one stack per layer and gate_up/down group "
         "(default; loads ~9x faster in the fork) or one HI2 tensor per expert "
-        "projection (docs/rdna2/hi2-moe.md); the weights are identical",
+        "projection (docs/hi2-moe.md); the weights are identical",
     )
     q.add_argument("--include", default=None, help="regex: only these weights")
     q.add_argument("--exclude", default=DEFAULT_EXCLUDE, help="regex: keep dense")
@@ -282,7 +282,7 @@ def main(argv=None):
         default=True,
         help="on by default: after PTQ, distill every layer against the unquantized model "
         "(needs --calib; data-free runs fall back to PTQ). --no-qad = PTQ only. "
-        "See docs/rdna2/hi2-qad.md",
+        "See docs/hi2-qad.md",
     )
     g.add_argument(
         "--qad-preset",
