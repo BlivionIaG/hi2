@@ -38,14 +38,25 @@ def probe_sensitivity(
     ref_candidate: tuple[int, int] = REF_CANDIDATE,
     floor: float = 0.05,
     log=print,
+    units: list[list[tuple[str, float]]] | None = None,
+    dtype: torch.dtype = torch.float32,
 ) -> dict[str, float]:
-    """Return ``{checkpoint tensor name: s_t}`` (normalised to median 1)."""
+    """Return ``{checkpoint tensor name: s_t}`` (normalised to median 1).
+
+    ``units`` are groups of ``(name, weight)`` quantized together in one probe (MoE:
+    all experts of a layer and projection, weighted by routed-token share, see
+    :func:`hi2.moe.probe_units`); the default is one unit per tensor with weight 1. A
+    unit's sensitivity is ``s_u = dKL / sum_t w_t rel_err_t``; the median and the floor
+    apply to ``s_u``, and each member gets ``s_u * w_t``, so the unit's predicted KL is
+    ``sum_t s_t rel_err_t``."""
     from transformers import AutoModelForCausalLM
 
+    from .moe import unfuse_experts
+
     dev = ex.primary
-    model = (
-        AutoModelForCausalLM.from_pretrained(src, dtype=torch.float32).eval().to(dev)
-    )
+    model = AutoModelForCausalLM.from_pretrained(src, dtype=dtype).eval()
+    unfuse_experts(model)
+    model = model.to(dev)
     resolve = make_resolver(weight_map(src))
     params = {}
     for name, p in model.named_parameters():
@@ -56,6 +67,10 @@ def probe_sensitivity(
     ref = []
     for i in range(ids.shape[0]):
         lg = model(ids[i : i + 1]).logits[0].float()
+        if not torch.isfinite(lg).all():
+            raise SystemExit(
+                f"sensitivity probe: non-finite logits in {dtype}; use float32"
+            )
         ref.append(torch.log_softmax(lg, -1).half().cpu())
 
     def kl() -> float:
@@ -70,33 +85,52 @@ def probe_sensitivity(
     near = copy.copy(cfg)
     near.rounding = "nearest"
     near.sequential = False
-    raw: dict[str, tuple[float, float]] = {}
-    for k, (name, table) in enumerate(tables.items()):
-        if name not in params:
+    units = units or [[(n, 1.0)] for n in tables]
+    raw: list[tuple[list[tuple[str, float]], float, float]] = []
+    for k, unit in enumerate(units):
+        members = [(n, w) for n, w in unit if n in params]
+        if not members:
             continue
-        cand = (
-            ref_candidate if ref_candidate in table.candidates else table.candidates[0]
-        )
-        ci = table.candidates.index(cand)
-        r = table.shape[0]
-        picks = torch.full((r,), ci, dtype=torch.long)
-        p = params[name]
-        w = p.detach().float().cpu()
-        sp = table_stats_path(workdir, name)
-        stats = ColumnStats.from_state(torch.load(sp), "cpu") if sp.exists() else None
-        t = encode_with_picks(w, stats, table, picks, near, ex)
-        rel = table.sse[ci].sum().item() / max(table.energy, 1e-30)
-        orig = p.data.clone()
-        p.data.copy_(dequantize(t).to(p.dtype).to(dev))
-        dkl = max(kl(), 0.0)
-        p.data.copy_(orig)
-        raw[name] = (dkl, rel)
-        if k % 20 == 0:
-            log(
-                f"sensitivity {k + 1}/{len(tables)}: {name} dKL={dkl:.2e} rel_err={rel:.3f}"
+        rel, saved = 0.0, []
+        for name, wt in members:
+            table = tables[name]
+            cand = (
+                ref_candidate
+                if ref_candidate in table.candidates
+                else table.candidates[0]
             )
-    s = {n: dkl / max(rel, 1e-12) for n, (dkl, rel) in raw.items()}
-    vals = sorted(s.values())
+            ci = table.candidates.index(cand)
+            picks = torch.full((table.shape[0],), ci, dtype=torch.long)
+            p = params[name]
+            sp = table_stats_path(workdir, name)
+            stats = (
+                ColumnStats.from_state(torch.load(sp), "cpu") if sp.exists() else None
+            )
+            t = encode_with_picks(
+                p.detach().float().cpu(), stats, table, picks, near, ex
+            )
+            rel += wt * table.sse[ci].sum().item() / max(table.energy, 1e-30)
+            saved.append((p, p.data.clone()))
+            p.data.copy_(dequantize(t).to(p.dtype).to(dev))
+        dkl = max(kl(), 0.0)
+        for p, orig in saved:
+            p.data.copy_(orig)
+        del saved
+        raw.append((members, dkl, rel))
+        if k % 20 == 0:
+            what = (
+                members[0][0]
+                if len(members) == 1
+                else f"{members[0][0]} (+{len(members) - 1})"
+            )
+            log(
+                f"sensitivity {k + 1}/{len(units)}: {what} dKL={dkl:.2e} rel_err={rel:.3f}"
+            )
+    s_unit = [dkl / max(rel, 1e-12) for _, dkl, rel in raw]
+    vals = sorted(s_unit)
     med = vals[len(vals) // 2] if vals else 1.0
-    out = {n: max(v / med, floor) for n, v in s.items()}
+    out = {}
+    for (members, _, _), su in zip(raw, s_unit):
+        for name, wt in members:
+            out[name] = max(su / med, floor) * wt
     return out

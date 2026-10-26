@@ -26,13 +26,16 @@ def evaluate(
     device: str = "cpu",
     skip_tokens: int = 0,
     log=print,
+    dtype: str = "float32",
 ) -> dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(src)
     ids = load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens)
     model = (
-        AutoModelForCausalLM.from_pretrained(src, dtype=torch.float32).eval().to(device)
+        AutoModelForCausalLM.from_pretrained(src, dtype=getattr(torch, dtype))
+        .eval()
+        .to(device)
     )
     ref_logp = []
     for i in range(ids.shape[0]):
@@ -45,7 +48,7 @@ def evaluate(
     dense = dst.parent / (dst.name + ".eval-dense")
     export_dense(src, dst, dense)
     try:
-        model = AutoModelForCausalLM.from_pretrained(dense, dtype=torch.float32)
+        model = AutoModelForCausalLM.from_pretrained(dense, dtype=getattr(torch, dtype))
         model = model.eval().to(device)
     finally:
         shutil.rmtree(dense, ignore_errors=True)
@@ -68,6 +71,7 @@ def evaluate(
         "ppl_quantized": float(torch.exp(torch.tensor(nll_q / n))),
         "kld_nats_per_token": kl / n,
         "top1_agreement": agree / n,
+        "dtype": dtype,
     }
     return out
 

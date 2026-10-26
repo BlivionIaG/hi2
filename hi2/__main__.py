@@ -100,6 +100,26 @@ def main(argv=None):
         help="lower bound of a tensor weight relative to the median",
     )
     q.add_argument(
+        "--sens-dtype",
+        choices=("float32", "float16", "bfloat16"),
+        default="float32",
+        help="dtype of the whole-model sensitivity probe (float16 when fp32 does not fit; "
+        "bfloat16 is emulated, very slowly, on gfx1030)",
+    )
+    q.add_argument(
+        "--expert-min-tokens",
+        type=float,
+        default=2.0,
+        help="MoE: an expert routed fewer than this x its input width tokens tops its "
+        "statistics up with the layer average (0 = never)",
+    )
+    q.add_argument(
+        "--expert-share-floor",
+        type=float,
+        default=0.05,
+        help="MoE: lower bound of an expert's routed-token share in its allocation weight",
+    )
+    q.add_argument(
         "--sequential",
         action="store_true",
         help="gptq on the quantized prefix (spec 8.4): a second layerwise model pass",
@@ -150,13 +170,26 @@ def main(argv=None):
         help="skip this many leading tokens (the calibration region)",
     )
     e.add_argument("--device", default="cpu")
+    e.add_argument(
+        "--dtype",
+        choices=("float32", "float16", "bfloat16"),
+        default="float32",
+        help="dtype of both models (float16 when an fp32 copy does not fit the device)",
+    )
     a = ap.parse_args(argv)
     if a.cmd == "export-dense":
         export_dense(a.src, a.dst, a.out)
         out = {"exported": str(a.out)}
     elif a.cmd == "eval":
         out = evaluate(
-            a.src, a.dst, a.text, a.samples, a.seq_len, a.device, a.skip_tokens
+            a.src,
+            a.dst,
+            a.text,
+            a.samples,
+            a.seq_len,
+            a.device,
+            a.skip_tokens,
+            dtype=a.dtype,
         )
     elif a.cmd == "quantize":
         cands = [(nb, b) for nb, b in SELECTABLE if nb in a.bits and b in a.blocks]
@@ -180,6 +213,8 @@ def main(argv=None):
             sens_seqs=a.sens_seqs,
             sens_len=a.sens_len,
             sens_floor=a.sens_floor,
+            sens_dtype=a.sens_dtype,
+            expert_share_floor=a.expert_share_floor,
             cfg=Config(
                 candidates=cands,
                 rotation=a.rotation,
@@ -189,6 +224,7 @@ def main(argv=None):
                 act_order=a.act_order,
                 damp=a.damp,
                 effort=a.effort,
+                expert_min_tokens=a.expert_min_tokens,
             ),
         )
         out = run(rc)

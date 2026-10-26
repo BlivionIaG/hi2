@@ -4,6 +4,7 @@
 """The three phases: tabulate (calibration), allocate (global), encode (write)."""
 
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from .checkpoint import (
     write_checkpoint,
 )
 from .executor import Executor
+from .moe import expert_parts, expert_weights, group_key, probe_units
 
 DEFAULT_ERROR_RATIO = 4.0  # placeholder until measured (see docs)
 
@@ -46,6 +48,12 @@ class RunConfig:
     sens_seqs: int = 8
     sens_len: int = 512
     sens_floor: float = 0.05
+    sens_dtype: str = (
+        "float32"  # dtype of the whole-model probe (float16 if fp32 does not fit)
+    )
+    # MoE: lower bound of an expert's routed-token share (relative to uniform routing)
+    # in its allocation weight
+    expert_share_floor: float = 0.05
 
 
 def load_calibration_ids(
@@ -68,6 +76,43 @@ def load_calibration_ids(
     return ids[:need].reshape(samples, seq_len)
 
 
+def _phase1_key(rc: RunConfig) -> dict:
+    """Settings that determine the phase-1 tables; a workdir whose ``phase1.json``
+    matches them is reused (e.g. one calibration for several allocation targets)."""
+    c = rc.cfg
+    return {
+        "src": str(rc.src),
+        "calib": str(rc.calib),
+        "calib_samples": rc.calib_samples,
+        "seq_len": rc.seq_len,
+        "include": rc.include,
+        "exclude": rc.exclude,
+        "limit_layers": rc.limit_layers,
+        "compute_dtype": rc.compute_dtype,
+        "candidates": [list(x) for x in c.candidates],
+        "rotation": c.rotation,
+        "smooth": c.smooth,
+        "rounding": c.rounding,
+        "sequential": c.sequential,
+        "effort": c.effort,
+        "expert_min_tokens": c.expert_min_tokens,
+    }
+
+
+def _load_model(rc: RunConfig, log=print):
+    """The HF model in RAM, with fused 3-D experts replaced by per-expert Linears."""
+    from transformers import AutoModelForCausalLM
+
+    from .moe import check_unfused, unfuse_experts
+
+    model = AutoModelForCausalLM.from_pretrained(
+        rc.src, dtype=getattr(torch, rc.compute_dtype), low_cpu_mem_usage=True
+    ).eval()
+    if unfuse_experts(model):
+        check_unfused(model, rc.src, make_resolver(weight_map(rc.src)), log)
+    return model
+
+
 def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTable]:
     inc = re.compile(rc.include) if rc.include else None
     exc = re.compile(rc.exclude)
@@ -75,7 +120,17 @@ def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTab
     tdir.mkdir(parents=True, exist_ok=True)
     if rc.calib is None and rc.calib_ids is None:
         return _tabulate_streaming(rc, ex, inc, exc, tdir, log)
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    marker = rc.workdir / "phase1.json"
+    if rc.calib_ids is None and marker.exists():
+        done = json.loads(marker.read_text())
+        hess_ok = rc.cfg.rounding != "gptq" or (rc.workdir / "hessian").is_dir()
+        if done.get("key") == _phase1_key(rc) and hess_ok:
+            log(f"phase 1: reusing {len(done['tensors'])} tables from {rc.workdir}")
+            return {
+                n: torch.load(tdir / (n.replace("/", "_") + ".pt"), weights_only=False)
+                for n in done["tensors"]
+            }
+    from transformers import AutoTokenizer
 
     from .layerwise import calibrate_layerwise
 
@@ -84,9 +139,7 @@ def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTab
     else:
         tok = AutoTokenizer.from_pretrained(rc.src)
         ids = load_calibration_ids(rc.calib, tok, rc.calib_samples, rc.seq_len)
-    model = AutoModelForCausalLM.from_pretrained(
-        rc.src, dtype=getattr(torch, rc.compute_dtype), low_cpu_mem_usage=True
-    ).eval()
+    model = _load_model(rc, log)
     wmap = weight_map(rc.src)
     tables = calibrate_layerwise(
         model,
@@ -105,6 +158,7 @@ def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTab
         raise SystemExit(f"module names not found in the checkpoint: {missing[:3]}")
     for name, t in tables.items():
         torch.save(t, tdir / (name.replace("/", "_") + ".pt"))
+    marker.write_text(json.dumps({"key": _phase1_key(rc), "tensors": list(tables)}))
     return tables
 
 
@@ -147,7 +201,7 @@ def _probe_ids(rc) -> torch.Tensor:
 
 
 def _sequential_encode(rc, ex, tables, picks, log) -> dict:
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
 
     from .layerwise import encode_layerwise
 
@@ -160,9 +214,7 @@ def _sequential_encode(rc, ex, tables, picks, log) -> dict:
             rc.calib_samples,
             rc.seq_len,
         )
-    model = AutoModelForCausalLM.from_pretrained(
-        rc.src, dtype=getattr(torch, rc.compute_dtype), low_cpu_mem_usage=True
-    ).eval()
+    model = _load_model(rc, log)
     inc = re.compile(rc.include) if rc.include else None
     return encode_layerwise(
         model,
@@ -205,7 +257,42 @@ def summarize(report: dict[str, dict]) -> dict:
     }
 
 
+def _peak_memory(ex: Executor) -> dict:
+    """Peak resident memory of this process and peak allocated memory per GPU (GiB)."""
+    import resource
+    import sys
+
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    rss *= 1 if sys.platform == "darwin" else 1024  # bytes on macOS, KiB on Linux
+    out = {"host_rss": round(rss / 2**30, 2)}
+    for d in ex.devices:
+        if d.type == "cuda":
+            out[str(d)] = round(torch.accelerator.max_memory_allocated(d) / 2**30, 2)
+    return out
+
+
+def _expert_summary(report: dict[str, dict]) -> dict:
+    """Bpw and INT4 row share of the expert tensors against the rest."""
+
+    def agg(items):
+        params = sum(r["shape"][0] * r["shape"][1] for r in items)
+        rows = sum(r["shape"][0] for r in items)
+        return {
+            "tensors": len(items),
+            "params": params,
+            "avg_bpw": sum(r["bpw"] * r["shape"][0] * r["shape"][1] for r in items)
+            / max(params, 1),
+            "frac_int4_rows": sum(r["frac_int4"] * r["shape"][0] for r in items)
+            / max(rows, 1),
+        }
+
+    ex = [r for n, r in report.items() if expert_parts(n) is not None]
+    dense = [r for n, r in report.items() if expert_parts(n) is None]
+    return {"expert": agg(ex), "non_expert": agg(dense)}
+
+
 def run(rc: RunConfig, log=print) -> dict:
+    t_start = time.time()
     rc.workdir.mkdir(parents=True, exist_ok=True)
     ex = Executor(rc.devices)
     calibrated = rc.calib is not None or rc.calib_ids is not None
@@ -218,24 +305,52 @@ def run(rc: RunConfig, log=print) -> dict:
         f"{'' if calibrated else ' (data-free)'}"
     )
     tables = phase1_tables(rc, ex, log)
-    sens = None
+    t_phase1 = time.time()
+    # MoE: all experts of a layer and projection weigh as one dense tensor, split by
+    # routed-token share (empty for dense models)
+    weights = expert_weights(tables, rc.expert_share_floor)
+    if weights:
+        log(
+            f"MoE: {len(weights)} expert tensors in "
+            f"{len({group_key(n) for n in weights})} layer/projection groups"
+        )
+    sens = dict(weights) or None
     if rc.sensitivity == "probe":
         if not calibrated:
             raise SystemExit("--sensitivity probe needs calibration data (--calib)")
         from .sensitivity import probe_sensitivity
 
-        log("phase 2a: probing per-tensor sensitivity")
-        sens = probe_sensitivity(
-            rc.src,
-            tables,
-            rc.workdir,
-            _probe_ids(rc),
-            rc.cfg,
-            ex,
-            floor=rc.sens_floor,
-            log=log,
+        skey = {
+            "phase1": _phase1_key(rc),
+            "seqs": rc.sens_seqs,
+            "len": rc.sens_len,
+            "floor": rc.sens_floor,
+            "dtype": rc.sens_dtype,
+            "share_floor": rc.expert_share_floor,
+        }
+        spath, kpath = (
+            rc.workdir / "sensitivity.json",
+            rc.workdir / "sensitivity.key.json",
         )
-        (rc.workdir / "sensitivity.json").write_text(json.dumps(sens, indent=1))
+        if spath.exists() and kpath.exists() and json.loads(kpath.read_text()) == skey:
+            log("phase 2a: reusing the sensitivity probe of this workdir")
+            sens = json.loads(spath.read_text())
+        else:
+            log("phase 2a: probing per-tensor sensitivity")
+            sens = probe_sensitivity(
+                rc.src,
+                tables,
+                rc.workdir,
+                _probe_ids(rc),
+                rc.cfg,
+                ex,
+                floor=rc.sens_floor,
+                log=log,
+                units=probe_units(tables, weights),
+                dtype=getattr(torch, rc.sens_dtype),
+            )
+            spath.write_text(json.dumps(sens, indent=1))
+            kpath.write_text(json.dumps(skey))
     if rc.target_bpw is not None and rc.max_error_ratio is not None:
         raise ValueError("give either target_bpw or max_error_ratio, not both")
     if rc.target_bpw is None:
@@ -290,7 +405,21 @@ def run(rc: RunConfig, log=print) -> dict:
     summary = summarize(report) | {
         "allocation_bpw": alloc.bpw,
         "feasible": alloc.feasible,
+        "allocation_error_ratio": alloc.error_ratio,
+        "frac_rows_by_bits": alloc.frac_by_bits,
+        "runtime_s": {
+            "phase1": round(t_phase1 - t_start, 1),
+            "total": round(time.time() - t_start, 1),
+        },
+        "peak_memory_gib": _peak_memory(ex),
     }
+    tok = rc.workdir / "expert_tokens.json"
+    if weights:
+        summary["experts"] = _expert_summary(report)
+        if tok.exists():
+            cov = json.loads(tok.read_text())
+            summary["experts"]["fallback_tensors"] = len(cov["fallback"])
+            summary["experts"]["coverage"] = cov["coverage"]
     (rc.dst / "hi2_report.json").write_text(
         json.dumps({"summary": summary, "tensors": report}, indent=2)
     )

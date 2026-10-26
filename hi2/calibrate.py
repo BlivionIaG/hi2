@@ -56,6 +56,9 @@ class Config:
     # round columns in descending Hessian-diagonal order (GPTQ "act-order"); storage unchanged
     act_order: bool = False
     effort: str = "normal"  # fast | normal | max
+    # MoE: an expert that saw fewer than this x its widest input routed tokens tops its
+    # statistics (and Hessian) up with the layer average of its projection; 0 = never
+    expert_min_tokens: float = 2.0
 
 
 @dataclass
@@ -146,17 +149,41 @@ def _chunk_errors(wt, d, enc, nbits, block) -> torch.Tensor:
     return (db * (rec - wb) ** 2).sum((0, 2))
 
 
+def shared_transform(
+    ws: list[torch.Tensor], stats: ColumnStats | None, cfg: Config, ex: Executor
+) -> tuple[torch.Tensor | None, torch.Tensor]:
+    """``(smoothing vector, rotation flags)`` for Linears that receive the same input
+    (q, k, v; gate, up): one ``s`` from the shared statistics and one set of flags
+    chosen on their rows together, so the runtime transform of the input is one."""
+    s16 = smoothing_scale(stats, cfg.smooth)
+    if cfg.rotation != "auto":
+        return s16, choose_rotation(ws[0], stats, cfg, ex.primary)
+    cat = torch.cat([_smoothed(w, s16)[0] for w in ws])
+    inv = None if s16 is None else 1.0 / s16.float()
+    return s16, choose_rotation(cat, stats, cfg, ex.primary, inv)
+
+
 def build_table(
     name: str,
     w: torch.Tensor,
     stats: ColumnStats | None,
     cfg: Config,
     ex: Executor,
+    transform: tuple[torch.Tensor | None, torch.Tensor] | None = None,
+    n_tokens: int | None = None,
 ) -> TensorTable:
+    """``transform`` = ``(s, had)`` imposed by :func:`shared_transform`; ``n_tokens``
+    overrides the reported token count (a borrowed-statistics expert reports its own)."""
     r, k = w.shape
-    s16 = smoothing_scale(stats, cfg.smooth)
-    w, inv = _smoothed(w, s16)
-    had = choose_rotation(w, stats, cfg, ex.primary, inv)
+    if transform is None:
+        s16 = smoothing_scale(stats, cfg.smooth)
+        w, inv = _smoothed(w, s16)
+        had = choose_rotation(w, stats, cfg, ex.primary, inv)
+    else:
+        s16, had = transform  # own copies: safetensors refuses shared storage
+        s16 = None if s16 is None else s16.clone()
+        had = had.clone()
+        w, inv = _smoothed(w, s16)
 
     def shard(dev, lo, hi):
         wt = w[lo:hi].to(dev, torch.float32)
@@ -177,7 +204,7 @@ def build_table(
         sse,
         list(cfg.candidates),
         energy,
-        stats.n if stats else 0,
+        n_tokens if n_tokens is not None else (stats.n if stats else 0),
         s16,
     )
 
