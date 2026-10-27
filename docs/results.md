@@ -64,6 +64,38 @@ multiple-choice gains are small (about 1 to 2 points, near the noise of 2 to 3 p
 distribution fidelity improves much more than task accuracy. HellaSwag and MMLU stay
 below EXL3 3.0 (51.3 and 35.9) for every HI2 variant at 3.0 and 3.5 bpw.
 
+### Qwen3.5-4B at equal body size (same 3 569.1 M weights, bytes counted the same way)
+
+The tables above mix file sizes that are not like-for-like: GGUF quantizes the tied
+embedding and HI2 keeps it in fp16 (1 220 MiB). This table counts only the quantized decoder
+linears, with every byte the loader reads (HI2: codes, block parameters, row constants,
+smoothing vector, row index, from `hi2 size`; GGUF: the tensor sizes `llama-quantize`
+printed for the same 3 569.1 M weights). KLD and top-1 are against each format's own
+unquantized model on the same kind of held-out text, so they compare across formats;
+multiple-choice scores do not (different harnesses).
+
+| Format | Body MiB | Body bpw | KLD | Top-1 |
+| --- | ---: | ---: | ---: | ---: |
+| GGUF IQ2_M | 1 230 | 2.89 | 0.270 | 78.9 % |
+| HI2 3.0, QAD | about 1 290 | 3.0 | 0.061-0.068 | 89.4-89.6 % |
+| GGUF Q2_K | 1 315 | 3.09 | 0.259 | 79.8 % |
+| EXL3 3.0 | 1 336 | 3.0 | n/m | n/m |
+| GGUF IQ3_XXS | 1 385 | 3.26 | 0.156 | 83.6 % |
+| GGUF Q3_K_S | 1 463 | 3.44 | 0.143 | 85.3 % |
+| GGUF IQ3_XS | 1 470 | 3.46 | 0.116 | 86.5 % |
+| **HI2 3.5, QAD** | **1 499** | **3.52** | **0.042-0.045** | **91.2-91.4 %** |
+| GGUF IQ3_S | 1 529 | 3.59 | 0.103 | 87.0 % |
+| GGUF IQ3_M | 1 552 | 3.65 | 0.100 | 87.7 % |
+| GGUF Q3_K_M | 1 646 | 3.87 | 0.100 | 86.9 % |
+| HI2 4.0, PTQ (docs-calibrated) | 1 712 | 4.0 | 0.034 | 92.2 % |
+| GGUF IQ4_XS | 1 886 | 4.43 | 0.041 | 91.3 % |
+| GGUF Q4_K_M | 2 072 | 4.87 | 0.033 | 92.3 % |
+
+At equal body bytes, HI2 with QAD has less than half the KLD of the GGUF types around 3.5
+bpw. HI2 3.5 reaches the KLD of IQ4_XS (0.041) with 21 % fewer body bytes. HI2 3.0 with QAD
+(about 1 290 MiB) beats every GGUF type up to Q3_K_M (1 646 MiB) on KLD. The GGUF rows use
+the quantization settings of `experiments/gguf_suite.sh` with an importance matrix.
+
 ## Smaller models are more sensitive (same PTQ recipe, about 3.0 to 3.5 bpw)
 
 | Model | Params | HI2 bpw | PPL x docs | KLD docs | KLD mix | Note |
@@ -216,11 +248,10 @@ What the runs say (docs text, unquantized perplexity as the reference):
 
 Why 6 with QAD:
 
-1. **Lower KLD than GGUF at 3 to 4 bits.** At ratio 6 with QAD, the 4B model has a KLD of
-   0.042-0.045. The GGUF types at 4.0-4.3 bits (Q3_K_M, IQ3_M) have 0.100, and Q3_K_S has
-   0.143. The sizes are not like-for-like: GGUF quantizes the embedding, and HI2 keeps it
-   in fp16 (1 220 MiB of the 3 580 MiB file; see `hi2 size`). A fair size comparison needs
-   the GGUF body size, which is not measured yet.
+1. **Better than GGUF at equal body size.** At ratio 6 with QAD, the 4B model has a KLD of
+   0.042-0.045 with 1 499 MiB of body. GGUF IQ3_XS (1 470 MiB) has 0.116, IQ3_M
+   (1 552 MiB) has 0.100, and Q3_K_M (1 646 MiB) has 0.100 (table above). Only IQ4_XS
+   (0.041) matches it, with 21 % more body bytes.
 2. **Between GGUF and EXL3.** The perplexity ratio (1.02) is better than EXL3 3.0
    (1.052) for 12 % more body bytes. ARC-Easy is level (68.8-70.4 against 69.6).
    HellaSwag (49.0-50.3 against 51.3) and MMLU (34.5-34.6 against 35.9) stay a little
