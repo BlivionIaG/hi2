@@ -582,7 +582,7 @@ rounding. Both forms are conforming.
 | 3 | Global bits-per-weight allocation (8.6) | B | none | implemented; beats uniform INT2/B16 by 7% at 3.0 bpw, does not beat uniform INT4/B64 at 4.3 bpw (4.8) |
 | 4 | Hessian-aware rounding (8.3) | C | none | **implemented, adopted (default)**: ratio 1.92 to 1.32 at 3.0 bpw (4.8) |
 | 5 | Sequential propagation through the quantized prefix (8.4) | C | none | implemented (`--sequential`), **not adopted**: -0.4% at 3.0 bpw (4.8) |
-| 6 | Per-tensor smoothing exponent (8.5) | A | none (`col_scale` is already stored) | specified, not implemented; the global exponent is flat between 0.25 and 0.5, so little to gain (4.8) |
+| 6 | Per-tensor smoothing exponent (8.5) | A | none (`col_scale` is already stored) | **implemented (`--smooth-search`), not adopted**: the searched exponent is worse in 7 of 8 cells and ties in one; at 3.0 bpw it adds 9 % to 41 % to the perplexity excess (8.5) |
 | 7 | Sensitivity-aware allocation (8.6) | B | none | **implemented (`--sensitivity probe`), adopted**: -31% / -16% / -14% of the perplexity excess at 3.0 bpw on three models (4.8) |
 | 8 | Calibration volume and domain (8.7) | A, C | none | measured: 262k tokens is the default, KL -7% to -10% vs 65k, flat beyond (4.8) |
 | 9 | Local code refinement (8.9) | C | none | specified, not implemented |
@@ -663,7 +663,7 @@ on the unquantized model because the allocation (8.6) must be known first. The c
 a second layerwise forward pass over the calibration data. Measured: no gain
 (4.8), so it is off by default.
 
-### 8.5 Per-tensor smoothing exponent (technique 6, open)
+### 8.5 Per-tensor smoothing exponent (technique 6, implemented, not adopted)
 
 The exponent `alpha` is a single value (0.5) tuned on one model (4.5). Smoothing is
 stored per tensor, so `alpha` can be chosen per tensor with no format change: for
@@ -673,6 +673,29 @@ q, k and v share an input and so share the vector; the exponent for the group is
 chosen on the sum of their errors. Evidence so far argues against expecting much: with nearest rounding `alpha` 0.5 and
 0.75 were equivalent and 0.25 was worse than none, and with compensated rounding
 0.25 and 0.5 are within 0.5% and 0.75 is 3% worse (4.8).
+
+**Result (2026-10-27).** `--smooth-search 0.25,0.75,1.0` (with `--smooth 0.5`) picks, for every
+tensor or shared input, the exponent with the lowest weighted INT2/B32 error under nearest
+rounding on a sample of 1 024 rows. PTQ with GPTQ rounding and the sensitivity probe,
+mixed calibration, perplexity ratio on held-out text (docs / mix), single exponent 0.5
+against the search:
+
+| Model | bpw | single 0.5 | per-tensor search |
+| --- | --- | --- | --- |
+| Qwen3.5-0.8B | 3.0 | 1.268 / 1.509 | 1.294 / 1.562 |
+| Qwen3.5-0.8B | 4.5 | 1.027 / 1.039 | 1.032 / 1.039 |
+| Qwen2.5-0.5B | 3.0 | 1.273 / 1.474 | 1.342 / 1.669 |
+| Qwen2.5-0.5B | 4.5 | 1.017 / 1.033 | 1.036 / 1.050 |
+
+The search raises the perplexity ratio in 7 of 8 cells and ties in one, and the KLD is higher
+in all of them (for example 0.273 to 0.328 on the 0.5B at 3.0 bpw). It fails the acceptance
+rule of 8.10 (a gain of at least 3 % at 3.0 bpw on both models). The likely cause is the
+criterion: the proxy error under nearest rounding does not rank exponents the way the
+GPTQ-compensated error does, because GPTQ already absorbs much of what the exponent
+trades. Choosing by the compensated error needs a Hessian-based encode per exponent, about 4
+times the encode cost for a gain the earlier sweeps say is small; it was not tried. The
+option stays in the tool for that follow-up and is off by default. Raw numbers:
+`experiments/results/smooth_search_2026-10-27.json`, driver `experiments/smooth_study.sh`.
 
 ### 8.6 Allocation (technique 3 and 7)
 

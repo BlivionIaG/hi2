@@ -90,7 +90,7 @@ Do not choose a bit rate. Choose how much error you accept.
 | --- | --- | --- |
 | `--rounding gptq` | on with `--calib` | Hessian-aware rounding. On Qwen3.5-0.8B at 3.0 bpw it takes the perplexity ratio from 1.92 to 1.32. It changes the chosen codes only, never the format. |
 | `--rotation on --smooth 0.5` | on | Smooth the activation channels, then rotate. This was the best transform at every bit width. Without `--calib`, smoothing is skipped. |
-| `--smooth-search a,b,c` | off | Per-tensor smoothing exponent (spec 8.5): try these values and `--smooth` for every tensor or shared input and keep the lowest INT2/B32 error. See [format-spec.md](format-spec.md) for the study. |
+| `--smooth-search a,b,c` | off | Per-tensor smoothing exponent (spec 8.5): try these values and `--smooth` for every tensor or shared input and keep the lowest INT2/B32 error. Measured worse than the single exponent in all runs ([format-spec.md](format-spec.md), 8.5); keep it off. |
 | `--sequential` | off | Encode on the quantized prefix. It gave no measurable gain. |
 | `--act-order` | off | GPTQ column order by activation size. Not adopted. |
 | `--effort fast\|normal\|max` | normal | More effort did not improve quality in our runs. |
