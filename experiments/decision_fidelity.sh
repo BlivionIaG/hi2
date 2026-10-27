@@ -7,7 +7,7 @@
 #   ROOT=<results dir> (default decision), PORT (default 18731).
 # Compare afterwards: decision_fidelity.py compare $ROOT/a.json $ROOT/b.json ...
 set -u
-SERVE_VALIDATE=${SERVE_VALIDATE:?set SERVE_VALIDATE to the fork's serve_validate.sh}
+SERVE_VALIDATE=${SERVE_VALIDATE:?set SERVE_VALIDATE to the serve_validate.sh of the fork}
 GPU=${GPU:?GPU (HIP device list) required}
 TP=${TP:-1}
 PORT=${PORT:-18731}
