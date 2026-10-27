@@ -239,9 +239,13 @@ def main(argv=None):
         "threshold). Replaces --max-error-ratio / --target-bpw; needs --calib and "
         "--eval-text (docs/usage.md)",
     )
-    q.add_argument("--eval-text", type=Path, default=None, help="held-out text for --target-kld")
+    q.add_argument(
+        "--eval-text", type=Path, default=None, help="held-out text for --target-kld"
+    )
     q.add_argument("--eval-skip-tokens", type=int, default=0)
-    q.add_argument("--eval-device", default="cuda:0", help="device of the --target-kld evals")
+    q.add_argument(
+        "--eval-device", default="cuda:0", help="device of the --target-kld evals"
+    )
     q.add_argument(
         "--eval-dtype", choices=("float32", "float16", "bfloat16"), default="float32"
     )
@@ -485,7 +489,12 @@ def main(argv=None):
         default=0,
         help="skip this many leading tokens (the calibration region)",
     )
-    e.add_argument("--device", default="cpu")
+    e.add_argument(
+        "--device",
+        default="cpu",
+        help="device, or a comma-separated list (cuda:0,cuda:1,...) to split the model "
+        "layer-wise over several GPUs when it does not fit one",
+    )
     e.add_argument(
         "--dtype",
         choices=("float32", "float16", "bfloat16"),

@@ -19,6 +19,18 @@ from .checkpoint import export_dense
 LOSSLESS_KLD = 0.01
 
 
+def _place(model, devices: list[str]):
+    """Put ``model`` on one device, or split it layer-wise over several (a model that does
+    not fit one GPU in the evaluation dtype). Returns the device of the inputs."""
+    devs = [torch.device(d) for d in devices]
+    if len(devs) == 1:
+        return model.to(devs[0]), devs[0]
+    from .sensitivity import shard_layers
+
+    shard_layers(model, devs)
+    return model, devs[0]
+
+
 @torch.no_grad()
 def evaluate(
     src: Path,
@@ -33,32 +45,38 @@ def evaluate(
 ) -> dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    devices = [d for d in device.split(",") if d]
     tok = AutoTokenizer.from_pretrained(src)
     ids = load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens)
-    model = (
-        AutoModelForCausalLM.from_pretrained(src, dtype=getattr(torch, dtype))
-        .eval()
-        .to(device)
+    model, first = _place(
+        AutoModelForCausalLM.from_pretrained(src, dtype=getattr(torch, dtype)).eval(),
+        devices,
     )
     ref_logp = []
     for i in range(ids.shape[0]):
-        lg = model(ids[i : i + 1].to(device)).logits[0].float()
+        lg = model(ids[i : i + 1].to(first)).logits[0].float()
         ref_logp.append(torch.log_softmax(lg, -1).cpu())
     del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     # Load the quantised model through the same class and loader as the original, from
     # an exported fp16 copy, so checkpoint/module name differences are handled by
     # transformers rather than by us.
     dense = dst.parent / (dst.name + ".eval-dense")
     export_dense(src, dst, dense)
     try:
-        model = AutoModelForCausalLM.from_pretrained(dense, dtype=getattr(torch, dtype))
-        model = model.eval().to(device)
+        model, first = _place(
+            AutoModelForCausalLM.from_pretrained(
+                dense, dtype=getattr(torch, dtype)
+            ).eval(),
+            devices,
+        )
     finally:
         shutil.rmtree(dense, ignore_errors=True)
     nll_ref = nll_q = kl = agree = acc = 0.0
     n = 0
     for i in range(ids.shape[0]):
-        lg = model(ids[i : i + 1].to(device)).logits[0].float()
+        lg = model(ids[i : i + 1].to(first)).logits[0].float()
         lp_q = torch.log_softmax(lg, -1).cpu()
         lp_r = ref_logp[i]
         tgt = ids[i, 1:]

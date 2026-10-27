@@ -17,6 +17,9 @@ holds the perplexity, KLD and top-1 numbers of every low-bit study run.
 
 ## Evaluation
 
+Task-level evaluation (math, code, instruction following, tool calls, long context, and
+the MC and decision sets below as paired tasks) is in [`../bench/`](../bench/README.md).
+
 | Script | Job |
 | --- | --- |
 | `vllm_ppl.py` | Score the perplexity of a model served in the fork's vLLM. |

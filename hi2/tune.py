@@ -42,7 +42,9 @@ def fit_ratio(points: list[tuple[float, float, float]], target: float) -> dict:
             t = (math.log(target) - math.log(ks[i])) / (
                 math.log(ks[i + 1]) - math.log(ks[i])
             )
-            ratio = math.exp(math.log(rs[i]) + t * (math.log(rs[i + 1]) - math.log(rs[i])))
+            ratio = math.exp(
+                math.log(rs[i]) + t * (math.log(rs[i + 1]) - math.log(rs[i]))
+            )
             bpw = bs[i] + t * (bs[i + 1] - bs[i])
             return {"ratio": ratio, "kld": target, "bpw": bpw, "status": "ok"}
     raise AssertionError("unreachable")

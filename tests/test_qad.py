@@ -609,16 +609,34 @@ def test_data_parallel_step_matches_the_single_device_run():
             inp = torch.cat(xs).reshape(-1, 128)
             if name == "down":
                 with torch.no_grad():
-                    inp = torch.nn.functional.silu(layer.up(torch.cat(xs))).reshape(-1, 256)
+                    inp = torch.nn.functional.silu(layer.up(torch.cat(xs))).reshape(
+                        -1, 256
+                    )
             t0, comp = _ptq(w, inp)
             fq[name] = FakeQuantLinear(w, t0, comp, "ptq")
         qc = make_config(
             "default",
-            {"steps": 40, "batch": 4, "lr_w": 1e-3, "lr_p": 0.1, "val": 2, "final_kl": 0},
+            {
+                "steps": 40,
+                "batch": 4,
+                "lr_w": 1e-3,
+                "lr_p": 0.1,
+                "val": 2,
+                "final_kl": 0,
+            },
         )
         info = train_layer(
-            layer, fq, xs_s, ys, list(range(10)), [10, 11], {}, qc, devices[0],
-            lambda *_: None, replicas=devices,
+            layer,
+            fq,
+            xs_s,
+            ys,
+            list(range(10)),
+            [10, 11],
+            {},
+            qc,
+            devices[0],
+            lambda *_: None,
+            replicas=devices,
         )
         return info, fq
 
@@ -627,4 +645,6 @@ def test_data_parallel_step_matches_the_single_device_run():
     assert two["val_after"] < 0.95 * two["val_before"]
     assert two["val_after"] == pytest.approx(one["val_after"], rel=0.05)
     for m in fq2.values():
-        assert torch.equal(dequantize_stored(m.export()), m.stored(False).double().cpu())
+        assert torch.equal(
+            dequantize_stored(m.export()), m.stored(False).double().cpu()
+        )

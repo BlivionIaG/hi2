@@ -680,9 +680,7 @@ def train_layer(
                 tot += loss.item()
             grads = [wd[k].grad for k in w]
         else:
-            tot, grads = _parallel_step(
-                w, wd, batch, xs, ys, [(dev, layer, kw)] + reps
-            )
+            tot, grads = _parallel_step(w, wd, batch, xs, ys, [(dev, layer, kw)] + reps)
         torch.autograd.backward(list(w.values()), grads)
         opt.step()
         sched.step()

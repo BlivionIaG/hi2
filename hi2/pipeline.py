@@ -498,7 +498,9 @@ def _final_kl_fits(rc, ex, model, tensors, log) -> bool:
             rest += p.numel()
     student = 1.1 * quant + 2 * rest
     n = len(devs)
-    need = max(student, teacher) / n / 2**30 + 4.0  # + activations, optimizer, logits chunks
+    need = (
+        max(student, teacher) / n / 2**30 + 4.0
+    )  # + activations, optimizer, logits chunks
     have = min(torch.cuda.get_device_properties(d).total_memory for d in devs) / 2**30
     if need <= 0.9 * have:
         return True

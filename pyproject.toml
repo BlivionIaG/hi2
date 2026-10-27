@@ -9,6 +9,7 @@ dependencies = ["torch", "safetensors", "regex", "transformers"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+bench = ["datasets"]
 
 [project.scripts]
 hi2 = "hi2.__main__:main"

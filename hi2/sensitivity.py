@@ -120,13 +120,15 @@ def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
     for k, dev in enumerate(devices):
         for layer in layers[len(layers) * k // n : len(layers) * (k + 1) // n]:
             layer.to(dev)
-            handles.append(layer.register_forward_pre_hook(
-                lambda _m, args, kwargs, dev=dev: (
-                    to_device(args, dev),
-                    to_device(kwargs, dev),
-                ),
-                with_kwargs=True,
-            ))
+            handles.append(
+                layer.register_forward_pre_hook(
+                    lambda _m, args, kwargs, dev=dev: (
+                        to_device(args, dev),
+                        to_device(kwargs, dev),
+                    ),
+                    with_kwargs=True,
+                )
+            )
     return handles
 
 
