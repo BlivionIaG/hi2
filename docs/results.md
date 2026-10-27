@@ -318,10 +318,10 @@ four V620s for the calibration, probe and encode, and one for QAD. Served in the
 
 | | BF16 | HI2 PTQ | HI2 PTQ + QAD |
 | --- | ---: | ---: | ---: |
-| Quantized linears | 45.4 GiB | 8.7 GiB | 8.7 GiB |
+| Quantized linears | 45.4 GiB | 8.5 GiB | 8.5 GiB |
 | Measured bpw (every byte of the linears) | 16 | 3.012 | 3.012 |
 | INT2 / INT4 share of the weights | | 66 % / 34 % | 66 % / 34 % |
-| Checkpoint | 53.0 GiB | 15.3 GiB (3.47x smaller) | 15.3 GiB |
+| Checkpoint | 51.7 GiB | 14.9 GiB (3.47x smaller) | 14.9 GiB |
 | Perplexity, docs text | 4.107 | 4.307 (x 1.049) | 4.282 (x 1.043) |
 | Perplexity, mix text | 5.162 | 4.835 (x 0.937) | 5.574 (x 1.080) |
 | First tool as BF16 (66 agent prompts) | 100 % | 54.5 % (43-66) | **66.7 %** (55-77) |
@@ -333,7 +333,7 @@ Read this as follows.
 1. **The model works.** Both quantized models answer correctly ("Paris", arithmetic) and make
    well-formed tool calls on three prompts in four, with no garbage and no faults.
 2. **QAD helps on the decisions.** It matches BF16's first decision on 12 points more prompts
-   than PTQ (the intervals overlap, the direction holds in every stage but one) and makes more
+   than PTQ (the intervals overlap; by stage QAD is ahead in four of six, level in one, behind in one) and makes more
    well-formed calls. On docs perplexity the gain is small (x 1.043 against x 1.049).
 3. **The mix perplexity is not a fidelity measure here.** The PTQ model scores below BF16
    (x 0.937) on that text, so a ratio near 1 does not mean the same distribution. There is no
