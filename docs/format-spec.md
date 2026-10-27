@@ -585,7 +585,7 @@ rounding. Both forms are conforming.
 | 6 | Per-tensor smoothing exponent (8.5) | A | none (`col_scale` is already stored) | **implemented (`--smooth-search`), not adopted**: the searched exponent is worse in 7 of 8 cells and ties in one; at 3.0 bpw it adds 9 % to 41 % to the perplexity excess (8.5) |
 | 7 | Sensitivity-aware allocation (8.6) | B | none | **implemented (`--sensitivity probe`), adopted**: -31% / -16% / -14% of the perplexity excess at 3.0 bpw on three models (4.8) |
 | 8 | Calibration volume and domain (8.7) | A, C | none | measured: 262k tokens is the default, KL -7% to -10% vs 65k, flat beyond (4.8) |
-| 9 | Local code refinement (8.9) | C | none | **implemented (`--refine-passes`), opt-in**: KLD -3 % to -13 % and the perplexity excess -0 % to -19 % at 2 sweeps, for 12 times the encode time; useless with QAD (8.9) |
+| 9 | Local code refinement (8.9) | C | none | **implemented (`--refine-passes`), on by default without QAD**: KLD -3 % to -13 % and the perplexity excess -0 % to -19 % at 2 sweeps, for about 10 % more encode time with the fused kernel; useless with QAD (8.9) |
 | 10 | Non-uniform or trellis codebook | format | changes the decode path | out of scope for v3.2 |
 | 11 | Quality-driven allocation (`--max-error-ratio`) | B | none | **implemented, default**: fewest bits whose weighted error is at most R x the best achievable; INT2 where it matters less, INT4 elsewhere; bpw is a result (ratio 6 gives 3.43 bpw on the 0.8B, 3.52 on the 4B) |
 | 12 | Mixed-domain calibration | A, C | none | **measured, adopted**: docs-only calibration gives 3x the KLD on chat and tool text than on docs (0.650 vs 0.196, 0.8B at 3.0 bpw); a docs, chat and tool-calling mix cuts the out-of-domain KLD by 44% for 20% in-domain (8.7) |
@@ -595,7 +595,7 @@ rounding. Both forms are conforming.
 | 16 | Fused encode, statistics cache | C | none | **implemented**: bit-identical output, 0.8B 754 to 266 s cold and 28 s warm, 4B 3073 to 1485 s, OLMoE encode 23x |
 
 Techniques 4 and 5 were implemented and measured in that order; 6 and 9 followed
-(8.5, 8.9): 6 failed, 9 is opt-in because of its cost. Each is adopted only if it passes 8.10.
+(8.5, 8.9): 6 failed, 9 is adopted for runs without QAD. Each is adopted only if it passes 8.10.
 
 ### 8.3 Hessian-aware rounding (technique 4, implemented and adopted)
 
@@ -748,7 +748,7 @@ overstates the result.
 smoothing and rounding settings that produced the file, for reproducibility only; no
 reader depends on them.
 
-### 8.9 Local code refinement (technique 9, implemented, opt-in)
+### 8.9 Local code refinement (technique 9, implemented)
 
 After compensated rounding, a block-wise coordinate descent can try changing a code by
 one level and keep the change when the Hessian error `e^T Hs e` falls, using the closed
@@ -777,24 +777,51 @@ text, two sweeps against none (`experiments/refine_model_study.sh`):
 
 | Model | bpw | Perplexity ratio, docs | Perplexity ratio, mix | KLD, docs / mix | Encode time |
 | --- | --- | --- | --- | --- | --- |
-| Qwen2.5-0.5B | 3.0 | 1.273 to 1.235 | 1.474 to 1.436 | -13 % / -8 % | 21 s to 214 s |
-| Qwen2.5-0.5B | 4.5 | 1.017 to 1.014 | 1.033 to 1.030 | -4 % / -3 % | 17 s to 242 s |
-| Qwen3.5-0.8B | 3.0 | 1.268 to 1.238 | 1.509 to 1.507 | -10 % / -3 % | 19 s to 240 s |
-| Qwen3.5-0.8B | 4.5 | 1.027 to 1.024 | 1.039 to 1.039 | -6 % / -5 % | 18 s to 244 s |
+| Qwen2.5-0.5B | 3.0 | 1.273 to 1.235 | 1.474 to 1.436 | -13 % / -8 % | 20.8 s to 19.1 s |
+| Qwen2.5-0.5B | 4.5 | 1.017 to 1.014 | 1.033 to 1.030 | -4 % / -3 % | 16.6 s to 23.1 s |
+| Qwen3.5-0.8B | 3.0 | 1.268 to 1.238 | 1.509 to 1.507 | -10 % / -3 % | 19.3 s to 21.6 s |
+| Qwen3.5-0.8B | 4.5 | 1.027 to 1.024 | 1.039 to 1.039 | -6 % / -5 % | 18.4 s to 20.2 s |
 
 The gain is real and modest. At 3.0 bpw the docs perplexity ratio falls by 3.0 % and 2.4 %
 (8.10 asks for 3 % on both models, so it just misses on the 0.8B), and the mix text gains less
-(2.6 % and 0.1 %). No cell got worse. The cost is the problem: the column loop is sequential
-Python, so two sweeps make the encode about 12 times slower. A small model does not mind
-(a few minutes); the micro-benchmark on a V620 (`experiments/refine_cost.py`, one sweep) gives
-2.1 s for a 17 408 x 5 120 gate or up projection of a 27 B model and 7.2 s for its 5 120 x 17 408
-down projection, against 1.2 s and 2.1 s for the GPTQ encode of the same rows, and a 27 B model
-would add hours at the same ratio (not run). It does nothing for the default recipe: QAD retrains the codes and the
-ladders (13) and lowers the KLD by more than half, so `--refine-passes` is skipped when QAD
-runs. The default is therefore off. A fused HIP kernel for the sweep, like the one GPTQ has,
-would remove most of the cost and is the step that would justify turning it on for PTQ-only
-runs. Raw numbers: `experiments/results/refine_study_2026-10-27.json` (objective, per tensor)
-and `experiments/results/refine_model_2026-10-27.json` (model level).
+(2.6 % and 0.1 %). No cell got worse.
+
+**Cost.** The sweep is sequential in the columns, and as torch ops (about 20 launches per column)
+it made the encode about 12 times slower (two sweeps: 19 s to 240 s on the 0.8B). The fused HIP
+kernel (`hi2.refine_kernel`, gfx10/gfx11) handles a block of 128 columns for every row in one
+launch, with the arithmetic of the torch loop operation by operation, so the codes are
+bit-identical (`tests/test_refine_kernel.py`, and the model-level numbers above are equal to
+those of the torch loop). It leaves the encode at about 1.1 times the time. Per sweep on a V620
+(`experiments/refine_cost.py`): a 27 B gate or up projection (17 408 x 5 120) takes 0.43 s and the
+down projection (5 120 x 17 408) 0.99 s, against 2.1 s and 7.3 s for the torch loop and 1.2 s and
+2.1 s for the GPTQ encode of the same rows; a 4 B down projection (2 560 x 9 216) takes 0.17 s
+against 3.7 s. A whole 27 B model should add a few minutes at two sweeps (not run).
+
+**With QAD (13).** It does not combine. By default QAD starts from the unquantized weights and
+takes only the PTQ ladders, so the PTQ codes are never used and refining them changes nothing:
+a QAD run with two sweeps is identical to one without. Starting QAD from the PTQ solution
+(`--qad-init ptq`, step 0 equal to the PTQ checkpoint) makes the codes matter, and a refined
+start is much worse. Qwen3.5-0.8B at 3.0 bpw, QAD `fast`, held-out docs / mix perplexity ratio
+and KLD:
+
+| QAD start | Docs | Mix |
+| --- | --- | --- |
+| unquantized weights (default) | 1.083 / 0.098 | 1.321 / 0.252 |
+| PTQ codes (`--qad-init ptq`) | 1.078 / 0.094 | 1.328 / 0.252 |
+| PTQ codes refined (two sweeps) | 1.202 / 0.174 | 1.448 / 0.319 |
+
+The refined start already has a higher held-out layer error at step 0 (layer 2: nMSE 3.2e-2
+against 2.9e-2): the sweep fits the Hessian of the calibration pass (teacher inputs), and QAD
+scores layers on the inputs of the quantized prefix. A second variant, re-rounding the trained
+latents with the sweep under the Hessian of the student's inputs after each layer's training,
+was rejected on every layer by the held-out check (layer 0: nMSE 1.19e-2 to 3.78e-2): QAD's
+trained weights are close to a stationary point of the true loss, so a proxy objective that
+pulls them toward the latents only moves them away from it. Neither variant is in the tool.
+
+**Default.** On for a calibrated GPTQ run without QAD (two sweeps), off with QAD.
+`--refine-passes 0` turns it off, an explicit N overrides the rule. Raw numbers:
+`experiments/results/refine_study_2026-10-27.json` (objective and per-tensor KL) and
+`experiments/results/refine_model_2026-10-27.json` (model level).
 
 ### 8.10 Evaluation protocol and acceptance
 

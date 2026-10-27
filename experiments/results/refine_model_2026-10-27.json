@@ -24,14 +24,14 @@
    "ppl_quantized": 12.959481239318848,
    "top1_agreement": 0.7792501221299463
   },
-  "encode_s": 214.5,
+  "encode_s": 19.1,
   "mix": {
    "kld_nats_per_token": 0.41354481185070757,
    "ppl_original": 5.542928695678711,
    "ppl_quantized": 7.958040237426758,
    "top1_agreement": 0.717085979482169
   },
-  "total_s": 220.7
+  "total_s": 25.3
  },
  "r05-4.5-off": {
   "bpw": 4.5,
@@ -58,14 +58,14 @@
    "ppl_quantized": 10.639759063720703,
    "top1_agreement": 0.9286761113825109
   },
-  "encode_s": 241.8,
+  "encode_s": 23.1,
   "mix": {
    "kld_nats_per_token": 0.03549342209033752,
    "ppl_original": 5.542928695678711,
    "ppl_quantized": 5.7105712890625,
    "top1_agreement": 0.910295554469956
   },
-  "total_s": 248.0
+  "total_s": 29.4
  },
  "r08-3.0-off": {
   "bpw": 3.0,
@@ -92,14 +92,14 @@
    "ppl_quantized": 13.459592819213867,
    "top1_agreement": 0.7942110405471422
   },
-  "encode_s": 239.5,
+  "encode_s": 21.6,
   "mix": {
    "kld_nats_per_token": 0.3519932160333243,
    "ppl_original": 5.482752799987793,
    "ppl_quantized": 8.261834144592285,
    "top1_agreement": 0.7463361016121153
   },
-  "total_s": 246.5
+  "total_s": 28.8
  },
  "r08-4.5-off": {
   "bpw": 4.5,
@@ -126,13 +126,13 @@
    "ppl_quantized": 11.134699821472168,
    "top1_agreement": 0.934171958964338
   },
-  "encode_s": 244.5,
+  "encode_s": 20.2,
   "mix": {
    "kld_nats_per_token": 0.0292794652024769,
    "ppl_original": 5.482752799987793,
    "ppl_quantized": 5.6974663734436035,
    "top1_agreement": 0.9265388373229115
   },
-  "total_s": 251.4
+  "total_s": 27.5
  }
 }

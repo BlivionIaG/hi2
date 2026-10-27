@@ -98,6 +98,31 @@ domain of a concatenated file is represented. Without calibration text the run f
 back to PTQ with a warning; too little text fails before phase 1 with a message naming
 the option to change.
 
+## Step time
+
+A QAD optimizer step decodes the fake-quantised weights, runs the layer forward and backward,
+backpropagates through the decode, and updates the latents and ladder bytes. Profile of one
+Qwen3.5-4B layer (layer 10, 113 M weights in 8 Linears, 2 sequences of 2048 tokens per step, one
+V620, `experiments/profile_qad.py`):
+
+| Part | Torch graph | Fused kernels |
+| --- | ---: | ---: |
+| Decode of the weights (forward) | 70 ms | 6 ms |
+| Backward through the decode | 87 ms | 11 ms |
+| Optimizer step (AdamW) | 20 ms | 10 ms |
+| Layer forward and backward | 375 ms | 376 ms |
+| **Whole step** | **550 ms** | **400 ms** |
+
+The decode and its backward were several hundred small torch ops per group. `hi2.qad_kernel`
+(gfx10/gfx11 HIP) runs them as one launch per (bits, block) group, one thread per weight so that
+every access is coalesced, and fuses the Hadamard transform and the division by the smoothing
+vector into a second small kernel; the AdamW is the fused implementation. The forward values are
+bit-identical to the torch graph and to the exported tensor (`tests/test_qad_kernel.py`); the
+gradients agree with autograd up to float32 summation order (2e-4 of the largest value, all
+latent units, blocks outside the clamp range, zero-step blocks). `HI2_QAD_BACKEND=torch` forces
+the torch graph. What remains of a step is the layer itself: the fp32 matrix products (42 %) and
+the backward of the gated-delta-rule kernels (23 %).
+
 ## Interface
 
 | Flag | Meaning |

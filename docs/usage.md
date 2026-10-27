@@ -91,16 +91,17 @@ Do not choose a bit rate. Choose how much error you accept.
 | `--rounding gptq` | on with `--calib` | Hessian-aware rounding. On Qwen3.5-0.8B at 3.0 bpw it takes the perplexity ratio from 1.92 to 1.32. It changes the chosen codes only, never the format. |
 | `--rotation on --smooth 0.5` | on | Smooth the activation channels, then rotate. This was the best transform at every bit width. Without `--calib`, smoothing is skipped. |
 | `--smooth-search a,b,c` | off | Per-tensor smoothing exponent (spec 8.5): try these values and `--smooth` for every tensor or shared input and keep the lowest INT2/B32 error. Measured worse than the single exponent in all runs ([format-spec.md](format-spec.md), 8.5); keep it off. |
-| `--refine-passes N` | off | Local code refinement after GPTQ (spec 8.9): N sweeps that move a code one level when the Hessian error falls. Two sweeps lower the KLD of a PTQ model by 3-13 %, and the encode takes about 12 times as long (0.8B: 19 s to 240 s). Skipped with QAD. See [format-spec.md](format-spec.md), 8.9. |
+| `--refine-passes N` | 2 without QAD, 0 with QAD | Local code refinement after GPTQ (spec 8.9): N sweeps that move a code one level when the Hessian error falls. Two sweeps lower the KLD of a PTQ model by 3-13 % for about 10 % more encode time (a fused HIP kernel on gfx10/gfx11). QAD retrains the codes, so it is off with QAD. See [format-spec.md](format-spec.md), 8.9. |
 | `--sequential` | off | Encode on the quantized prefix. It gave no measurable gain. |
 | `--act-order` | off | GPTQ column order by activation size. Not adopted. |
 | `--effort fast\|normal\|max` | normal | More effort did not improve quality in our runs. |
 
 The smoothing vector costs `16/R` bits per weight per tensor. The allocation counts it.
 
-On gfx10 and gfx11 the GPTQ column loop runs as a fused HIP kernel. It gives the same
-result as the torch loop. `HI2_GPTQ_BACKEND=torch` forces the torch loop. The kernel
-builds on first use into `~/.cache/hi2/kernels` (`HI2_KERNEL_DIR`).
+On gfx10 and gfx11 the GPTQ column loop and the refinement sweep run as fused HIP kernels.
+They give the same result as the torch loops. `HI2_GPTQ_BACKEND=torch` and
+`HI2_REFINE_BACKEND=torch` force the torch loops. The kernels build on first use (about 40 s
+each) into `~/.cache/hi2/kernels` (`HI2_KERNEL_DIR`).
 
 ## Quantization-aware distillation (QAD)
 

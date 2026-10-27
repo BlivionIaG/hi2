@@ -286,6 +286,9 @@ class FakeQuantLinear(nn.Module):
             cs.clone() if cs is not None else torch.ones(0, dtype=torch.float16),
         )
         self.has_scale = cs is not None
+        self.has_had = bool(
+            t0.had.any()
+        )  # known on the CPU: no device sync per forward
         self.register_buffer("row_nbits", t0.row_nbits.clone())
         self.register_buffer("row_block", t0.row_block.clone())
         if init == "weights" or comp is None:
@@ -380,12 +383,22 @@ class FakeQuantLinear(nn.Module):
         return val.reshape(-1, k), q, lo_b, st_b
 
     def stored(self, grad: bool = True) -> torch.Tensor:
+        from . import qad_kernel
+
+        if qad_kernel.available(self.latent.device):  # fused decode and its backward
+            return qad_kernel.stored(self, grad)
         parts = [self._group(g, grad)[0] for g in self.groups]
         return torch.cat(parts)[self.inv_perm]
 
     def forward(self) -> torch.Tensor:
+        from . import qad_kernel
+
+        if qad_kernel.available(
+            self.latent.device
+        ):  # decode, transform and scale fused
+            return qad_kernel.original(self)
         w = self.stored(True)
-        if bool(self.had.any()):
+        if self.has_had:
             w = fwht_groups(w, self.had)
         if self.has_scale:
             w = w / self.col_scale.float()
@@ -561,7 +574,10 @@ def train_layer(
     groups = [{"params": lat, "lr": qc.lr_w}, {"params": prm, "lr": qc.lr_p}]
     if norm_params:
         groups.append({"params": list(norm_params.values()), "lr": qc.lr_norm})
-    opt = torch.optim.AdamW(groups, weight_decay=0.0)
+    try:  # the fused implementation halves the optimizer step on a GPU
+        opt = torch.optim.AdamW(groups, weight_decay=0.0, fused=dev.type == "cuda")
+    except (RuntimeError, ValueError):
+        opt = torch.optim.AdamW(groups, weight_decay=0.0)
     n_steps = qc.steps if steps is None else steps  # this layer's allotment
     warm = max(1, int(qc.warmup * n_steps))
 

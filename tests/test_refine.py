@@ -155,3 +155,27 @@ def test_groups_of_different_candidates_share_a_sweep_with_the_same_result():
     assert torch.equal(both[0], alone2) and torch.equal(both[1], alone4)
     assert both[0].dtype == enc2.codes.dtype
     assert int(both[0].max()) <= 3 and int(both[1].max()) <= 15
+
+
+def test_refine_passes_default_is_on_without_qad_only():
+    from types import SimpleNamespace
+
+    from hi2.__main__ import _refine_passes
+
+    def args(**kw):
+        base = dict(refine_passes=None, calib="c.txt", rounding="gptq", act_order=False)
+        return SimpleNamespace(**(base | kw))
+
+    qad = lambda init: SimpleNamespace(init=init)  # noqa: E731
+    assert _refine_passes(args(), None) == 2  # PTQ only, calibrated
+    assert (
+        _refine_passes(args(), qad("weights")) == 0
+    )  # QAD takes the ladders, not the codes
+    assert (
+        _refine_passes(args(), qad("ptq")) == 0
+    )  # refined codes are a worse start for QAD
+    assert _refine_passes(args(calib=None), None) == 0  # data-free: no Hessian
+    assert _refine_passes(args(rounding="nearest"), None) == 0
+    assert _refine_passes(args(act_order=True), None) == 0
+    assert _refine_passes(args(refine_passes=0), None) == 0
+    assert _refine_passes(args(refine_passes=3), qad("weights")) == 3  # explicit wins

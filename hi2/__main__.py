@@ -105,6 +105,17 @@ def _qad_overrides(a) -> dict:
     return over
 
 
+def _refine_passes(a, qc) -> int:
+    """The sweeps of local code refinement: the flag, else 2 for a calibrated GPTQ run without
+    QAD. With QAD it is off: QAD takes only the PTQ ladders, and starting it from refined codes
+    (``--qad-init ptq``) is worse (docs/format-spec.md, 8.9)."""
+    if a.refine_passes is not None:
+        return a.refine_passes
+    return (
+        2 if a.calib and qc is None and a.rounding == "gptq" and not a.act_order else 0
+    )
+
+
 def main(argv=None):
     if hasattr(
         sys.stdout, "reconfigure"
@@ -180,10 +191,10 @@ def main(argv=None):
     q.add_argument(
         "--refine-passes",
         type=int,
-        default=0,
-        help="sweeps of local code refinement after GPTQ (spec 8.9); 0 = off (default). Two "
-        "sweeps lower the KLD of a PTQ model by 3-13 percent and take about 12 times the "
-        "encode time; they are skipped with QAD, which retrains the codes",
+        default=None,
+        help="sweeps of local code refinement after GPTQ (spec 8.9). Two sweeps lower the "
+        "KLD of a PTQ model by 3-13 percent for about 10 percent more encode time. Default 2 "
+        "without QAD, off with QAD (it does not combine with it); 0 = off",
     )
     q.add_argument(
         "--smooth-search",
@@ -551,7 +562,7 @@ def main(argv=None):
                 rounding=a.rounding,
                 sequential=a.sequential,
                 act_order=a.act_order,
-                refine_passes=a.refine_passes,
+                refine_passes=_refine_passes(a, qc),
                 damp=a.damp,
                 effort=a.effort,
                 expert_min_tokens=a.expert_min_tokens,

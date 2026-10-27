@@ -53,20 +53,35 @@ def refine_expanded(
     """Refined codes (float) of rows ``w[N, K]`` (stored basis) with per-column ladders ``lo_x``
     and ``st_x`` and the highest code of each row ``top[N]``; rows of different (bits, block)
     candidates can share one sweep. ``hs`` is the Hessian in the stored basis. The loop stops
-    early when a sweep moves no code."""
+    early when a sweep moves no code. On gfx10/gfx11 each block of columns is one fused kernel
+    launch (:mod:`hi2.refine_kernel`), bit-identical to the torch loop that every other device
+    runs."""
+    from . import refine_kernel
+
     n_rows, k = w.shape
     c = codes.float().clone()
     e = (lo_x + c * st_x).half().float() - w
     g = e @ hs
+    del e
     hd = hs.diagonal()
     rows = torch.arange(n_rows, device=w.device)
     deltas = torch.tensor([[1.0], [-1.0]], device=w.device)
+    fused = refine_kernel.available(w.device)
+    if fused:
+        hs = hs.contiguous()
+        lo_x, st_x, top = lo_x.contiguous(), st_x.contiguous(), top.float().contiguous()
     for _ in range(passes):
         start = c.clone()
         for b0 in range(0, k, BLOCK_COLUMNS):
             b1 = min(b0 + BLOCK_COLUMNS, k)
             gb = g[:, b0:b1].clone()
             dw_block = torch.zeros(n_rows, b1 - b0, device=w.device)
+            if fused:
+                refine_kernel.refine_block(
+                    gb, c, lo_x, st_x, top, hs, b0, b1 - b0, dw_block
+                )
+                g += dw_block @ hs[b0:b1]
+                continue
             hb = hs[b0:b1, b0:b1]
             for jj in range(b1 - b0):
                 j = b0 + jj

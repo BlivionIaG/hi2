@@ -59,8 +59,8 @@ class Config:
     # round columns in descending Hessian-diagonal order (GPTQ "act-order"); storage unchanged
     act_order: bool = False
     # Local code refinement after GPTQ (spec 8.9, hi2.refine): sweeps over the codes that move
-    # one when the Hessian error falls. 0 = off. Skipped for QAD (it retrains the codes) and
-    # with act_order.
+    # one when the Hessian error falls. 0 = off. Skipped with act_order, and for the PTQ
+    # encoding QAD starts from: refined codes are a worse start for QAD (docs/format-spec.md, 8.9).
     refine_passes: int = 0
     effort: str = "normal"  # fast | normal | max
     # MoE: an expert that saw fewer than this x its widest input routed tokens tops its
