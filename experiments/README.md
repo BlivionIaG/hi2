@@ -79,4 +79,5 @@ Fixed sequences of runs for one question.
 | Script | Job |
 | --- | --- |
 | `profile_encode.py`, `profile_new.py`, `profile_probe.py` | Where the quantizer spends its time. |
+| `profile_qad.py` | Where a QAD optimizer step spends its time on one real layer (decode, layer forward and backward, backward through the decode, optimizer). |
 | `isa/probe.hip`, `isa/run.hip` | Check RDNA2 instruction facts (spec section 7) on a V620. |
