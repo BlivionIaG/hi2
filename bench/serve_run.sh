@@ -5,7 +5,9 @@
 #          bench/serve_run.sh TAG=MODEL_DIR [TAG=MODEL_DIR ...]
 #   GPU is one device or a list (GPU=0,1,2,3 TP=4); ROOT=<results dir> (default bench_runs),
 #   PORT (default 18731), MAXLEN (default 40000: the 32k needle items need 33k), LIMIT per task,
-#   WORKERS, EXTRA (more run.py flags), PY (python of the bench client).
+#   WORKERS, EXTRA (more run.py flags), PY (python of the bench client), REF_RESULTS (the
+#   reference run's json: score its completions teacher-forced into TAG.lp.json; leave unset
+#   for the reference arm itself) and TF_LIMIT (items per task, default 200).
 set -u
 SERVE_VALIDATE=${SERVE_VALIDATE:?set SERVE_VALIDATE to the fork's serve_validate.sh}
 GPU=${GPU:?GPU (HIP device list) required}
@@ -15,7 +17,7 @@ ROOT=${ROOT:-bench_runs}
 MAXLEN=${MAXLEN:-40000}
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$ROOT"
-export TASKS LIMIT WORKERS EXTRA PY
+export TASKS LIMIT WORKERS EXTRA PY REF_RESULTS TF_LIMIT
 for arm in "$@"; do
   tag=${arm%%=*}
   model=${arm#*=}
@@ -25,5 +27,6 @@ for arm in "$@"; do
     LOAD_HOOK="$HERE/hook.sh" \
     bash "$SERVE_VALIDATE" TP="$TP" MAXLEN="$MAXLEN" SEQS=16 KV=6000000000 TUNABLEOP=1
   cp "$ROOT/serve-$tag/bench.json" "$ROOT/$tag.json" 2> /dev/null
+  cp "$ROOT/serve-$tag/lp.json" "$ROOT/$tag.lp.json" 2> /dev/null
   echo "[$(date +%H:%M:%S)] arm $tag done: $(tail -1 "$ROOT/serve-$tag/load_hook.txt" 2> /dev/null)"
 done
