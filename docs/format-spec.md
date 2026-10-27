@@ -585,7 +585,7 @@ rounding. Both forms are conforming.
 | 6 | Per-tensor smoothing exponent (8.5) | A | none (`col_scale` is already stored) | **implemented (`--smooth-search`), not adopted**: the searched exponent is worse in 7 of 8 cells and ties in one; at 3.0 bpw it adds 9 % to 41 % to the perplexity excess (8.5) |
 | 7 | Sensitivity-aware allocation (8.6) | B | none | **implemented (`--sensitivity probe`), adopted**: -31% / -16% / -14% of the perplexity excess at 3.0 bpw on three models (4.8) |
 | 8 | Calibration volume and domain (8.7) | A, C | none | measured: 262k tokens is the default, KL -7% to -10% vs 65k, flat beyond (4.8) |
-| 9 | Local code refinement (8.9) | C | none | specified, not implemented |
+| 9 | Local code refinement (8.9) | C | none | **evaluated offline, not adopted**: 6-9 % lower objective, 5-9 % lower per-tensor KL, expected about 1 % on the perplexity ratio, and QAD does far more (8.9) |
 | 10 | Non-uniform or trellis codebook | format | changes the decode path | out of scope for v3.2 |
 | 11 | Quality-driven allocation (`--max-error-ratio`) | B | none | **implemented, default**: fewest bits whose weighted error is at most R x the best achievable; INT2 where it matters less, INT4 elsewhere; bpw is a result (ratio 6 gives 3.43 bpw on the 0.8B, 3.52 on the 4B) |
 | 12 | Mixed-domain calibration | A, C | none | **measured, adopted**: docs-only calibration gives 3x the KLD on chat and tool text than on docs (0.650 vs 0.196, 0.8B at 3.0 bpw); a docs, chat and tool-calling mix cuts the out-of-domain KLD by 44% for 20% in-domain (8.7) |
@@ -594,8 +594,8 @@ rounding. Both forms are conforming.
 | 15 | Mixture-of-experts quantization | A, B, C | none | **implemented** (routed-token statistics per expert, shared gate/up smoothing, per-layer allocation groups); OLMoE-1B-7B at 3.54 bpw: perplexity x1.011, served in the fork at 2.1x dense decode |
 | 16 | Fused encode, statistics cache | C | none | **implemented**: bit-identical output, 0.8B 754 to 266 s cold and 28 s warm, 4B 3073 to 1485 s, OLMoE encode 23x |
 
-Techniques 4 and 5 were implemented and measured in that order; the remaining
-specified ones (6, 7, 9) are open. Each is adopted only if it passes 8.10.
+Techniques 4 and 5 were implemented and measured in that order; 6 and 9 followed
+(8.5, 8.9) and neither passed. Each is adopted only if it passes 8.10.
 
 ### 8.3 Hessian-aware rounding (technique 4, implemented and adopted)
 
@@ -748,13 +748,34 @@ overstates the result.
 smoothing and rounding settings that produced the file, for reproducibility only; no
 reader depends on them.
 
-### 8.9 Local code refinement (technique 9)
+### 8.9 Local code refinement (technique 9, evaluated, not adopted)
 
 After compensated rounding, a block-wise coordinate descent can try changing a code by
 one level and keep the change when the Hessian error `e^T Hs e` falls, using the closed
 form for a single-column change (`O(K)` per trial, `O(R K^2)` per pass). The expected
 gain over GPTQ is small and uncertain; it is listed so that it is evaluated, not
 adopted, after techniques 4 and 5.
+
+**Result (2026-10-27).** `experiments/refine_study.py` rounds real tensors of Qwen3.5-0.8B with
+GPTQ at one candidate and the Hessian of the mixed calibration, then sweeps the columns up to
+three times, moving a code one level when `e Hs e^T` falls (the ladders stay fixed). Four
+tensors (a down, a gate and a q projection and a linear-attention output), at the two
+candidates that dominate the 3.0 bpw mix, averaged:
+
+| Candidate | Objective after 1 sweep | after 3 sweeps | Per-tensor KL after 3 sweeps | Codes moved |
+| --- | ---: | ---: | ---: | ---: |
+| INT2 / B32 | -5.8 % | -8.8 % | -8.6 % | 4.0 % |
+| INT4 / B64 | -3.7 % | -5.9 % | -5.3 % | 2.8 % |
+
+The per-tensor KL is the model's KL with only that tensor replaced, on 8 x 512 held-out
+tokens, so the lower objective does carry through to the output. The gain is real and
+small. If it carried over to every tensor, the KLD of a 3.0 bpw PTQ model (0.23 on the 0.8B)
+would fall by about 7 % and the perplexity ratio from 1.27 to about 1.25, a gain of about
+1.5 % of the ratio against the 3 % that 8.10 asks for. It also does not touch the default
+recipe: QAD lowers the KLD by more than half (13), trains the ladders as well as the codes,
+and starts from whatever codes PTQ gives. The sweep is a Python loop over the columns, so a
+K = 17 408 tensor of a 27 B model is expected to take minutes per sweep (not
+measured). It was not added to the pipeline. `experiments/results/refine_study_2026-10-27.json` has the numbers.
 
 ### 8.10 Evaluation protocol and acceptance
 

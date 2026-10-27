@@ -63,6 +63,8 @@ Fixed sequences of runs for one question.
 | `scale_study.py`, `scope_study.py` | Which scale system and which scope of scales work best? |
 | `rotation_study.py`, `block_rotation_study.py` | Where does the Hadamard rotation help? |
 | `candidate_usage.py` | Which (bits, block) candidates does the allocator use? |
+| `smooth_study.sh` | Does a per-tensor smoothing exponent help? No: worse in 7 of 8 cells (spec 8.5). |
+| `refine_study.py` | How much does coordinate descent on the codes gain over GPTQ? 6-9 % of the objective (spec 8.9). |
 
 ## Calibration text
 
