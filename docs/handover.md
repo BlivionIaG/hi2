@@ -1,0 +1,60 @@
+# Handover (2026-10-27)
+
+State of the project at the end of this session, and what comes next. Detail lives in the
+linked documents. Machine-specific paths and hosts are deliberately not written here.
+
+## Where things are
+
+* Repository: `BlivionIaG/hi2` (private, Apache-2.0), branch `main`. History was rewritten once
+  on 2026-10-27 (a trailer removed): re-clone or `git fetch && git reset --hard origin/main`
+  any other clone.
+* Long jobs run on the GPU build box (8 Radeon PRO V620; HIP devices 2-5 are ours) from a
+  frozen copy of the repository, never from a directory that is re-synced; nothing under
+  `/tmp`; stop only your own processes, by explicit pid.
+* Checkpoints on the box: Qwen3.8-27B at 3.0 bpw (PTQ and PTQ + QAD, 14.9 GiB each), Qwen3.5-4B
+  at 3.0, 3.5 and 4.0 bpw (PTQ and QAD), 0.8B references. The 27B Hessian cache (48 GB) is
+  kept for reruns.
+
+## Done this session
+
+* Final logit-KL phase is on by default (`default` and `thorough` presets, 200 steps) and
+  splits teacher and student layer-wise over the devices, so the 27B can train it.
+* Data-parallel QAD step over all `--devices` (`data_parallel`, on by default). Same quality as
+  one device on the 0.8B (docs KLD 0.099, mix 0.254); 1.7x per step at 3 GPUs, 10 % over the
+  whole phase there. Not yet measured on big layers.
+* `hi2 eval` reports EAR and a `lossless` flag (KLD < 0.01) and splits the model over several
+  GPUs (`--device cuda:0,cuda:1,...`). 27B KLD against BF16 is in [results.md](results.md).
+* `quantize --target-kld K --eval-text T` picks the error ratio from a measured KLD
+  (`hi2/tune.py`). Smoke-tested on the 0.8B, PTQ only (target 0.05 gave ratio 2.2, 4.1 bpw).
+* `bench/`: task-level evaluation suite (GSM8K, HumanEval, MBPP, instruction following, ToolACE
+  tool calls, long-context retrieval, multiple choice, decisions) with paired comparison, and
+  `bench/tfkld.py`, the teacher-forced domain KLD. Drivers `bench/serve_run.sh`,
+  `bench/hook.sh`. First smoke run on a served 4B (20 items per task): the four tasks ran;
+  the teacher-forced step crashed on a config lookup, fixed and not re-run yet.
+* Experiment scripts cut to three drivers with no host paths; the AWQ INT4 column added to
+  the 27B comparison (AWQ is clearly better: 81.8 % first-tool agreement against 66.7 %).
+
+## Findings to keep in mind
+
+* 27B QAD (`fast`) improves docs KLD (0.090 against 0.097) but worsens mix KLD (0.295 against
+  0.217). Judge any rerun on the mix KLD as well as the decisions.
+* On the 4B, task loss follows KLD, not the method: top-1 disagreement is about 0.42 x sqrt(KLD)
+  for PTQ and QAD alike. So the calibration can use cheap PTQ points.
+* Token-level KLD understates agentic loss: the 27B decisions are far below what its top-1
+  agreement suggests.
+* The first Triton autotune of the linear-attention backward takes about 10 minutes.
+
+## Next steps
+
+1. Re-run the bench smoke test on a served 4B (`bench/serve_run.sh`, see its header), then a
+   second arm with `REF_RESULTS` set to confirm the teacher-forced pass.
+2. Calibration study (plan agreed): PTQ ladder on the 4B (ratios 2-16 in one shared pass) plus
+   the existing 4B checkpoints, the full suite on a few points with paired statistics, domain
+   KLD per task family, then a target table (KLD per use case). One anchor on the 27B.
+3. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
+   Hessians); score docs and mix KLD, decisions and the new suite. Needs a go-ahead.
+4. `--target-kld` with QAD on the 4B; decide the default quality rule from step 2.
+5. Optional: fp16 matrix math in QAD (layer forward and backward is 94 % of a step), INT3 rows,
+   a KLD path for AWQ checkpoints.
+6. Before sharing v1: README note that checkpoints need the vLLM fork, check old commits for
+   internal paths, decide whether the 27B table is public.

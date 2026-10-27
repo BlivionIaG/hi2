@@ -52,9 +52,7 @@ def score(client, ref_results: dict, names, limit, workers) -> dict:
         t = registry.get(name)
         rows = ref_results["results"].get(name, {})
         ids = [i for i, r in rows.items() if r.get("completion")][:limit]
-        items = {
-            it["id"]: it for it in t.load(None, ref_results["config"][name]["seed"])
-        }
+        items = {it["id"]: it for it in t.load(None, ref_results["config"]["seed"])}
         todo = [(i, items[i], rows[i]["completion"]) for i in ids if i in items]
 
         def one(args, t=t):
