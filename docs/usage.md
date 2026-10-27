@@ -119,7 +119,7 @@ hi2 quantize <model> <out> --calib calib.txt --no-qad                # PTQ only
 | `--qad-preset fast\|default\|thorough` | Training length. |
 | `--qad-budget F` | Fraction of the preset's steps. The tool spends steps where layers still gain, with per-layer early stopping. |
 | `--qad-samples N`, `--qad-layers A-B` | Training sequences, layer range. |
-| `--qad-final-kl STEPS` | Add a final logit-KL phase. See [lowbit.md](lowbit.md). |
+| `--qad-final-kl STEPS` | Final logit-KL phase: 200 steps with `default` and `thorough`, 0 with `fast`; 0 turns it off. Skipped with a note when the student does not fit one GPU. See [lowbit.md](lowbit.md). |
 | `--qad-config file.json` | All settings in a file. |
 
 Runtimes on one V620 (QAD part, `default` and `fast`): Qwen3.5-0.8B 41 and 17 minutes;

@@ -476,9 +476,33 @@ def _qad_encode(
     )
     (rc.workdir / f"qad_report{tag}.json").write_text(json.dumps(out.layers, indent=1))
     tensors, dense = out.tensors, out.dense
-    if qc.final_kl > 0:
+    if qc.final_kl > 0 and _final_kl_fits(rc, ex, model, tensors, log):
         tensors, dense = _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag)
     return tensors, dense
+
+
+def _final_kl_fits(rc, ex, model, tensors, log) -> bool:
+    """The final-KL phase keeps the whole student on one device (codes at 1 byte per weight
+    plus the dense parameters); skip it, with a note, when that does not fit."""
+    dev = ex.primary
+    if dev.type != "cuda":
+        return True
+    resolve = make_resolver(weight_map(rc.src))
+    quant, rest = 0, 0
+    for name, p in model.named_parameters():
+        if name.endswith(".weight") and resolve(name) in tensors:
+            quant += p.numel()
+        else:
+            rest += p.numel()
+    need = (1.1 * quant + 2 * rest) / 2**30 + 4.0  # + activations, optimizer, logits chunks
+    have = torch.cuda.get_device_properties(dev).total_memory / 2**30
+    if need <= 0.9 * have:
+        return True
+    log(
+        f"final KL: skipped, the student needs about {need:.0f} GiB on one device and "
+        f"{dev} has {have:.0f} GiB (set --qad-final-kl 0 to silence this)"
+    )
+    return False
 
 
 def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag=""):

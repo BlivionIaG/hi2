@@ -232,6 +232,9 @@ def test_early_stop_and_allotted_steps():
 def test_config_presets_and_layer_spec():
     assert make_config("fast").budget < 1 and make_config("default").budget == 1
     assert make_config("default").steps < make_config("thorough").steps
+    assert make_config("default").final_kl > 0 and make_config("thorough").final_kl > 0
+    assert make_config("fast").final_kl == 0
+    assert make_config("default", {"final_kl": 0}).final_kl == 0
     assert make_config("default", {"steps": "7", "keep_best": "false"}).steps == 7
     assert make_config("default", {"keep_best": "false"}).keep_best is False
     with pytest.raises(SystemExit):
@@ -564,3 +567,26 @@ def test_propagate_feeds_bf16_buffers_to_an_fp32_layer():
     _propagate(layer, Executor(["cpu"]), src, {}, dst)
     for s, d in zip(src, dst):
         assert torch.allclose(d.float(), layer(s.float()).bfloat16().float(), atol=2e-2)
+
+
+def test_buffer_dtype_follows_the_available_ram(monkeypatch):
+    import hi2.qad as q
+
+    qc = make_config("default")
+    need_fp32 = 4 * 264 * 2048 * 5120 * 4  # the 27B: three buffers and a transient set
+    say = lambda free: monkeypatch.setattr(q, "_avail_ram", lambda: free)  # noqa: E731
+    say(4 * need_fp32)
+    assert q.buffer_dtype(qc, 264, 2048, 5120, lambda *_: None) == torch.float32
+    say(int(1.5 * need_fp32))  # fp32 would take more than half of it, bf16 fits
+    assert q.buffer_dtype(qc, 264, 2048, 5120, lambda *_: None) == torch.bfloat16
+    say(need_fp32 // 4)
+    with pytest.raises(SystemExit, match="RAM"):
+        q.buffer_dtype(qc, 264, 2048, 5120, lambda *_: None)
+    qc = make_config("default", {"buffer_dtype": "float32"})
+    assert q.buffer_dtype(qc, 264, 2048, 5120, lambda *_: None) == torch.float32
+
+
+def test_avail_ram_reads_memavailable():
+    from hi2.qad import _avail_ram
+
+    assert _avail_ram() > 0
