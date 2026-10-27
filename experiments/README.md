@@ -23,6 +23,7 @@ One quantize run, scored, with a GPU lock.
 | `fast_ptq.sh`, `fast_run.sh` | One timed run, one command under a lock. |
 | `lowbit_run.sh`, `restamp_qad.py` | A low-bit study run; reuse QAD layer artifacts of an older run. |
 | `download_hf.sh` | Download a model into the Hugging Face cache. |
+| `run_27b.sh` | Qwen3.8-27B (BF16) to about 3.0 bpw with QAD on 2-4 GPUs of one PLX switch, with GPU locks. |
 
 ## Run chains
 
@@ -45,6 +46,7 @@ Fixed sequences of runs for one question.
 | `vllm_mc.sh`, `mc_eval.py` | Serve a model and score multiple-choice tasks. |
 | `summarize_gguf.py`, `summarize_qad.py`, `ratio_table.py`, `int8_usage.py` | Collect run logs into tables. |
 | `check_tables.py`, `compare_layouts.py`, `compare_qad_init.py`, `qad_layers.py` | Consistency checks between runs and layouts. |
+| `decision_prompts.py`, `decision_fidelity.py`, `decision_fidelity.sh`, `decision_fidelity_hook.sh`, `data/decision_prompts.json` | Decision fidelity (spec 12.3): the prompt set, the client and comparison, and the driver that serves each model in the fork's vLLM and runs the set. |
 
 ## Baselines from other formats
 

@@ -1,0 +1,1310 @@
+[
+ {
+  "id": "t00-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Find where the persistent cache key for the statistics is computed and explain it."
+   }
+  ]
+ },
+ {
+  "id": "t00-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Find where the persistent cache key for the statistics is computed and explain it."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t00-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Find where the persistent cache key for the statistics is computed and explain it."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/cache.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"Persistent cache of the reusable phase products (``--cache-dir``, default\n``$HI2_CACHE_DIR`` or ``~/.cache/hi2``).\n\nThree kinds of entries, each a directory ``<root>/<kind>/<digest>`` where ``digest`` is\na hash of a JSON key (kept in the entry's ``key.json``):\n\n* ``stats``: per Linear input, the second moment ``Sigma = E[x x^T]`` (``sigma/``,\n  stored once per shared input as the upper triangle in fp32, or in full if it is not\n  exactly symmetric) and the 16x16 block moments (``colstats/``), plus ``layers.json``\n  (which Linears share an input, token counts) and the MoE ``expert_tokens.json``.\n  Sigma is taken in the *original* basis from the unquantized model, so it depends only\n  on the model weights, the calibration tokens and how they are run (dtype, device kind,\n  number of devices, the MoE token floor), never on the allocation target, error\n  ratio, rounding, smoothing, rotation, candidates or QAD. Key: :func:`stats_key`.\n* ``tables``: the phase-1 tables, keyed by the stats key plus the phase-1 settings.\n* ``probe``: the sensitivity-probe result, keyed by the tables key plus the probe\n  settings and probe tokens.\n\nAn entry is built in ``<digest>.tmp-<pid>`` and renamed into place when complete, under\na lock (``<digest>.lock``) so concurrent runs wait for one computation instead of\nrepeating it. Bump the matching ``*_VERSION`` when the code that produces an entry\nchanges its output; old entries are then simply never hit again (``hi2 cache prune``).\n\"\"\"\n\nimport contextlib\nimport fcntl\nimport hashlib\nimport json\nimport os\nimport shutil\nimport time\nfrom contextlib import contextmanager\nfrom pathlib import Path\n\nimport torch\n\nSTATS_VERSION = 1  # layerwise forward, hooks, ColumnStats / HessianStats, MoE floor\nTABLES_VERSION = 1  # build_table / shared_transform / encode_rows\nPROBE_VERSION = 1  # sensitivity.probe_sensitivity\nKINDS = (\"stats\", \"tables\", \"probe\")\n\n\ndef default_root() -> Path:\n    d = os.environ.get(\"HI2_CACHE_DIR\")\n    return Path(d) if d else Path.home() / \".cache\" / \"hi2\"\n\n\ndef digest(obj) -> str:"
+   }
+  ]
+ },
+ {
+  "id": "t00-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Find where the persistent cache key for the statistics is computed and explain it."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_cache.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_cache.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_cache.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t00-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Find where the persistent cache key for the statistics is computed and explain it."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_cache.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t01-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add a --seed option to the `hi2 eval` command."
+   }
+  ]
+ },
+ {
+  "id": "t01-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add a --seed option to the `hi2 eval` command."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t01-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add a --seed option to the `hi2 eval` command."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/__main__.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"``hi2 quantize|verify|eval|export-dense|restack|size|cache`` (or ``python -m hi2``).\n\n``quantize`` runs layer-wise quantization-aware distillation after PTQ by default when\ncalibration text is given (``--no-qad`` for PTQ only).\n\"\"\"\n\nimport argparse\nimport json\nimport sys\nfrom pathlib import Path\n\nfrom .calibrate import SELECTABLE, Config\nfrom .checkpoint import DEFAULT_EXCLUDE, export_dense, verify_checkpoint\nfrom .encode import EFFORT\nfrom .evalq import evaluate\nfrom .pipeline import RunConfig, plan, run\nfrom .qad import PRESETS as QAD_PRESETS\nfrom .qad import make_config\n\n# candidate presets: the (nbits, block) pairs each one removes\nCANDIDATE_PRESETS = {\"all\": set(), \"lean\": {(4, 16)}}\n\n\ndef _ints(s: str) -> list[int]:\n    return [int(x) for x in s.split(\",\")]\n\n\ndef _floats(s: str) -> list[float]:\n    return [float(x) for x in s.split(\",\")]\n\n\ndef cache_command(a) -> dict:\n    from . import cache as C\n\n    root = a.cache_dir or C.default_root()\n    if a.action == \"prune\":\n        gone = C.prune(root, a.older_than, a.keep_gb, a.digest, a.dry_run)\n        return {\n            \"root\": str(root),\n            \"dry_run\": a.dry_run,\n            \"removed\": [f\"{e['kind']}/{e['digest']}\" for e in gone],\n            \"freed_gib\": round(sum(e[\"bytes\"] for e in gone) / 2**30, 3),\n        }\n    es = C.entries(root)\n    by_kind: dict[str, float] = {}\n    for e in es:\n        by_kind[e[\"kind\"]] = by_kind.get(e[\"kind\"], 0) + e[\"bytes\"] / 2**30\n    out = {\n        \"root\": str(root),\n        \"entries\": len(es),\n        \"gib\": round(sum(e[\"bytes\"] for e in es) / 2**30, 3),\n        \"gib_by_kind\": {k: round(v, 3) for k, v in by_kind.items()},\n    }\n    if a.action == \"list\":\n        import time\n\n        out[\"list\"] = [\n            {\n                \"entry\": f\"{e['kind']}/{e['digest']}\",\n                \"gib\": round(e[\"bytes\"] / 2**30, 3),\n                \"complete\": e[\"complete\"],\n                \"last_used\": time.strftime(\n                    \"%Y-%m-%d %H:%M\", time.localtime(e[\"last_used\"])\n                ),\n                \"model\": (e[\"key\"] or {}).get(\"_src\"),"
+   }
+  ]
+ },
+ {
+  "id": "t01-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add a --seed option to the `hi2 eval` command."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_pipeline.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_pipeline.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_pipeline.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t01-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add a --seed option to the `hi2 eval` command."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_pipeline.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t02-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "`hi2 size` reports a wrong bpw when a tensor has no rows. Fix it."
+   }
+  ]
+ },
+ {
+  "id": "t02-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "`hi2 size` reports a wrong bpw when a tensor has no rows. Fix it."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t02-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "`hi2 size` reports a wrong bpw when a tensor has no rows. Fix it."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/size.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"``hi2 size``: where the bytes of an HI2 checkpoint go.\n\nSizes come from the safetensors headers, so no tensor data is read, except the small\nper-row precision array (``hi2_row_nbits``) that gives the INT2/INT4/INT8 shares. The\nsame byte accounting works for both expert layouts. It counts everything a loader has\nto read: codes, block parameters, row constants, the smoothing vector, and the row\nindex (offsets, precisions, block sizes, rotation flags).\n\"\"\"\n\nimport re\nfrom collections import defaultdict\nfrom pathlib import Path\n\nDTYPE_BYTES = {\n    \"F64\": 8,\n    \"F32\": 4,\n    \"F16\": 2,\n    \"BF16\": 2,\n    \"F8_E4M3\": 1,\n    \"F8_E5M2\": 1,\n    \"I64\": 8,\n    \"I32\": 4,\n    \"I16\": 2,\n    \"I8\": 1,\n    \"U64\": 8,\n    \"U32\": 4,\n    \"U16\": 2,\n    \"U8\": 1,\n    \"BOOL\": 1,\n}\n\n# HI2 field -> the group it is reported under\nFIELD_GROUP = {\n    \"codes\": \"codes\",\n    \"blk_params\": \"block parameters\",\n    \"row_consts\": \"row constants\",\n    \"col_scale\": \"smoothing vector\",\n    \"code_off\": \"row index\",\n    \"param_off\": \"row index\",\n    \"row_nbits\": \"row index\",\n    \"row_block\": \"row index\",\n    \"had\": \"row index\",\n    \"part_off\": \"row index\",\n}\nGROUPS = (\"codes\", \"block parameters\", \"row constants\", \"smoothing vector\", \"row index\")\n\n_HI2 = re.compile(r\"^(?P<base>.+)\\.hi2_(?P<field>[a-z0-9_]+)$\")\n_LAYER = re.compile(r\"\\.layers\\.(\\d+)\\.\")\n\n\ndef _tensor_info(d: Path) -> dict[str, tuple[tuple[int, ...], int, Path]]:\n    \"\"\"Tensor name -> (shape, bytes, shard file), from the headers only.\"\"\"\n    from safetensors import safe_open\n\n    from .checkpoint import weight_map\n\n    out = {}\n    for shard in sorted(set(weight_map(d).values())):\n        with safe_open(d / shard, \"pt\") as f:\n            for name in f.keys():  # noqa: SIM118\n                sl = f.get_slice(name)\n                shape = tuple(sl.get_shape())\n                n = 1\n                for s in shape:\n                    n *= s\n                out[name] = (shape, n * DTYPE_BYTES[sl.get_dtype()], d / shard)\n    return out\n\n\ndef kind(base: str) -> str:"
+   }
+  ]
+ },
+ {
+  "id": "t02-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "`hi2 size` reports a wrong bpw when a tensor has no rows. Fix it."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_size.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_size.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_size.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t02-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "`hi2 size` reports a wrong bpw when a tensor has no rows. Fix it."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_size.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t03-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Rename the function default_ratio to default_error_ratio everywhere."
+   }
+  ]
+ },
+ {
+  "id": "t03-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Rename the function default_ratio to default_error_ratio everywhere."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t03-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Rename the function default_ratio to default_error_ratio everywhere."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/pipeline.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"The three phases: tabulate (calibration), allocate (global), encode (write).\"\"\"\n\nimport json\nimport shutil\nimport time\nfrom dataclasses import dataclass, field\nfrom pathlib import Path\n\nimport regex as re\nimport torch\n\nfrom .allocate import allocate_by_quality, allocate_global\nfrom .cache import StatsView\nfrom .calibrate import Config, TensorTable, build_table\nfrom .checkpoint import (\n    DEFAULT_EXCLUDE,\n    Output,\n    is_eligible,\n    make_resolver,\n    weight_map,\n    write_checkpoints,\n)\nfrom .executor import Executor\nfrom .moe import expert_parts, expert_weights, group_key, probe_units\n\n# Quality target when neither --max-error-ratio nor --target-bpw is given. Measured on\n# Qwen3.5-0.8B/4B and OLMoE (docs/results.md): ratio 6 with QAD gives about 3.4-3.5 bpw\n# at 1.02-1.03 x the unquantized perplexity; without QAD the same ratio is 1.075 x, so\n# PTQ-only runs spend more bits (ratio 4, about 3.7 bpw on the 0.8B).\nDEFAULT_ERROR_RATIO = 4.0  # PTQ only\nDEFAULT_ERROR_RATIO_QAD = 6.0  # QAD recovers most of the extra error\n\n\n@dataclass\nclass RunConfig:\n    src: Path\n    dst: Path\n    workdir: Path\n    devices: list[str] = field(default_factory=lambda: [\"cpu\"])\n    calib: Path | None = None  # None = data-free (unless calib_ids is given)\n    calib_ids: torch.Tensor | None = None  # [samples, seq_len], skips tokenising\n    calib_samples: int = 128\n    seq_len: int = 2048\n    target_bpw: float | None = None  # model-wide bits per weight, or\n    max_error_ratio: float | None = None  # quality target (INT2 where it matters less)\n    # several quality targets from one phase 1 / probe, written to <dst>-r<ratio>\n    max_error_ratios: list[float] | None = None\n    include: str | None = None\n    exclude: str = DEFAULT_EXCLUDE\n    limit_layers: int | None = None\n    compute_dtype: str = \"float32\"\n    cfg: Config = field(default_factory=Config)\n    # spec 8.6: none | probe (measure each tensor's KL cost and weight the allocation)\n    sensitivity: str = \"none\"\n    sens_seqs: int = 8\n    sens_len: int = 512\n    sens_floor: float = 0.05"
+   }
+  ]
+ },
+ {
+  "id": "t03-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Rename the function default_ratio to default_error_ratio everywhere."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_allocate_fast.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_allocate_fast.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t03-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Rename the function default_ratio to default_error_ratio everywhere."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t04-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Run the tests of the allocation module and fix any failure."
+   }
+  ]
+ },
+ {
+  "id": "t04-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Run the tests of the allocation module and fix any failure."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t04-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Run the tests of the allocation module and fix any failure."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/allocate.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"Global allocation: pick every row's ``(nbits, block)`` across the whole model.\n\nMinimise ``sum_t s_t * sse_t / energy_t`` (relative weighted output error per\ntensor, scaled by an optional sensitivity ``s_t``) subject to a model-wide\nbits-per-weight target. For a multiplier ``lam`` every row independently picks the\ncandidate minimising ``cost + lam * bits``; ``lam`` is bisected to meet the target.\n\"\"\"\n\nimport math\nfrom dataclasses import dataclass\n\nimport torch\n\nfrom .calibrate import TensorTable, candidate_row_bits\n\nROW_OVERHEAD_BITS = 48 + 2 + 1  # row constants + block-size flag + INT4 flag, per row\n\n\ndef row_overhead_bits(t: TensorTable) -> int:\n    \"\"\"Per-row overhead of spec 2.5 for the code widths the table allows: the INT4 flag\n    is ``ceil(log2(#widths))`` bits (1 for INT2/INT4 as before, 2 with INT8 added).\"\"\"\n    widths = len({nb for nb, _ in t.candidates})\n    return ROW_OVERHEAD_BITS - 1 + max(1, math.ceil(math.log2(max(widths, 1))))\n\n\ndef _overhead(tables) -> int:\n    return sum(\n        row_overhead_bits(t) * t.shape[0]\n        + t.shape[1] // 16\n        + (16 * t.shape[1] if t.col_scale is not None else 0)  # smoothing vector\n        for t in tables\n    )\n\n\n@dataclass\nclass Allocation:\n    picks: dict[str, torch.Tensor]  # name -> candidate index per row\n    bpw: float\n    lam: float\n    feasible: bool\n    error_ratio: float = float(\n        \"nan\"\n    )  # weighted error / best achievable with these candidates\n    frac_by_bits: dict[int, float] | None = None  # share of rows per code width\n\n\ndef restrict(t: TensorTable, keep) -> TensorTable:\n    \"\"\"A copy of ``t`` with only the candidates ``(nbits, block)`` for which ``keep`` is\n    true (picks then index the reduced list; the encoder reads ``t.candidates``).\"\"\"\n    import dataclasses\n\n    idx = [i for i, c in enumerate(t.candidates) if keep(c)]\n    if len(idx) == len(t.candidates) or not idx:\n        return t\n    return dataclasses.replace(\n        t, sse=t.sse[idx], candidates=[t.candidates[i] for i in idx]\n    )\n\n\ndef force_int8("
+   }
+  ]
+ },
+ {
+  "id": "t04-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Run the tests of the allocation module and fix any failure."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_allocate_fast.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_allocate_fast.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t04-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Run the tests of the allocation module and fix any failure."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t05-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Explain how allocate_by_quality chooses the bits of each row."
+   }
+  ]
+ },
+ {
+  "id": "t05-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Explain how allocate_by_quality chooses the bits of each row."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t05-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Explain how allocate_by_quality chooses the bits of each row."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/allocate.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"Global allocation: pick every row's ``(nbits, block)`` across the whole model.\n\nMinimise ``sum_t s_t * sse_t / energy_t`` (relative weighted output error per\ntensor, scaled by an optional sensitivity ``s_t``) subject to a model-wide\nbits-per-weight target. For a multiplier ``lam`` every row independently picks the\ncandidate minimising ``cost + lam * bits``; ``lam`` is bisected to meet the target.\n\"\"\"\n\nimport math\nfrom dataclasses import dataclass\n\nimport torch\n\nfrom .calibrate import TensorTable, candidate_row_bits\n\nROW_OVERHEAD_BITS = 48 + 2 + 1  # row constants + block-size flag + INT4 flag, per row\n\n\ndef row_overhead_bits(t: TensorTable) -> int:\n    \"\"\"Per-row overhead of spec 2.5 for the code widths the table allows: the INT4 flag\n    is ``ceil(log2(#widths))`` bits (1 for INT2/INT4 as before, 2 with INT8 added).\"\"\"\n    widths = len({nb for nb, _ in t.candidates})\n    return ROW_OVERHEAD_BITS - 1 + max(1, math.ceil(math.log2(max(widths, 1))))\n\n\ndef _overhead(tables) -> int:\n    return sum(\n        row_overhead_bits(t) * t.shape[0]\n        + t.shape[1] // 16\n        + (16 * t.shape[1] if t.col_scale is not None else 0)  # smoothing vector\n        for t in tables\n    )\n\n\n@dataclass\nclass Allocation:\n    picks: dict[str, torch.Tensor]  # name -> candidate index per row\n    bpw: float\n    lam: float\n    feasible: bool\n    error_ratio: float = float(\n        \"nan\"\n    )  # weighted error / best achievable with these candidates\n    frac_by_bits: dict[int, float] | None = None  # share of rows per code width\n\n\ndef restrict(t: TensorTable, keep) -> TensorTable:\n    \"\"\"A copy of ``t`` with only the candidates ``(nbits, block)`` for which ``keep`` is\n    true (picks then index the reduced list; the encoder reads ``t.candidates``).\"\"\"\n    import dataclasses\n\n    idx = [i for i, c in enumerate(t.candidates) if keep(c)]\n    if len(idx) == len(t.candidates) or not idx:\n        return t\n    return dataclasses.replace(\n        t, sse=t.sse[idx], candidates=[t.candidates[i] for i in idx]\n    )\n\n\ndef force_int8("
+   }
+  ]
+ },
+ {
+  "id": "t05-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Explain how allocate_by_quality chooses the bits of each row."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_allocate_fast.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_allocate_fast.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t05-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Explain how allocate_by_quality chooses the bits of each row."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t06-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Make the calibration loader fail with a clear message when the text file is empty."
+   }
+  ]
+ },
+ {
+  "id": "t06-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Make the calibration loader fail with a clear message when the text file is empty."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t06-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Make the calibration loader fail with a clear message when the text file is empty."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/pipeline.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"The three phases: tabulate (calibration), allocate (global), encode (write).\"\"\"\n\nimport json\nimport shutil\nimport time\nfrom dataclasses import dataclass, field\nfrom pathlib import Path\n\nimport regex as re\nimport torch\n\nfrom .allocate import allocate_by_quality, allocate_global\nfrom .cache import StatsView\nfrom .calibrate import Config, TensorTable, build_table\nfrom .checkpoint import (\n    DEFAULT_EXCLUDE,\n    Output,\n    is_eligible,\n    make_resolver,\n    weight_map,\n    write_checkpoints,\n)\nfrom .executor import Executor\nfrom .moe import expert_parts, expert_weights, group_key, probe_units\n\n# Quality target when neither --max-error-ratio nor --target-bpw is given. Measured on\n# Qwen3.5-0.8B/4B and OLMoE (docs/results.md): ratio 6 with QAD gives about 3.4-3.5 bpw\n# at 1.02-1.03 x the unquantized perplexity; without QAD the same ratio is 1.075 x, so\n# PTQ-only runs spend more bits (ratio 4, about 3.7 bpw on the 0.8B).\nDEFAULT_ERROR_RATIO = 4.0  # PTQ only\nDEFAULT_ERROR_RATIO_QAD = 6.0  # QAD recovers most of the extra error\n\n\n@dataclass\nclass RunConfig:\n    src: Path\n    dst: Path\n    workdir: Path\n    devices: list[str] = field(default_factory=lambda: [\"cpu\"])\n    calib: Path | None = None  # None = data-free (unless calib_ids is given)\n    calib_ids: torch.Tensor | None = None  # [samples, seq_len], skips tokenising\n    calib_samples: int = 128\n    seq_len: int = 2048\n    target_bpw: float | None = None  # model-wide bits per weight, or\n    max_error_ratio: float | None = None  # quality target (INT2 where it matters less)\n    # several quality targets from one phase 1 / probe, written to <dst>-r<ratio>\n    max_error_ratios: list[float] | None = None\n    include: str | None = None\n    exclude: str = DEFAULT_EXCLUDE\n    limit_layers: int | None = None\n    compute_dtype: str = \"float32\"\n    cfg: Config = field(default_factory=Config)\n    # spec 8.6: none | probe (measure each tensor's KL cost and weight the allocation)\n    sensitivity: str = \"none\"\n    sens_seqs: int = 8\n    sens_len: int = 512\n    sens_floor: float = 0.05"
+   }
+  ]
+ },
+ {
+  "id": "t06-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Make the calibration loader fail with a clear message when the text file is empty."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_pipeline.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_pipeline.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_pipeline.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t06-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Make the calibration loader fail with a clear message when the text file is empty."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_pipeline.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t07-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add type hints to hi2/evalq.py."
+   }
+  ]
+ },
+ {
+  "id": "t07-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add type hints to hi2/evalq.py."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t07-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add type hints to hi2/evalq.py."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/evalq.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"End-to-end quality of an HI2 checkpoint: perplexity of the original and the\nquantised model, KL(original || quantised) and top-1 agreement, on held-out text.\n\nThe quantised weights are dequantised back to dense tensors and run through the\noriginal architecture (a numerical check of the format, not a kernel test).\n\"\"\"\n\nimport shutil\nfrom pathlib import Path\n\nimport torch\n\nfrom .checkpoint import export_dense\n\n\n@torch.no_grad()\ndef evaluate(\n    src: Path,\n    dst: Path,\n    text: Path,\n    samples: int = 8,\n    seq_len: int = 2048,\n    device: str = \"cpu\",\n    skip_tokens: int = 0,\n    log=print,\n    dtype: str = \"float32\",\n) -> dict:\n    from transformers import AutoModelForCausalLM, AutoTokenizer\n\n    tok = AutoTokenizer.from_pretrained(src)\n    ids = load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens)\n    model = (\n        AutoModelForCausalLM.from_pretrained(src, dtype=getattr(torch, dtype))\n        .eval()\n        .to(device)\n    )\n    ref_logp = []\n    for i in range(ids.shape[0]):\n        lg = model(ids[i : i + 1].to(device)).logits[0].float()\n        ref_logp.append(torch.log_softmax(lg, -1).cpu())\n    del model\n    # Load the quantised model through the same class and loader as the original, from\n    # an exported fp16 copy, so checkpoint/module name differences are handled by\n    # transformers rather than by us.\n    dense = dst.parent / (dst.name + \".eval-dense\")\n    export_dense(src, dst, dense)\n    try:\n        model = AutoModelForCausalLM.from_pretrained(dense, dtype=getattr(torch, dtype))\n        model = model.eval().to(device)\n    finally:\n        shutil.rmtree(dense, ignore_errors=True)\n    nll_ref = nll_q = kl = agree = 0.0\n    n = 0\n    for i in range(ids.shape[0]):\n        lg = model(ids[i : i + 1].to(device)).logits[0].float()\n        lp_q = torch.log_softmax(lg, -1).cpu()\n        lp_r = ref_logp[i]\n        tgt = ids[i, 1:]\n        nll_ref += -lp_r[:-1].gather(1, tgt[:, None]).sum().item()\n        nll_q += -lp_q[:-1].gather(1, tgt[:, None]).sum().item()"
+   }
+  ]
+ },
+ {
+  "id": "t07-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add type hints to hi2/evalq.py."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_pipeline.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_pipeline.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_pipeline.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t07-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Add type hints to hi2/evalq.py."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_pipeline.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t08-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Write a new test that restacks a checkpoint to the stacked layout and back."
+   }
+  ]
+ },
+ {
+  "id": "t08-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Write a new test that restacks a checkpoint to the stacked layout and back."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t08-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Write a new test that restacks a checkpoint to the stacked layout and back."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/stack.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"Stacked layout of routed-expert HI2 tensors (``--moe-layout stacked``).\n\nThe per-expert layout writes every expert projection as its own HI2 tensor\n(``<pre>.<E>.<proj>.hi2_<field>``, nine arrays each). The stacked layout writes the\nexperts of one layer and projection group as one set of arrays,\n``<pre>.<group>.hi2_<field>`` (e.g. ``model.layers.3.mlp.experts.gate_up.hi2_codes``):\n\n* row buffers (``codes``, ``code_off``, ``blk_params``, ``param_off``, ``row_consts``,\n  ``row_nbits``, ``row_block``) are the per-expert buffers concatenated in\n  (expert, part) order, with the offsets rebased to the concatenated buffers, so the\n  stack is one valid flat container of ``R = sum`` rows;\n* ``had`` is ``[E, K/16]`` and ``col_scale`` (if the experts are smoothed) ``[E, K]``:\n  one transform per expert, shared by the parts of a group (gate and up);\n* ``part_off`` (int32 ``[E*P + 1]``) gives the rows of each (expert, part) slice.\n\nOnly the storage changes: :func:`split_stack` returns the per-expert arrays byte for\nbyte, so both layouts dequantize identically. ``docs/moe.md`` is the\nloader-facing description.\n\"\"\"\n\nimport json\nimport os\nimport shutil\nfrom collections import Counter\nfrom contextlib import ExitStack\nfrom pathlib import Path\n\nimport torch\n\nfrom .format import FIELDS, HI2Tensor\nfrom .moe import expert_parts\n\nLAYOUTS = (\"per-expert\", \"stacked\")\n# group name -> parts in row order (gate before up, as the fork's w13 expects)\nGROUPS = {\n    \"gate_up\": (\"gate_proj\", \"up_proj\"),\n    \"down\": (\"down_proj\",),\n    \"w13\": (\"w1\", \"w3\"),  # Mixtral naming\n    \"w2\": (\"w2\",),\n}\nPART_GROUP = {p: (g, i) for g, parts in GROUPS.items() for i, p in enumerate(parts)}\nMARK = \"part_off\"  # the array that tells a stack from a single tensor\nINT32_MAX = 2**31 - 1\n\n\nclass StackError(ValueError):\n    \"\"\"A group that cannot be stacked (it is then kept per expert).\"\"\"\n\n\n# ------------------------------------------------------------------ tensors\n\n\ndef build_stack(experts: list[list[HI2Tensor]]) -> dict[str, torch.Tensor]:"
+   }
+  ]
+ },
+ {
+  "id": "t08-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Write a new test that restacks a checkpoint to the stacked layout and back."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_stack.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_stack.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_stack.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t08-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Write a new test that restacks a checkpoint to the stacked layout and back."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_stack.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t09-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Document the --max-error-ratio default in docs/usage.md."
+   }
+  ]
+ },
+ {
+  "id": "t09-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Document the --max-error-ratio default in docs/usage.md."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t09-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Document the --max-error-ratio default in docs/usage.md."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>docs/usage.md</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# Using hi2\n\nThis page tells you how to run the tool and what each option does. For the reasons\nbehind the defaults, read [results.md](results.md) and [design-notes.md](design-notes.md).\n\n## Commands\n\n| Command | What it does |\n| --- | --- |\n| `quantize SRC DST` | Convert a Hugging Face checkpoint to a rdna_hint_flex checkpoint. |\n| `verify SRC DST` | Reload the quantized tensors and compare them with the source weights. |\n| `eval SRC DST --text T --skip-tokens N` | Measure perplexity of both models, KL(original to quantized), and top-1 agreement on held-out text. |\n| `export-dense SRC DST OUT` | Write the dequantized model as a plain fp16 Hugging Face directory. Use it to score the model in llama.cpp. |\n| `restack CKPT OUT --layout stacked\\|per-expert` | Convert the expert layout of an MoE checkpoint without re-encoding. |\n| `size DST [--src SRC] [--by kind\\|layer\\|tensor] [--top N] [--json]` | Show where the bytes of a checkpoint go. See \"Checking the size\". |\n| `cache list\\|size\\|prune` | Manage the persistent cache. |\n\n`eval` dequantizes the weights and runs the original architecture. It checks the format\nnumerically. It is not a kernel test.\n\n## Calibration text\n\nCalibration needs `--calib-samples` sequences of `--seq-len` tokens. Use text from the\ndomain of your model. A concatenated multi-domain file works well: QAD draws random\nwindows from the whole file. `experiments/build_calib_mix.py` shows how the study text was\nbuilt.\n\nEvaluate on text that is not in the calibration region. Use `--skip-tokens` to skip it.\n\nWithout `--calib`, the tool runs data-free: all column weights are 1, rounding is\nnearest, and the model is not loaded. QAD is skipped with a warning.\n\n## Where it runs\n\n| Goal | Flags |\n| --- | --- |\n| Automatic (default) | `--devices auto`: every visible GPU, otherwise the CPU. Narrow the set with `HIP_VISIBLE_DEVICES`. |\n| CPU and RAM only | `--devices cpu` |\n| One GPU | `--devices cuda:0` |\n| Several GPUs | `--devices cuda:0,cuda:1,...`. The tool splits calibration sequences across the devices and shards the rows of every tensor. The result equals the one-device result. |"
+   }
+  ]
+ },
+ {
+  "id": "t09-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Document the --max-error-ratio default in docs/usage.md."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_allocate_fast.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_allocate_fast.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t09-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Document the --max-error-ratio default in docs/usage.md."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t10-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "List every module in hi2/ that imports torch."
+   }
+  ]
+ },
+ {
+  "id": "t10-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "List every module in hi2/ that imports torch."
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t10-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "List every module in hi2/ that imports torch."
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/format.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"HadamardINT2-FP16 v3.2: storage format, decode and reference semantics.\n\nSection numbers refer to ``docs/format-spec.md``.\n\n* 2.1 blocks of ``B`` in {16, 32, 64} along K, per-row INT2/INT4.\n* 2.2 affine ladder ``w = fp16(lo + code * step)`` with 8-bit block parameters\n  decoded through three fp16 per-row constants.\n* 2.3 optional orthonormal order-16 Hadamard on flagged column groups.\n* 2.4 flat per-row buffers, 2.5 bit accounting.\n\"\"\"\n\nimport math\nfrom dataclasses import dataclass\n\nimport torch\n\nGROUP = 16\n\n\ndef hadamard16(dtype: torch.dtype = torch.float64, device=\"cpu\") -> torch.Tensor:\n    \"\"\"Normalised order-16 Walsh-Hadamard matrix: symmetric, ``H @ H = I``.\"\"\"\n    h = torch.ones(1, 1, dtype=torch.float64)\n    while h.shape[0] < GROUP:\n        h = torch.cat([torch.cat([h, h], 1), torch.cat([h, -h], 1)], 0)\n    return (h / math.sqrt(GROUP)).to(dtype=dtype, device=device)\n\n\ndef fwht_groups(x: torch.Tensor, flags: torch.Tensor) -> torch.Tensor:\n    \"\"\"Transform the flagged 16-column groups of ``x[..., K]`` (an involution).\"\"\"\n    k = x.shape[-1]\n    if k % GROUP:\n        raise ValueError(f\"K={k} must be a multiple of {GROUP}\")\n    if flags.numel() != k // GROUP:\n        raise ValueError(f\"flags has {flags.numel()} entries, expected {k // GROUP}\")\n    work = x.dtype if x.dtype in (torch.float32, torch.float64) else torch.float64\n    xg = x.to(work).reshape(*x.shape[:-1], k // GROUP, GROUP)\n    rot = xg @ hadamard16(work, x.device)\n    out = torch.where(flags.to(x.device).bool().reshape(-1, 1), rot, xg)\n    return out.reshape(x.shape).to(x.dtype)\n\n\n# ---- block parameters (2.2) --------------------------------------------------\ndef decode_params(\n    lo_u8: torch.Tensor,\n    step_u8: torch.Tensor,\n    lo_min: torch.Tensor,\n    lo_scale: torch.Tensor,\n    step_scale: torch.Tensor,\n) -> tuple[torch.Tensor, torch.Tensor]:\n    \"\"\"fp16 ``lo``/``step`` of each block from its two bytes and the row constants\n    (broadcast over the block dim): ``lo = fp16(fma_f32(u, lo_scale, lo_min))``,"
+   }
+  ]
+ },
+ {
+  "id": "t10-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "List every module in hi2/ that imports torch."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_format.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_format.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_format.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t10-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "List every module in hi2/ that imports torch."
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_format.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "t11-fresh",
+  "stage": "fresh",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Why does QAD keep the PTQ encoding for some layers?"
+   }
+  ]
+ },
+ {
+  "id": "t11-listing",
+  "stage": "listing",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Why does QAD keep the PTQ encoding for some layers?"
+   },
+   {
+    "role": "assistant",
+    "content": "<list_files>\n<path>hi2</path>\n</list_files>"
+   },
+   {
+    "role": "user",
+    "content": "[list_files result]\n__init__.py\n__main__.py\nallocate.py\ncache.py\ncalibrate.py\ncheckpoint.py\nencode.py\nevalq.py\nexecutor.py\nfinalkl.py\nformat.py\ngptq_kernel.py\nhessian.py\nlayerwise.py\nmoe.py\npipeline.py\nqad.py\nsensitivity.py\nsize.py\nstack.py\nstats.py"
+   }
+  ]
+ },
+ {
+  "id": "t11-read",
+  "stage": "read",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Why does QAD keep the PTQ encoding for some layers?"
+   },
+   {
+    "role": "assistant",
+    "content": "<read_file>\n<path>hi2/qad.py</path>\n</read_file>"
+   },
+   {
+    "role": "user",
+    "content": "[read_file result]\n# SPDX-License-Identifier: Apache-2.0\n# SPDX-FileCopyrightText: Copyright contributors to the hi2 project\n\"\"\"Layer-wise quantization-aware distillation (QAD), spec section 13.\n\nAfter the PTQ pipeline has allocated every row's ``(nbits, B)`` (and computed the\nsmoothing vectors, rotation flags and Hessians), the decoder layers are trained one\nat a time, like the sequential encode pass of spec 8.4:\n\n* the student input of layer ``L`` is the output of the already quantized prefix,\n  the target is the unquantized layer applied to the unquantized prefix's output;\n  both sets of hidden states live in RAM, one layer is on the GPU;\n* every eligible Linear of the layer is replaced by :class:`FakeQuantLinear`: fp32\n  latent weights in the stored basis plus the per-block ladder parameters (in 8-bit\n  units), with the row picks, the per-row fp16 constants, ``s`` and the Hadamard\n  flags frozen. The forward is the format's exact decode (codes, 8-bit parameters,\n  one fp16 rounding) with straight-through gradients, mapped back to the original\n  basis so the layer runs unchanged;\n* the loss is the normalised MSE of the layer output; AdamW, cosine schedule; the\n  layer keeps whichever of the PTQ initialisation and the trained state has the\n  lower loss on held-out calibration sequences.\n\nThe export takes the codes and the 8-bit parameters exactly as the last forward saw\nthem, so a QAD checkpoint is a normal v3.2 checkpoint (no format change).\n\"\"\"\n\nimport copy\nimport gc\nimport hashlib\nimport json\nimport math\nimport os\nimport time\nfrom dataclasses import asdict, dataclass, field\nfrom pathlib import Path\n\nimport torch\nfrom torch import nn\n\nfrom .calibrate import Config, TensorTable\nfrom .format import (\n    HI2Tensor,\n    assemble,\n    decode_params,\n    dequantize,\n    fwht_groups,\n    ladder_dequantize,\n)\n\n# ---- configuration -----------------------------------------------------------\n\n\n@dataclass\nclass QadConfig:\n    steps: int = 300  # optimizer steps per layer (the most any layer gets)\n    # Step budget: the run spends at most budget x steps x (trained layers) optimizer steps.\n    # Below 1, each layer's allotment follows the gain the previous layers showed (layers"
+   }
+  ]
+ },
+ {
+  "id": "t11-test_fail",
+  "stage": "test_fail",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Why does QAD keep the PTQ encoding for some layers?"
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_qad.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\nFAILED tests/test_qad.py::test_case - AssertionError: assert 3 == 4\nE   assert 3 == 4\ntests/test_qad.py:41: AssertionError\n1 failed, 14 passed in 2.31s"
+   }
+  ]
+ },
+ {
+  "id": "t11-test_pass",
+  "stage": "test_pass",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Why does QAD keep the PTQ encoding for some layers?"
+   },
+   {
+    "role": "assistant",
+    "content": "<execute_command>\n<command>python -m pytest -q tests/test_qad.py</command>\n</execute_command>"
+   },
+   {
+    "role": "user",
+    "content": "[execute_command result]\n15 passed in 2.40s"
+   }
+  ]
+ },
+ {
+  "id": "v00-vague",
+  "stage": "vague",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Make it faster."
+   }
+  ]
+ },
+ {
+  "id": "v01-vague",
+  "stage": "vague",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Fix the bug."
+   }
+  ]
+ },
+ {
+  "id": "v02-vague",
+  "stage": "vague",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Improve the quantizer."
+   }
+  ]
+ },
+ {
+  "id": "v03-vague",
+  "stage": "vague",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Clean this up."
+   }
+  ]
+ },
+ {
+  "id": "v04-vague",
+  "stage": "vague",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Do the thing we discussed."
+   }
+  ]
+ },
+ {
+  "id": "v05-vague",
+  "stage": "vague",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are a coding agent working in a Python repository. You act by calling exactly ONE tool per message, written as XML:\n\n<tool_name>\n<param>value</param>\n</tool_name>\n\nTools:\n- read_file: <path>\n- write_to_file: <path>, <content>\n- replace_in_file: <path>, <diff>\n- execute_command: <command>\n- search_files: <path>, <regex>\n- list_files: <path>\n- ask_followup_question: <question>\n- attempt_completion: <result>\n\nAfter each tool call you receive its result. Think briefly, then call one tool. When the task is done, call attempt_completion. If the request is too vague to act on, call ask_followup_question."
+   },
+   {
+    "role": "user",
+    "content": "Why is it broken?"
+   }
+  ]
+ }
+]

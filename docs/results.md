@@ -266,3 +266,46 @@ Why 6 with QAD:
 What the default does not cover: OLMoE was measured at ratio 4 (3.54 bpw) and at a 3.0 bpw
 target, not at ratio 6; MoE QAD was not run; the 0.5B model was run only at a 3.0 bpw
 target. Choose another ratio when your quality or size limit differs.
+
+## Decision fidelity on Qwen3.5-4B (spec 12.3)
+
+The question: when an agent loop gives the model a coding task, does the quantized model
+make the same first decision as the unquantized one? The prompt set has 66 conversations over
+this repository's files: 12 tasks at five stages (fresh, after a directory listing, after
+reading a file, after a failing test run, after a passing run) and 6 vague requests. The model
+must answer with one XML tool call. Decoding is greedy at concurrency 1 in the fork's vLLM,
+with thinking off. A run scores the first tool called (or none, when the model answers in
+prose), and the same tool with the same argument.
+
+The baseline is the unquantized model booted twice. Both boots made the same first call on
+all 66 prompts, so greedy decoding adds no spread on this set, and every difference below is
+a difference of the model. With 66 prompts the 95 % interval is about 10 points wide.
+
+| Model (4B) | Same first tool | 95 % interval | Same tool and argument | Well-formed calls | Garbage |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| unquantized, second boot | 100 % | 94-100 % | 100 % | 72.7 % | 0 |
+| HI2 3.5 bpw, QAD, step-unit latents | 77.3 % | 66-86 % | 54.5 % | 60.6 % | 0 |
+| HI2 3.5 bpw, QAD, weight-unit latents | 74.2 % | 63-83 % | 54.5 % | 71.2 % | 0 |
+| HI2 3.5 bpw, PTQ only | 72.7 % | 61-82 % | 50.0 % | 59.1 % | 0 |
+| HI2 3.0 bpw, QAD, step-unit latents | 66.7 % | 55-77 % | 47.0 % | 65.2 % | 0 |
+
+Read this as follows.
+
+1. **About three in four first decisions match at 3.5 bpw.** The first tool agrees on 73-77 %
+   of the prompts, and on 50-55 % when the argument must match too (the same file or command).
+2. **The variants are not separable at this size.** QAD, PTQ-only and the 3.0 bpw run lie inside
+   each other's intervals. QAD does not show a gain on decisions that it shows on KLD (0.093 to
+   0.045). A larger prompt set is needed to say more.
+3. **The baseline is a weak tool user.** The unquantized 4B model makes a well-formed call
+   on only 72.7 % of the prompts; on 27 % it answers in prose or breaks the format. Part of
+   each disagreement is a format difference, not a wrong action. No run produced garbage.
+4. **The per-stage numbers are too small to read.** Each stage has 12 prompts (6 for the vague
+   requests), so one cell moves 8 points per prompt. Agreement by stage runs from 42 % to
+   100 % with no consistent pattern; the vague requests agree on every model but the 3.0 bpw
+   one (83 %).
+
+Raw decisions of every run are in
+[`experiments/results/decision_fidelity_4b_2026-10-27/`](../experiments/results/decision_fidelity_4b_2026-10-27/);
+the harness is `experiments/decision_fidelity.py` (see [experiments](../experiments/README.md)).
+Not measured: other formats (EXL3, GGUF) on the same prompts, and the 27B model.
+

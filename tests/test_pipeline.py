@@ -226,3 +226,15 @@ def test_sensitivity_probe_weights_and_allocation(tiny, tmp_path):
     assert len(sens) == 21 and all(v > 0 for v in sens.values())
     assert max(sens.values()) > 2 * min(sens.values())  # tensors differ in sensitivity
     assert summary["feasible"] and summary["avg_bpw"] <= 3.0 + 0.05
+
+
+def test_multi_device_executor_serializes_the_triton_autotuner():
+    triton = pytest.importorskip("triton.runtime.autotuner")
+    from hi2.executor import Executor, serialize_triton_autotune
+
+    Executor(["cpu"])  # one device: no patch needed
+    Executor(["cpu", "cpu"])  # several: thread-safe autotuning
+    assert triton.Autotuner.run._hi2_locked
+    run = triton.Autotuner.run
+    serialize_triton_autotune()
+    assert triton.Autotuner.run is run  # idempotent

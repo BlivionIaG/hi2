@@ -1,0 +1,666 @@
+{
+ "model": "/home/chenco_adm/w4a8_runs/hadamard-int2/runs4b/q4b-b3.5-qad",
+ "n": 66,
+ "rows": [
+  {
+   "id": "t00-fresh",
+   "stage": "fresh",
+   "text": "<search_files>\n<path>.</path>\n<regex>persistent.*cache.*key.*statistics</regex>\n</search_files>",
+   "tokens": 29,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "persistent.*cache.*key.*statistics",
+   "garbage": []
+  },
+  {
+   "id": "t00-listing",
+   "stage": "listing",
+   "text": "<search_files>\n<path>hi2</path>\n<regex>cache.*key.*statistics</regex>\n</search_files>",
+   "tokens": 30,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "cache.*key.*statistics",
+   "garbage": []
+  },
+  {
+   "id": "t00-read",
+   "stage": "read",
+   "text": "<read_file>\n<path>hi2/cache.py</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/cache.py",
+   "garbage": []
+  },
+  {
+   "id": "t00-test_fail",
+   "stage": "test_fail",
+   "text": "The test failure indicates that the persistent cache key computation is not working as expected. Let me examine the cache implementation to understand how the statistics cache key is computed.\n\n<read_file>\n<path>src/cache.py</path>\n</read_file>",
+   "tokens": 52,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "src/cache.py",
+   "garbage": []
+  },
+  {
+   "id": "t00-test_pass",
+   "stage": "test_pass",
+   "text": "<search_files>\n<path>src</path>\n<regex>cache.*statistics</regex>\n</search_files>",
+   "tokens": 27,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "cache.*statistics",
+   "garbage": []
+  },
+  {
+   "id": "t01-fresh",
+   "stage": "fresh",
+   "text": "<tool_name>\n<param>read_file</param>\n</tool_name>",
+   "tokens": 19,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t01-listing",
+   "stage": "listing",
+   "text": "<read_file>\n<path>hi2/evalq.py</path>\n</read_file>",
+   "tokens": 22,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/evalq.py",
+   "garbage": []
+  },
+  {
+   "id": "t01-read",
+   "stage": "read",
+   "text": "<read_file>\n<path>hi2/evalq.py</path>\n</read_file>",
+   "tokens": 22,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/evalq.py",
+   "garbage": []
+  },
+  {
+   "id": "t01-test_fail",
+   "stage": "test_fail",
+   "text": "The test failure indicates that the expected number of cases is 4, but only 3 were found. Let me examine the test file to understand what's happening:\n\n<read_file>\n<path>tests/test_pipeline.py</path>\n</read_file>",
+   "tokens": 54,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_pipeline.py",
+   "garbage": []
+  },
+  {
+   "id": "t01-test_pass",
+   "stage": "test_pass",
+   "text": "<execute_command>\n<command>python -m pytest -q tests/test_pipeline.py</command>\n</execute_command>",
+   "tokens": 27,
+   "tool": "execute_command",
+   "valid": true,
+   "arg": "python -m pytest -q tests/test_pipeline.py",
+   "garbage": []
+  },
+  {
+   "id": "t02-fresh",
+   "stage": "fresh",
+   "text": "<tool_name>\n<param>search_files</param>\n<regex>hi2.*size</regex>\n</tool_name>",
+   "tokens": 30,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t02-listing",
+   "stage": "listing",
+   "text": "<read_file>\n<path>hi2/size.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/size.py",
+   "garbage": []
+  },
+  {
+   "id": "t02-read",
+   "stage": "read",
+   "text": "<read_file>\n<path>hi2/size.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/size.py",
+   "garbage": []
+  },
+  {
+   "id": "t02-test_fail",
+   "stage": "test_fail",
+   "text": "<read_file>\n<path>tests/test_size.py</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_size.py",
+   "garbage": []
+  },
+  {
+   "id": "t02-test_pass",
+   "stage": "test_pass",
+   "text": "<read_file>\n<path>tests/test_size.py</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_size.py",
+   "garbage": []
+  },
+  {
+   "id": "t03-fresh",
+   "stage": "fresh",
+   "text": "<tool_name>\n<param>search_files</param>\n<path>.</path>\n<regex>def default_ratio</regex>\n</tool_name>",
+   "tokens": 34,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t03-listing",
+   "stage": "listing",
+   "text": "<search_files>\n<path>.</path>\n<regex>default_ratio</regex>\n</search_files>",
+   "tokens": 24,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "default_ratio",
+   "garbage": []
+  },
+  {
+   "id": "t03-read",
+   "stage": "read",
+   "text": "<search_files>\n<path>.</path>\n<regex>default_ratio</regex>\n</search_files>",
+   "tokens": 24,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "default_ratio",
+   "garbage": []
+  },
+  {
+   "id": "t03-test_fail",
+   "stage": "test_fail",
+   "text": "<execute_command>\n<command>python -m pytest -q tests/test_allocate_fast.py::test_case -v</command>\n</execute_command>",
+   "tokens": 33,
+   "tool": "execute_command",
+   "valid": true,
+   "arg": "python -m pytest -q tests/test_allocate_fast.py::test_case -v",
+   "garbage": []
+  },
+  {
+   "id": "t03-test_pass",
+   "stage": "test_pass",
+   "text": "<search_files>\n<path>*,</path>\n<regex>def default_ratio</regex>\n</search_files>",
+   "tokens": 27,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "def default_ratio",
+   "garbage": []
+  },
+  {
+   "id": "t04-fresh",
+   "stage": "fresh",
+   "text": "<tool_name>\n<param>execute_command</param>\n<param>python -m pytest tests/test_allocation.py -v</param>\n</tool_name>",
+   "tokens": 36,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t04-listing",
+   "stage": "listing",
+   "text": "<search_files>\n<path>hi2</path>\n<regex>test.*allocation</regex>\n</search_files>",
+   "tokens": 28,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "test.*allocation",
+   "garbage": []
+  },
+  {
+   "id": "t04-read",
+   "stage": "read",
+   "text": "<read_file>\n<path>hi2/tests/test_allocation.py</path>\n</read_file>",
+   "tokens": 22,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/tests/test_allocation.py",
+   "garbage": []
+  },
+  {
+   "id": "t04-test_fail",
+   "stage": "test_fail",
+   "text": "<read_file>\n<path>tests/test_allocate_fast.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_allocate_fast.py",
+   "garbage": []
+  },
+  {
+   "id": "t04-test_pass",
+   "stage": "test_pass",
+   "text": "All tests passed successfully. No failures were found in the allocation module tests.",
+   "tokens": 16,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t05-fresh",
+   "stage": "fresh",
+   "text": "<tool_name>\n<param>read_file</param>\n</tool_name>",
+   "tokens": 19,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t05-listing",
+   "stage": "listing",
+   "text": "<read_file>\n<path>allocate.py</path>\n</read_file>",
+   "tokens": 18,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "allocate.py",
+   "garbage": []
+  },
+  {
+   "id": "t05-read",
+   "stage": "read",
+   "text": "<read_file>\n<path>hi2/allocate.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/allocate.py",
+   "garbage": []
+  },
+  {
+   "id": "t05-test_fail",
+   "stage": "test_fail",
+   "text": "The test failure indicates that the `allocate_by_quality` function is not correctly allocating bits for each row. Let me examine the implementation to understand how it works.\n\n<read_file>\n<path>tests/test_allocate_fast.py</path>\n</read_file>",
+   "tokens": 54,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_allocate_fast.py",
+   "garbage": []
+  },
+  {
+   "id": "t05-test_pass",
+   "stage": "test_pass",
+   "text": "The tests passed successfully. Let me explain how `allocate_by_quality` chooses the bits of each row:\n\n## How `allocate_by_quality` Works\n\nThe `allocate_by_quality` function uses a **greedy allocation strategy** based on quality scores:\n\n### 1. **Quality Score Calculation**\nFor each row, it calculates a quality score based on:\n- **Row quality**: The sum of quality values for all columns in that row\n- **Column quality**: The sum of quality values for all rows in that column\n\n### 2. **Allocation Process**\nThe function iterates through rows and columns, making decisions based on quality scores:\n\n1. **For each row**:\n   - Calculate the row's quality score\n   - Determine how many bits to allocate based on the quality score\n   - Select which specific bits to allocate (typically the highest quality bits)\n\n2. **For each column**:\n   - Calculate the column's quality score\n   - Determine how many bits to allocate based on the column's quality score\n   - Select which specific bits to allocate\n\n### 3. **Bit Selection Strategy**\nThe function typically selects bits with the highest quality values within each row/column. This ensures that:\n- High-quality bits are prioritized\n- The allocation is balanced across rows and columns\n- The overall quality of the allocated bits is maximized\n\n### 4. **Quality Thresholds**\nThere are typically quality thresholds that determine:\n- Whether a bit should be allocated\n- The minimum quality required for allocation\n- The maximum quality that can be allocated\n\nThis approach ensures that the allocation is both efficient and maintains high quality across the entire dataset.",
+   "tokens": 347,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t06-fresh",
+   "stage": "fresh",
+   "text": "<tool_name>\n<param>read_file</param>\n</tool_name>",
+   "tokens": 19,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t06-listing",
+   "stage": "listing",
+   "text": "<read_file>\n<path>hi2/calibrate.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/calibrate.py",
+   "garbage": []
+  },
+  {
+   "id": "t06-read",
+   "stage": "read",
+   "text": "<search_files>\n<path>hi2/, <regex>calibration.*loader</regex>\n</search_files>",
+   "tokens": 26,
+   "tool": "search_files",
+   "valid": false,
+   "arg": "calibration.*loader",
+   "garbage": []
+  },
+  {
+   "id": "t06-test_fail",
+   "stage": "test_fail",
+   "text": "<read_file>\n<path>tests/test_pipeline.py</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_pipeline.py",
+   "garbage": []
+  },
+  {
+   "id": "t06-test_pass",
+   "stage": "test_pass",
+   "text": "<read_file>\n<path>tests/test_pipeline.py</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_pipeline.py",
+   "garbage": []
+  },
+  {
+   "id": "t07-fresh",
+   "stage": "fresh",
+   "text": "<tool_name>\n<read_file>\n<param>hi2/evalq.py</param>\n</tool_name>",
+   "tokens": 28,
+   "tool": "read_file",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t07-listing",
+   "stage": "listing",
+   "text": "<read_file>\n<path>hi2/evalq.py</path>\n</read_file>",
+   "tokens": 22,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/evalq.py",
+   "garbage": []
+  },
+  {
+   "id": "t07-read",
+   "stage": "read",
+   "text": "<read_file>\n<path>hi2/evalq.py</path>\n</read_file>",
+   "tokens": 22,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/evalq.py",
+   "garbage": []
+  },
+  {
+   "id": "t07-test_fail",
+   "stage": "test_fail",
+   "text": "<execute_command>\n<command>python -m pytest -q tests/test_evalq.py</command>\n</execute_command>",
+   "tokens": 28,
+   "tool": "execute_command",
+   "valid": true,
+   "arg": "python -m pytest -q tests/test_evalq.py",
+   "garbage": []
+  },
+  {
+   "id": "t07-test_pass",
+   "stage": "test_pass",
+   "text": "<read_file>\n<path>hi2/evalq.py</path>\n</read_file>",
+   "tokens": 22,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/evalq.py",
+   "garbage": []
+  },
+  {
+   "id": "t08-fresh",
+   "stage": "fresh",
+   "text": "I'll help you write a test that restacks a checkpoint to the stacked layout and back. First, let me explore the repository structure to understand the codebase and find relevant files.\n\n<search_files>\n<path>.</path>\n<regex>checkpoint|stacked|layout</regex>\n</search_files>",
+   "tokens": 66,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "checkpoint|stacked|layout",
+   "garbage": []
+  },
+  {
+   "id": "t08-listing",
+   "stage": "listing",
+   "text": "<read_file>\n<path>hi2/stack.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/stack.py",
+   "garbage": []
+  },
+  {
+   "id": "t08-read",
+   "stage": "read",
+   "text": "<read_file>\n<path>hi2/stack.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/stack.py",
+   "garbage": []
+  },
+  {
+   "id": "t08-test_fail",
+   "stage": "test_fail",
+   "text": "Let me check the test file to understand what's happening:\n\n<read_file>\n<path>tests/test_stack.py</path>\n</read_file>",
+   "tokens": 33,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_stack.py",
+   "garbage": []
+  },
+  {
+   "id": "t08-test_pass",
+   "stage": "test_pass",
+   "text": "<search_files>\n<path>tests/test_stack.py</path>\n<regex>def test.*stack</regex>\n</search_files>",
+   "tokens": 31,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "def test.*stack",
+   "garbage": []
+  },
+  {
+   "id": "t09-fresh",
+   "stage": "fresh",
+   "text": "<read_file>\n<path>docs/usage.md</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "docs/usage.md",
+   "garbage": []
+  },
+  {
+   "id": "t09-listing",
+   "stage": "listing",
+   "text": "<read_file>\n<path>docs/usage.md</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "docs/usage.md",
+   "garbage": []
+  },
+  {
+   "id": "t09-read",
+   "stage": "read",
+   "text": "<search_files>\n<path>docs/</path>\n<regex>--max-error-ratio</regex>\n</search_files>",
+   "tokens": 29,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "--max-error-ratio",
+   "garbage": []
+  },
+  {
+   "id": "t09-test_fail",
+   "stage": "test_fail",
+   "text": "<read_file>\n<path>docs/usage.md</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "docs/usage.md",
+   "garbage": []
+  },
+  {
+   "id": "t09-test_pass",
+   "stage": "test_pass",
+   "text": "<read_file>\n<path>docs/usage.md</path>\n</read_file>",
+   "tokens": 20,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "docs/usage.md",
+   "garbage": []
+  },
+  {
+   "id": "t10-fresh",
+   "stage": "fresh",
+   "text": "<tool_name>\nsearch_files\n<path>hi2/\n<regex>import torch\n</regex>\n</tool_name>",
+   "tokens": 30,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t10-listing",
+   "stage": "listing",
+   "text": "<search_files>\n<path>hi2</path>\n<regex>import torch</regex>\n</search_files>",
+   "tokens": 27,
+   "tool": "search_files",
+   "valid": true,
+   "arg": "import torch",
+   "garbage": []
+  },
+  {
+   "id": "t10-read",
+   "stage": "read",
+   "text": "<search_files>\n<path>hi2/, regex=import torch\n</path>\n</search_files>",
+   "tokens": 24,
+   "tool": "search_files",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t10-test_fail",
+   "stage": "test_fail",
+   "text": "<execute_command>\n<command>python -m pytest -q tests/test_format.py -v</command>\n</execute_command>",
+   "tokens": 29,
+   "tool": "execute_command",
+   "valid": true,
+   "arg": "python -m pytest -q tests/test_format.py -v",
+   "garbage": []
+  },
+  {
+   "id": "t10-test_pass",
+   "stage": "test_pass",
+   "text": "<execute_command>\n<command>python -m pytest -q tests/test_format.py</command>\n</execute_command>",
+   "tokens": 27,
+   "tool": "execute_command",
+   "valid": true,
+   "arg": "python -m pytest -q tests/test_format.py",
+   "garbage": []
+  },
+  {
+   "id": "t11-fresh",
+   "stage": "fresh",
+   "text": "Quantization-aware training (QAT) keeps the PTQ (Post-Training Quantization) encoding for some layers because of the following reasons:\n\n1. **Accuracy Preservation**: Some layers, particularly those with high sensitivity to quantization errors, may benefit from using the PTQ encoding instead of the QAT encoding. This is because the PTQ encoding is derived from the actual quantized weights and activations, which are more representative of the quantized model's behavior.\n\n2. **Computational Efficiency**: Using the PTQ encoding can reduce the computational overhead associated with QAT, as it avoids the need for additional training iterations or complex operations during the quantization process.\n\n3. **Model Stability**: In some cases, the PTQ encoding can help maintain the stability of the model during the quantization process, especially when dealing with layers that have a high dynamic range or are prone to quantization errors.\n\n4. **Hybrid Quantization**: Some models use a hybrid approach where certain layers are quantized using QAT while others are quantized using PTQ. This can help balance the trade-off between accuracy and performance.\n\n5. **Layer-Specific Requirements**: Different layers may have different requirements for quantization. For example, convolutional layers might benefit from QAT, while fully connected layers might benefit from PTQ.\n\nIn summary, keeping the PTQ encoding for some layers can help improve the accuracy, stability, and efficiency of the quantized model.",
+   "tokens": 298,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "t11-listing",
+   "stage": "listing",
+   "text": "<read_file>\n<path>hi2/qad.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/qad.py",
+   "garbage": []
+  },
+  {
+   "id": "t11-read",
+   "stage": "read",
+   "text": "<read_file>\n<path>hi2/qad.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "hi2/qad.py",
+   "garbage": []
+  },
+  {
+   "id": "t11-test_fail",
+   "stage": "test_fail",
+   "text": "<read_file>\n<path>tests/test_qad.py</path>\n</read_file>",
+   "tokens": 21,
+   "tool": "read_file",
+   "valid": true,
+   "arg": "tests/test_qad.py",
+   "garbage": []
+  },
+  {
+   "id": "t11-test_pass",
+   "stage": "test_pass",
+   "text": "<execute_command>\n<command>python -c \"from qad import QAD; help(QAD)\"</command>\n</execute_command>",
+   "tokens": 32,
+   "tool": "execute_command",
+   "valid": true,
+   "arg": "python -c \"from qad import QAD; help(QAD)\"",
+   "garbage": []
+  },
+  {
+   "id": "v00-vague",
+   "stage": "vague",
+   "text": "I need more context to make this faster. Could you clarify:\n\n1. What specific task or code are you trying to optimize?\n2. What's the current performance bottleneck?\n3. What language/framework are you working with?\n\nThis will help me provide targeted optimization suggestions.",
+   "tokens": 59,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "v01-vague",
+   "stage": "vague",
+   "text": "I need to see the code to identify and fix the bug. Could you please provide the code or specify which file contains the bug?",
+   "tokens": 28,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "v02-vague",
+   "stage": "vague",
+   "text": "To improve the quantizer, I need to understand the current implementation and what specific improvements you're looking for. Could you clarify:\n\n1. What type of quantizer are you working with (e.g., uniform, non-uniform, quantization-aware training)?\n2. What specific improvements are you seeking (e.g., accuracy, speed, memory efficiency)?\n3. Do you have a specific file or code snippet you'd like me to review?\n\nThis will help me provide targeted improvements.",
+   "tokens": 102,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "v03-vague",
+   "stage": "vague",
+   "text": "I'd be happy to help clean up your code! Could you please specify:\n\n1. Which file(s) you'd like me to clean up?\n2. What specific improvements you'd like (e.g., formatting, comments, variable naming, etc.)?\n\nThis will help me provide the most effective cleanup for your codebase.",
+   "tokens": 70,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "v04-vague",
+   "stage": "vague",
+   "text": "I don't have context about what we discussed previously. Could you please clarify what you'd like me to do?",
+   "tokens": 24,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  },
+  {
+   "id": "v05-vague",
+   "stage": "vague",
+   "text": "I need to understand what's broken in your codebase. Could you please provide more context about:\n\n1. What specific error or issue you're encountering\n2. What code or functionality is not working as expected\n3. Any relevant error messages or stack traces\n\nThis will help me identify what needs to be fixed.",
+   "tokens": 66,
+   "tool": "none",
+   "valid": false,
+   "arg": "",
+   "garbage": []
+  }
+ ]
+}
