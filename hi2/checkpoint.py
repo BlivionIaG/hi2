@@ -250,7 +250,10 @@ def write_checkpoints(
                             f"warning: {len(missing)} tensors have no Hessian; nearest rounding"
                         )
                         warned = True
-                groups = list(_batches(enc_names, tables, todo, ENCODE_BATCH_BYTES))
+                budget = ENCODE_BATCH_BYTES // (
+                    2 if cfg.refine_passes else 1
+                )  # hs stays next to u
+                groups = list(_batches(enc_names, tables, todo, budget))
                 sp = src / shard
                 nxt = (
                     io.submit(_requests_for, groups[0], sp, view, tables, todo, cfg)

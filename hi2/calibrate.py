@@ -58,6 +58,10 @@ class Config:
     damp: float = 0.01  # Hessian damping, relative to the mean diagonal
     # round columns in descending Hessian-diagonal order (GPTQ "act-order"); storage unchanged
     act_order: bool = False
+    # Local code refinement after GPTQ (spec 8.9, hi2.refine): sweeps over the codes that move
+    # one when the Hessian error falls. 0 = off. Skipped for QAD (it retrains the codes) and
+    # with act_order.
+    refine_passes: int = 0
     effort: str = "normal"  # fast | normal | max
     # MoE: an expert that saw fewer than this x its widest input routed tokens tops its
     # statistics (and Hessian) up with the layer average of its projection; 0 = never
@@ -299,7 +303,7 @@ def encode_many(
         factors: dict = {}
         pieces: dict[int, list] = {}
         comps: list = []  # (request, rows, [rows, K] values the codes were rounded from)
-        jobs, where = [], []
+        jobs, where, refine_with = [], [], []
         for ri, (r, (w, inv)) in enumerate(zip(reqs, prepared)):
             shards = ex.shards(r.table.shape[0])
             if i >= len(shards):
@@ -318,9 +322,10 @@ def encode_many(
                         perm = torch.argsort(d, descending=True)
                         hs = hs[perm][:, perm]
                     u = inverse_factor(hs, cfg.damp)
+                    keep = hs if cfg.refine_passes and perm is None else None
                     del hs
-                    factors[fk] = (d, u, perm)
-                d, u, perm = factors[fk]
+                    factors[fk] = (d, u, perm, keep)
+                d, u, perm, hs_keep = factors[fk]
             else:
                 d = _weights(r.stats, k, had, dev, inv)
             out = pieces.setdefault(ri, [])
@@ -331,6 +336,7 @@ def encode_many(
                 if use_gptq[ri]:
                     jobs.append(GptqJob(wt[rows.to(dev)], d, u, nb, b, perm))
                     where.append((ri, rows + lo))
+                    refine_with.append(hs_keep if r.comp_out is None else None)
                     out.append(None)  # placeholder keeps the candidate order
                 else:
                     enc = encode_rows(wt[rows.to(dev)], d, nb, b, cfg.effort)
@@ -343,6 +349,25 @@ def encode_many(
             ri: iter([j for j, p in enumerate(pieces[ri]) if p is None])
             for ri in pieces
         }
+        if any(h is not None for h in refine_with):
+            from .refine import refine_groups
+
+            by_tensor: dict[int, list[int]] = {}
+            for x, (ri, _) in enumerate(where):
+                if refine_with[x] is not None:
+                    by_tensor.setdefault(ri, []).append(x)
+            for (
+                xs
+            ) in by_tensor.values():  # one column loop per tensor, all its candidates
+                new = refine_groups(
+                    [(jobs[x].w, encs[x], jobs[x].nbits, jobs[x].block) for x in xs],
+                    refine_with[xs[0]],
+                    cfg.refine_passes,
+                )
+                for x, codes in zip(xs, new):
+                    encs[x] = type(encs[x])(
+                        codes, encs[x].params, encs[x].consts, encs[x].sse, encs[x].comp
+                    )
         for (ri, rows), enc in zip(where, encs):
             pieces[ri][next(slot[ri])] = (rows, enc.codes, enc.params, enc.consts)
             if reqs[ri].comp_out is not None:

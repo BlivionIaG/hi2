@@ -178,6 +178,14 @@ def main(argv=None):
         help="smoothing exponent alpha (0 = off); needs --calib",
     )
     q.add_argument(
+        "--refine-passes",
+        type=int,
+        default=0,
+        help="sweeps of local code refinement after GPTQ (spec 8.9); 0 = off (default). Two "
+        "sweeps lower the KLD of a PTQ model by 3-13 percent and take about 12 times the "
+        "encode time; they are skipped with QAD, which retrains the codes",
+    )
+    q.add_argument(
         "--smooth-search",
         type=_floats,
         default=None,
@@ -543,6 +551,7 @@ def main(argv=None):
                 rounding=a.rounding,
                 sequential=a.sequential,
                 act_order=a.act_order,
+                refine_passes=a.refine_passes,
                 damp=a.damp,
                 effort=a.effort,
                 expert_min_tokens=a.expert_min_tokens,
