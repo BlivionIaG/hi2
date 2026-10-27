@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bench import tasks as registry  # noqa: E402
-from bench.client import Client, strip_think  # noqa: E402
+from bench.client import Client  # noqa: E402
 
 CHAT_TASKS = ("gsm8k", "humaneval", "mbpp", "ifeval", "toolcall", "decision")
 
