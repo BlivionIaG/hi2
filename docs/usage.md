@@ -47,10 +47,12 @@ a tensor-parallel forward pass.
 
 Do not choose a bit rate. Choose how much error you accept.
 
-* `--max-error-ratio R` (recommended: 6 with QAD, 4 with PTQ only; the default when you
-  set neither option is 4): every row may have at
+* `--max-error-ratio R` (the default when you set neither option: 6 with QAD, 4 with PTQ
+  only; the reasons are in [results.md](results.md#the-default-quality-target)): every row may have at
   most R times the error of its best option. The tool then spends the fewest bits that
   meet this. It reports the bit rate it reached.
+  Rule of thumb from the measurements: ratio 8 saves about 0.2 bpw and costs about 30 %
+  more KLD; ratio 4 costs about 0.27 bpw more and removes about a third of the KLD.
 * `--target-bpw B`: fix the bit rate. The tool spends the bits where they help most.
 * `--max-error-ratio a,b,c`: write one checkpoint per ratio to `<out>-r<ratio>`. The tool
   shares phase 1, the probe, and the encode pass between them.

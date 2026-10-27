@@ -25,7 +25,12 @@ from .checkpoint import (
 from .executor import Executor
 from .moe import expert_parts, expert_weights, group_key, probe_units
 
-DEFAULT_ERROR_RATIO = 4.0  # placeholder until measured (see docs)
+# Quality target when neither --max-error-ratio nor --target-bpw is given. Measured on
+# Qwen3.5-0.8B/4B and OLMoE (docs/results.md): ratio 6 with QAD gives about 3.4-3.5 bpw
+# at 1.02-1.03 x the unquantized perplexity; without QAD the same ratio is 1.075 x, so
+# PTQ-only runs spend more bits (ratio 4, about 3.7 bpw on the 0.8B).
+DEFAULT_ERROR_RATIO = 4.0  # PTQ only
+DEFAULT_ERROR_RATIO_QAD = 6.0  # QAD recovers most of the extra error
 
 
 @dataclass
@@ -761,9 +766,15 @@ def _probe(rc: RunConfig, ex: Executor, tables, weights, log) -> dict | None:
     return sens
 
 
+def default_ratio(rc: RunConfig) -> float:
+    """The quality target of a run that sets neither a ratio nor a bit rate."""
+    return DEFAULT_ERROR_RATIO_QAD if rc.qad is not None else DEFAULT_ERROR_RATIO
+
+
 def _allocate(rc: RunConfig, tables, sens, target_bpw, ratio, log):
     if target_bpw is None:
-        ratio = DEFAULT_ERROR_RATIO if ratio is None else ratio
+        if ratio is None:
+            ratio = default_ratio(rc)
         log(
             f"phase 2: quality allocation over {len(tables)} tensors, "
             f"weighted error <= {ratio:g} x the best achievable"

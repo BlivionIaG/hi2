@@ -193,3 +193,45 @@ QAD adds about 41 minutes (0.8B) and 3.0 to 3.3 hours (4B) on one GPU at the def
 * Smaller models need more bits for the same fidelity; the quality-driven allocation
   (`--max-error-ratio`) adapts bpw to the model, but the ratio itself is not yet tuned and
   is relative to each model's own best achievable error.
+
+## The default quality target
+
+`hi2 quantize` uses `--max-error-ratio 6` when QAD runs and `4` for PTQ only. The ratio is
+relative to the best error each model can reach, so one ratio gives a similar quality on
+every model and a different bit rate.
+
+What the runs say (docs text, unquantized perplexity as the reference):
+
+| Run | bpw | PPL x | KLD | Note |
+| --- | --- | --- | --- | --- |
+| 0.8B, ratio 6, PTQ | 3.43 | 1.153 | 0.138 | mixed calibration |
+| 0.8B, ratio 6, QAD | 3.43 | 1.030 | 0.046 | the default recipe |
+| 0.8B, ratio 4, PTQ | 3.70 | 1.096 | 0.093 | the PTQ-only default |
+| 0.8B, ratio 8, PTQ | 3.23 | 1.200 | 0.177 | 0.2 bpw less, 28 % more KLD than ratio 6 |
+| 4B, ratio 6.2, PTQ | 3.50 | 1.075 | 0.093 | |
+| 4B, ratio 6.2, QAD | 3.50 | 1.017-1.022 | 0.042-0.045 | the default recipe |
+| 4B, 3.0 bpw, QAD | 3.00 | 1.030-1.034 | 0.061-0.068 | |
+| EXL3 3.0 (4B) | 3.0 | 1.052 | n/m | body 1 336 MiB against 1 499 MiB for ratio 6.2 |
+| GGUF Q3_K_M (4B) | 4.27 (file) | 1.066 | 0.100 | file 2 201 MiB against about 3 580 MiB for HI2 with the fp16 embedding |
+
+Why 6 with QAD:
+
+1. **Lower KLD than GGUF at 3 to 4 bits.** At ratio 6 with QAD, the 4B model has a KLD of
+   0.042-0.045. The GGUF types at 4.0-4.3 bits (Q3_K_M, IQ3_M) have 0.100, and Q3_K_S has
+   0.143. The sizes are not like-for-like: GGUF quantizes the embedding, and HI2 keeps it
+   in fp16 (1 220 MiB of the 3 580 MiB file; see `hi2 size`). A fair size comparison needs
+   the GGUF body size, which is not measured yet.
+2. **Between GGUF and EXL3.** The perplexity ratio (1.02) is better than EXL3 3.0
+   (1.052) for 12 % more body bytes. ARC-Easy is level (68.8-70.4 against 69.6).
+   HellaSwag (49.0-50.3 against 51.3) and MMLU (34.5-34.6 against 35.9) stay a little
+   lower. Closing that gap needs about 4 bpw, which is the price of a middle-ground format
+   and of its cheaper decode.
+3. **No knee in the curve.** KLD about doubles for every 0.3-0.5 bpw saved between 2.9 and
+   4.2 bpw. Ratio 6 is a choice of point on that line, not a measured optimum. Ratio 4
+   costs about 8 % more bits for a third less KLD, ratio 8 saves 6 %.
+4. **PTQ alone needs more bits.** Without QAD, ratio 6 gives 1.075 x on the 4B model,
+   worse than EXL3 3.0. The PTQ-only default is 4.
+
+What the default does not cover: OLMoE was measured at ratio 4 (3.54 bpw) and at a 3.0 bpw
+target, not at ratio 6; MoE QAD was not run; the 0.5B model was run only at a 3.0 bpw
+target. Choose another ratio when your quality or size limit differs.

@@ -234,3 +234,14 @@ def test_quality_allocation_unchanged(seed, ratio):
     _same(
         allocate_by_quality(ts, ratio, None), ref_allocate_by_quality(ts, ratio, None)
     )
+
+
+def test_default_quality_target_depends_on_qad():
+    from types import SimpleNamespace
+
+    from hi2.pipeline import DEFAULT_ERROR_RATIO, DEFAULT_ERROR_RATIO_QAD, default_ratio
+
+    assert default_ratio(SimpleNamespace(qad=None)) == DEFAULT_ERROR_RATIO == 4.0
+    assert (
+        default_ratio(SimpleNamespace(qad=object())) == DEFAULT_ERROR_RATIO_QAD == 6.0
+    )

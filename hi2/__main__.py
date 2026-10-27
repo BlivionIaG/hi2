@@ -154,8 +154,9 @@ def main(argv=None):
         default=None,
         help="quality target: the fewest bits whose weighted error is at most this "
         "multiple of the best achievable (rows that matter less get INT2, the rest "
-        "INT4); the bpw is a result. Several values (a,b,c) write one checkpoint per "
-        "ratio to <dst>-r<ratio> from one phase 1, probe and encode pass",
+        "INT4); the bpw is a result. Default 6 with QAD, 4 for PTQ only. Several "
+        "values (a,b,c) write one checkpoint per ratio to <dst>-r<ratio> from one "
+        "phase 1, probe and encode pass",
     )
     q.add_argument(
         "--rotation",
