@@ -38,8 +38,7 @@ Expected cost on one Radeon PRO V620 (gfx1030), model in RAM:
 
 The first trained layer of a run also pays the one-time Triton autotune of the
 linear-attention backward kernels (about 10 minutes on this box, cached afterwards).
-`experiments/run_hi2_model.sh` and `run_hi2_moe.sh` now pass `--no-qad` so the PTQ
-experiment scripts keep their meaning.
+The PTQ studies run with `--no-qad`.
 
 ## What it does
 
@@ -322,10 +321,9 @@ Per layer on 4B, the held-out layer-output error falls by 2 % to 15 % (larger in
 first half of the network); with the absolute latent learning rate the first layers
 (0, 2 at 3.0 bpw; 0, 7 at 3.5 bpw) could not beat the PTQ encoding and kept it.
 
-### Qwen3.5-4B: task accuracy (vLLM harness, `vllm_mc.sh`, `acc`)
+### Qwen3.5-4B: task accuracy (vLLM harness, `mc_eval.py`, `acc`)
 
-Dense fp16 export of each checkpoint (`hi2 export-dense`), served by the fork's vLLM
-(`experiments/chain_mc4b_hi2.sh`). n = 570 / 299 / 2000 / 2000; one standard error is
+Dense fp16 export of each checkpoint (`hi2 export-dense`), served by the fork's vLLM. n = 570 / 299 / 2000 / 2000; one standard error is
 about 1.9 / 2.8 / 1.1 / 1.1 points, differences under two standard errors are not
 claimed.
 
@@ -365,10 +363,9 @@ on 4B exactly (6.2 was run) and PTQ at ratio 4 on 4B with this calibration.
 ## What is not done
 
 * A full-network final phase. `--qad-final-kl STEPS` trains a small set of parameters
-  (the quantized Linears' ladder bytes and the norms) against the logits; it is on with the
-  `default` and `thorough` presets (200 steps) and split layer-wise over the devices when it does not fit one
-  GPU ([lowbit.md](lowbit.md)). A
-  pass that trains everything needs the student, teacher and optimizer state together.
+  (the quantized Linears' ladder bytes and the norms) against the logits; it is opt-in
+  (200 steps is the measured value) and splits the network layer-wise over the devices when
+  it does not fit one GPU ([lowbit.md](lowbit.md)). A pass that trains everything needs the student, teacher and optimizer state together.
 * Training the dense norm weights in the layer-wise phase is available as an option
   (`train_norms` in the QAD config) and is off: it was within seed noise
   ([lowbit.md](lowbit.md)).

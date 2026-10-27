@@ -33,7 +33,7 @@ python -m hi2 quantize $OLMOE out-b3.0 --workdir olmoe.work ... --target-bpw 3.0
 python -m hi2 eval $OLMOE out-r4 --text eval_mix.txt --skip-tokens 0
 ```
 
-`experiments/run_hi2_moe.sh` runs both allocations and the four evaluations on the box.
+Run `hi2 quantize` once per allocation and `hi2 eval` on each result.
 
 ## OLMoE-1B-7B-0924 (measured 2026-10-26)
 
@@ -42,8 +42,7 @@ tool-calling text, 178 x 2048 = 364,544 tokens, the whole file), `--rounding gpt
 (default), smoothing 0.5 + rotation on, `--sensitivity probe --sens-dtype float16`,
 token floor 2 x input width. Evaluation with `hi2 eval` in fp32 on CPU, 8 x 2048
 tokens: `study_text_all.txt` from token 800,000 and `eval_mix.txt` from token 0.
-Checkpoints: `/home/chenco_adm/w4a8_runs/hadamard-int2/runsmoe/olmoe-r4` and
-`.../runsmoe/olmoe-b3.0`.
+Checkpoints: `olmoe-r4` and `olmoe-b3.0`.
 
 | Run | bpw (HI2 tensors) | bpw (whole file) | INT2 / INT4 rows | experts bpw | attention bpw | allocation error ratio |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -222,9 +221,7 @@ lists the stack arrays, and its `metadata.total_size` is recomputed.
 ### OLMoE-1B-7B, restacked (measured 2026-10-26)
 
 `hi2 restack` turned the two checkpoints into
-`/home/chenco_adm/w4a8_runs/hadamard-int2/runsmoe/olmoe-r4-stacked` and
-`.../olmoe-b3.0-stacked`, both without re-encoding (`experiments/restack_olmoe.sh`,
-logs in `.../hadamard-int2/hi2-stack-logs/`).
+`olmoe-r4-stacked` and `olmoe-b3.0-stacked`, both without re-encoding.
 
 | Checkpoint | Layout | Tensors | Safetensors headers | Index file | Shard files |
 | --- | --- | --- | --- | --- | --- |

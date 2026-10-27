@@ -232,9 +232,8 @@ def test_early_stop_and_allotted_steps():
 def test_config_presets_and_layer_spec():
     assert make_config("fast").budget < 1 and make_config("default").budget == 1
     assert make_config("default").steps < make_config("thorough").steps
-    assert make_config("default").final_kl > 0 and make_config("thorough").final_kl > 0
-    assert make_config("fast").final_kl == 0
-    assert make_config("default", {"final_kl": 0}).final_kl == 0
+    assert all(make_config(p).final_kl == 0 for p in ("fast", "default", "thorough"))
+    assert make_config("default", {"final_kl": 200}).final_kl == 200
     assert make_config("default", {"steps": "7", "keep_best": "false"}).steps == 7
     assert make_config("default", {"keep_best": "false"}).keep_best is False
     with pytest.raises(SystemExit):

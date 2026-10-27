@@ -96,8 +96,9 @@ class QadConfig:
     kl_tokens: int = 256
     # Final logit-KL phase after the layer-wise one (hi2.finalkl): final_kl optimizer steps
     # of KL(teacher || student) over the whole network, training only the per-block ladder
-    # bytes and the RMSNorm weights (codes frozen); 0 = off. The presets set it (default and
-    # thorough: on); the network is split layer-wise over the devices, and the phase is skipped with a note if it still does not fit.
+    # bytes and the RMSNorm weights (codes frozen); 0 = off (opt-in; 200 is the
+    # Qwen3.5-4B study value). The network is split layer-wise over the devices, and the phase is
+    # skipped with a note if it still does not fit.
     final_kl: int = 0
     final_batch: int = 2  # sequences per step
     # ladder bytes, in 8-bit levels per step: 0.02 is the Qwen3.5-4B value (0.05 was best on
@@ -118,11 +119,10 @@ FINAL_FIELDS = {f for f in QadConfig.__dataclass_fields__ if f.startswith("final
 # Chosen on Qwen3.5-0.8B at 3.0 bpw (docs/qad.md); everything else default.
 # fast = half the steps spent where layers still gain, with early stopping (better than a
 # uniform 100 steps at the same time); no reduced budget stayed within noise of default.
-FINAL_KL_STEPS = 200  # the Qwen3.5-4B study value (docs/lowbit.md)
 PRESETS: dict[str, dict] = {
     "fast": dict(budget=0.5, min_gain=0.01, min_steps=75, eval_every=50),
-    "default": dict(final_kl=FINAL_KL_STEPS),
-    "thorough": dict(steps=600, batch=8, samples=512, final_kl=FINAL_KL_STEPS),
+    "default": dict(),
+    "thorough": dict(steps=600, batch=8, samples=512),
 }
 
 

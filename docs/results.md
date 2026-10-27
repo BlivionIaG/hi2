@@ -94,7 +94,7 @@ multiple-choice scores do not (different harnesses).
 At equal body bytes, HI2 with QAD has less than half the KLD of the GGUF types around 3.5
 bpw. HI2 3.5 reaches the KLD of IQ4_XS (0.041) with 21 % fewer body bytes. HI2 3.0 with QAD
 (about 1 290 MiB) beats every GGUF type up to Q3_K_M (1 646 MiB) on KLD. The GGUF rows use
-the quantization settings of `experiments/gguf_suite.sh` with an importance matrix.
+llama.cpp quantization with an importance matrix.
 
 ## Smaller models are more sensitive (same PTQ recipe, about 3.0 to 3.5 bpw)
 

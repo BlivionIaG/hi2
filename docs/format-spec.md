@@ -695,7 +695,7 @@ GPTQ-compensated error does, because GPTQ already absorbs much of what the expon
 trades. Choosing by the compensated error needs a Hessian-based encode per exponent, about 4
 times the encode cost for a gain the earlier sweeps say is small; it was not tried. The
 option stays in the tool for that follow-up and is off by default. Raw numbers:
-`experiments/results/smooth_search_2026-10-27.json`, driver `experiments/smooth_study.sh`.
+`experiments/results/smooth_search_2026-10-27.json`; the study runs `hi2 quantize --smooth-search` against the single exponent.
 
 ### 8.6 Allocation (technique 3 and 7)
 
@@ -773,7 +773,7 @@ tokens, so the lower objective does carry through to the output.
 **In the pipeline.** `--refine-passes N` (`hi2.refine`) runs N sweeps after GPTQ for every
 tensor, in blocks of 128 columns, with all candidate groups of a tensor in one column loop.
 Model level, PTQ with GPTQ and the sensitivity probe, mixed calibration, held-out docs and mix
-text, two sweeps against none (`experiments/refine_model_study.sh`):
+text, two sweeps against none (`hi2 quantize` with `--refine-passes 0` and `2`, then `hi2 eval`):
 
 | Model | bpw | Perplexity ratio, docs | Perplexity ratio, mix | KLD, docs / mix | Encode time |
 | --- | --- | --- | --- | --- | --- |
@@ -881,8 +881,7 @@ Every technique is judged on the same measurements as section 4.5:
 The widths stay INT2 and INT4. The question is what the EXL3 trellis codebook (QTIP) can
 teach those two paths. Facts below are from the fork's EXL3 kernels
 (`csrc/rocm/exl3_dot2_*.cuh`, which already decode them on gfx1030), the conversion plan
-printed by upstream exllamav3 1.6.4 (built for gfx1030 in a scratch directory,
-`experiments/exl3_build.sh`) and the checkpoints on the benchmark box.
+printed by upstream exllamav3 1.6.4 (built for gfx1030 in a scratch directory) and the checkpoints on the benchmark box.
 
 ### 11.1 What the EXL3 format is
 

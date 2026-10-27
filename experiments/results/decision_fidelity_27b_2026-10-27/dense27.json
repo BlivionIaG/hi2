@@ -1,5 +1,5 @@
 {
- "model": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.8-27B/snapshots/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+ "model": "hf-cache/models--Qwen--Qwen3.8-27B/snapshots/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
  "n": 66,
  "rows": [
   {

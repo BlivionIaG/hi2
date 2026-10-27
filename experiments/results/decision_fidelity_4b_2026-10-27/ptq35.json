@@ -1,5 +1,5 @@
 {
- "model": "/home/chenco_adm/w4a8_runs/hadamard-int2/runs4b/q4b-ptq-b3.5",
+ "model": "runs4b/q4b-ptq-b3.5",
  "n": 66,
  "rows": [
   {

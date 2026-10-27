@@ -55,8 +55,7 @@ The kernel is compiled on first use with `torch.utils.cpp_extension` (hipcc, abo
 
 ## The cache
 
-`--cache-dir` (default `$HI2_CACHE_DIR`, else `~/.cache/hi2`; on the box
-`/home/chenco_adm/.cache/hi2`), `--no-cache` for the old workdir-only layout. Three
+`--cache-dir` (default `$HI2_CACHE_DIR`, else `~/.cache/hi2`), `--no-cache` for the old workdir-only layout. Three
 kinds of entries, each `<root>/<kind>/<digest>/` with its full key in `key.json`:
 
 | Kind | Holds | Key (digest of) |
@@ -261,12 +260,7 @@ gave identical tables but were 1.7-1.9x slower than tensor by tensor (64 OLMoE e
 
 ## Reproduce
 
-`experiments/chain_fast.sh <jobs>` runs the jobs above on the box, each on an
-idle, unlocked GPU of ours (`free_gpu.sh`, `fast_ptq.sh`, `fast_run.sh` with an atomic
-`hifast.gpuN.lock`): `n08`, `n08warm`, `n08c2` (0.8B cold, warm, second cold), `o08`
-and `o4b` (the base branch's code, copied to `hi2-fast-base/`), `n4b`, `moe`, the
-studies `n08s4`, `n08s2`, `n08b8`, `n08lean`, `n08f16`, `n08multi`, and `gputests` /
-`chk` (kernel tests on the GPU, re-tabulation check). `profile_encode.py`,
+The runs above are plain `hi2 quantize` invocations on the 0.8B and 4B models and an OLMoE model, cold and warm cache, with the options named in the tables. `profile_encode.py`,
 `profile_new.py` and `profile_probe.py` are the profilers. Raw numbers:
 `experiments/results/hi2_speed_runs_2026-10-26.json`,
 `hi2_speed_profile_4b_2026-10-26.json` and `hi2_candidate_usage_2026-10-26.json`.
