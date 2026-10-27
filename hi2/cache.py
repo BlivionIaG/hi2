@@ -79,7 +79,7 @@ def stats_key(rc, ids: torch.Tensor, devices) -> dict:
         "samples_x_len": list(ids.shape),
         "compute_dtype": rc.compute_dtype,
         "device_kind": sorted({d.type for d in devices}),
-        "n_devices": len(devices),
+        "n_devices": rc.cache_devices or len(devices),
         "include": rc.include,
         "exclude": rc.exclude,
         "limit_layers": rc.limit_layers,
@@ -119,7 +119,7 @@ def probe_key(tkey: dict, rc, probe_ids: torch.Tensor, ref_candidate) -> dict:
         "share_floor": rc.expert_share_floor,
         "ref_candidate": list(ref_candidate),
         "effort": rc.cfg.effort,
-        "devices": len(rc.devices),
+        "devices": rc.cache_devices or len(rc.devices),
         "batch": rc.sens_batch,
     }
 

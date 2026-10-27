@@ -39,6 +39,10 @@ class RunConfig:
     dst: Path
     workdir: Path
     devices: list[str] = field(default_factory=lambda: ["cpu"])
+    # cache keys record this many devices instead of len(devices): reuse the statistics and
+    # the probe that a run on N devices made, on fewer devices (the QAD phase of a model whose
+    # probe needed several devices); 0 = the real count
+    cache_devices: int = 0
     calib: Path | None = None  # None = data-free (unless calib_ids is given)
     calib_ids: torch.Tensor | None = None  # [samples, seq_len], skips tokenising
     calib_samples: int = 128

@@ -342,3 +342,39 @@ def test_sigma_fp16_storage_is_opt_in(tmp_path):
     assert torch.equal(got, s.half().float())
     _save_sigma(tmp_path, "b.weight", s, 400, fp16_above=80)  # K not above: fp32
     assert torch.equal(C.load_sigma(tmp_path / "b.weight.pt"), s)
+
+
+def test_cache_keys_can_record_another_device_count(monkeypatch):
+    from types import SimpleNamespace
+
+    import torch
+
+    from hi2.cache import probe_key, stats_key
+
+    cpu = torch.device("cpu")
+    rc = SimpleNamespace(
+        src=".",
+        calib=".",
+        compute_dtype="float32",
+        include=None,
+        exclude="x",
+        limit_layers=None,
+        cfg=SimpleNamespace(expert_min_tokens=2.0, effort="normal"),
+        sigma_fp16_above=0,
+        devices=["cpu"],
+        cache_devices=0,
+        sens_floor=0.05,
+        sens_dtype="float32",
+        expert_share_floor=0.05,
+        sens_batch=1,
+    )
+    ids = torch.zeros(2, 4, dtype=torch.long)
+    import hi2.cache as C
+
+    monkeypatch.setattr(C, "model_fingerprint", lambda src: "m")
+    one = stats_key(rc, ids, [cpu])
+    four = stats_key(rc, ids, [cpu] * 4)
+    assert one["n_devices"] == 1 and four["n_devices"] == 4
+    rc.cache_devices = 4
+    assert stats_key(rc, ids, [cpu])["n_devices"] == 4
+    assert probe_key({"a": 1}, rc, ids, (2, 32))["devices"] == 4

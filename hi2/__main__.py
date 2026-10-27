@@ -129,6 +129,13 @@ def main(argv=None):
         "shard each tensor's rows",
     )
     q.add_argument(
+        "--cache-devices",
+        type=int,
+        default=0,
+        help="reuse cached statistics and probe made on this many devices, on fewer devices "
+        "(0 = the real count); the results of the cached phases are those of N devices",
+    )
+    q.add_argument(
         "--calib",
         default=None,
         help=".txt or .jsonl calibration text (several: comma-separated, concatenated "
@@ -505,6 +512,7 @@ def main(argv=None):
             dst=a.dst,
             workdir=a.workdir or Path(str(a.dst) + ".work"),
             devices=resolve_devices(a.devices),
+            cache_devices=a.cache_devices,
             calib=[Path(p) for p in a.calib.split(",") if p] if a.calib else None,
             qad=qc,
             calib_samples=a.calib_samples,
