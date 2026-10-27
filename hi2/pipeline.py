@@ -162,6 +162,7 @@ def _phase1_key(rc: RunConfig) -> dict:
         "candidates": [list(x) for x in c.candidates],
         "rotation": c.rotation,
         "smooth": c.smooth,
+        **({"smooth_search": list(c.smooth_search)} if c.smooth_search else {}),
         "rounding": c.rounding,
         "sequential": c.sequential,
         "effort": c.effort,
@@ -907,6 +908,11 @@ def run(rc: RunConfig, log=print) -> dict:
             "rounding": rc.cfg.rounding,
             "sequential": rc.cfg.sequential,
             "smooth": rc.cfg.smooth,
+            **(
+                {"smooth_search": list(rc.cfg.smooth_search)}
+                if rc.cfg.smooth_search
+                else {}
+            ),
             "rotation": rc.cfg.rotation,
             "calib_tokens": rc.calib_samples * rc.seq_len if calibrated else 0,
         }

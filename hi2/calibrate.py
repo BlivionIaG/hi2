@@ -45,6 +45,10 @@ class Config:
     # Smoothing exponent alpha: s = (E[x^2] / geomean) ** (alpha / 2), W -> W * s,
     # x -> x / s before the rotation. 0 disables it; needs calibration statistics.
     smooth: float = 0.5
+    # Per-tensor exponent (spec 8.5): when set, every tensor, or group of tensors that share
+    # an input (q/k/v, gate/up), keeps the exponent of this set (and ``smooth``) with the
+    # lowest weighted INT2/B32 error. Empty = the single exponent ``smooth``.
+    smooth_search: tuple[float, ...] = ()
     # gptq | nearest. gptq (spec 8.3) is Hessian-aware error-compensated rounding:
     # on Qwen3.5-0.8B at 3.0 bpw it takes the perplexity ratio from 1.92 to 1.32. It
     # needs calibration data; data-free runs use nearest rounding.
@@ -148,18 +152,56 @@ def _chunk_errors(wt, d, enc, nbits, block) -> torch.Tensor:
     return (db * (rec - wb) ** 2).sum((0, 2))
 
 
-def shared_transform(
-    ws: list[torch.Tensor], stats: ColumnStats | None, cfg: Config, ex: Executor
+def _fixed_transform(
+    ws: list[torch.Tensor], stats: ColumnStats | None, cfg: Config, ex: Executor, alpha
 ) -> tuple[torch.Tensor | None, torch.Tensor]:
-    """``(smoothing vector, rotation flags)`` for Linears that receive the same input
-    (q, k, v; gate, up): one ``s`` from the shared statistics and one set of flags
-    chosen on their rows together, so the runtime transform of the input is one."""
-    s16 = smoothing_scale(stats, cfg.smooth)
+    s16 = smoothing_scale(stats, alpha)
     if cfg.rotation != "auto":
         return s16, choose_rotation(ws[0], stats, cfg, ex.primary)
     cat = torch.cat([_smoothed(w, s16)[0] for w in ws])
     inv = None if s16 is None else 1.0 / s16.float()
     return s16, choose_rotation(cat, stats, cfg, ex.primary, inv)
+
+
+def transform_error(
+    ws: list[torch.Tensor],
+    stats: ColumnStats,
+    s16: torch.Tensor | None,
+    had: torch.Tensor,
+    ex: Executor,
+) -> float:
+    """Weighted INT2/B32 error of ``ws`` under one transform, relative to their weighted
+    energy (the reference candidate of the sensitivity probe). A sample of the rows."""
+    dev = ex.primary
+    inv = None if s16 is None else 1.0 / s16.float()
+    sse = energy = 0.0
+    for w in ws:
+        idx = torch.arange(0, w.shape[0], max(1, w.shape[0] // ROTATION_ROWS))
+        wt = _smoothed(w[idx[:ROTATION_ROWS]], s16)[0].to(dev, torch.float32)
+        if had.any():
+            wt = fwht_groups(wt, had)
+        d = _weights(stats, w.shape[1], had, dev, inv)
+        sse += float(encode_rows(wt, d, 2, 32, "fast").sse.sum())
+        energy += float((d * wt**2).sum())
+    return sse / max(energy, 1e-30)
+
+
+def shared_transform(
+    ws: list[torch.Tensor], stats: ColumnStats | None, cfg: Config, ex: Executor
+) -> tuple[torch.Tensor | None, torch.Tensor]:
+    """``(smoothing vector, rotation flags)`` for Linears that receive the same input
+    (q, k, v; gate, up): one ``s`` from the shared statistics and one set of flags
+    chosen on their rows together, so the runtime transform of the input is one. With
+    ``cfg.smooth_search`` the exponent of ``s`` is chosen from that set (spec 8.5)."""
+    if not cfg.smooth_search or stats is None or stats.n == 0:
+        return _fixed_transform(ws, stats, cfg, ex, cfg.smooth)
+    best = None
+    for alpha in dict.fromkeys((cfg.smooth, *cfg.smooth_search)):
+        s16, had = _fixed_transform(ws, stats, cfg, ex, alpha)
+        err = transform_error(ws, stats, s16, had, ex)
+        if best is None or err < best[0]:
+            best = (err, s16, had)
+    return best[1], best[2]
 
 
 def build_table(
@@ -174,6 +216,8 @@ def build_table(
     """``transform`` = ``(s, had)`` imposed by :func:`shared_transform`; ``n_tokens``
     overrides the reported token count (a borrowed-statistics expert reports its own)."""
     r, k = w.shape
+    if transform is None and cfg.smooth_search:
+        transform = shared_transform([w], stats, cfg, ex)
     if transform is None:
         s16 = smoothing_scale(stats, cfg.smooth)
         w, inv = _smoothed(w, s16)

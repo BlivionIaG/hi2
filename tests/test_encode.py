@@ -156,3 +156,46 @@ def test_quality_allocation_puts_int2_where_it_matters_less_and_is_monotone():
     }
     assert share["easy"] >= share["hard"]
     assert not allocate_by_quality([easy, hard], 0.5, sens).feasible
+
+
+def test_smooth_search_keeps_the_lowest_error_exponent():
+    from hi2.calibrate import (
+        Config,
+        build_table,
+        shared_transform,
+        smoothing_scale,
+        transform_error,
+    )
+    from hi2.executor import Executor
+
+    torch.manual_seed(5)
+    k, r = 128, 96
+    x = torch.randn(600, k) * torch.exp(
+        torch.randn(k)
+    )  # channels of very unequal scale
+    st = ColumnStats(k)
+    st.update(x)
+    w = torch.randn(r, k) * 0.3
+    ex = Executor(["cpu"])
+    alphas = (0.25, 0.5, 0.75, 1.0)
+    cfg = Config(rotation="on", smooth=0.5, smooth_search=alphas)
+    s16, had = shared_transform([w], st, cfg, ex)
+    errs = {
+        a: transform_error(
+            [w], st, smoothing_scale(st, a), torch.ones(k // 16, dtype=torch.uint8), ex
+        )
+        for a in alphas
+    }
+    chosen = next(a for a in alphas if torch.equal(smoothing_scale(st, a), s16))
+    assert errs[chosen] == min(errs.values())
+    # one exponent in the set reproduces the single-exponent path
+    one = Config(rotation="on", smooth=0.5, smooth_search=(0.5,))
+    base = Config(rotation="on", smooth=0.5)
+    t1 = build_table("t", w, st, one, ex)
+    t0 = build_table("t", w, st, base, ex)
+    assert torch.equal(t1.col_scale, t0.col_scale) and torch.equal(t1.sse, t0.sse)
+    # a searched tensor stores its own vector, and the cache key tells the settings apart
+    from hi2.cache import tables_key
+
+    assert tables_key({"a": 1}, cfg) != tables_key({"a": 1}, base)
+    assert tables_key({"a": 1}, base) == tables_key({"a": 1}, Config(smooth=0.5))

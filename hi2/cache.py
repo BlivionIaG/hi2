@@ -104,6 +104,7 @@ def tables_key(skey: dict, cfg) -> dict:
         "rotation": cfg.rotation,
         "smooth": cfg.smooth,
         "effort": cfg.effort,
+        **({"smooth_search": list(cfg.smooth_search)} if cfg.smooth_search else {}),
     }
 
 

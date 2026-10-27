@@ -171,6 +171,13 @@ def main(argv=None):
         help="smoothing exponent alpha (0 = off); needs --calib",
     )
     q.add_argument(
+        "--smooth-search",
+        type=_floats,
+        default=None,
+        help="per-tensor smoothing exponent (spec 8.5): try these values (a,b,c) and "
+        "--smooth for every tensor or shared input and keep the lowest-error one",
+    )
+    q.add_argument(
         "--rounding",
         choices=("gptq", "nearest"),
         default="gptq",
@@ -524,6 +531,7 @@ def main(argv=None):
                 candidates=cands,
                 rotation=a.rotation,
                 smooth=a.smooth,
+                smooth_search=tuple(a.smooth_search or ()),
                 rounding=a.rounding,
                 sequential=a.sequential,
                 act_order=a.act_order,
