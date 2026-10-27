@@ -65,6 +65,7 @@ Fixed sequences of runs for one question.
 | `candidate_usage.py` | Which (bits, block) candidates does the allocator use? |
 | `smooth_study.sh` | Does a per-tensor smoothing exponent help? No: worse in 7 of 8 cells (spec 8.5). |
 | `refine_study.py` | How much does coordinate descent on the codes gain over GPTQ? 6-9 % of the objective (spec 8.9). |
+| `refine_cost.py`, `refine_model_study.sh` | What `--refine-passes` costs (seconds per sweep against the GPTQ encode) and what two sweeps gain on whole models (spec 8.9). |
 
 ## Calibration text
 
