@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the hi2 project
-"""``hi2 quantize|verify|eval|export-dense|restack|size|cache`` (or ``python -m hi2``).
+"""``hi2 quantize|verify|eval|export-dense|restack|size|calib|cache`` (or ``python -m hi2``).
 
 ``quantize`` runs layer-wise quantization-aware distillation after PTQ by default when
 calibration text is given (``--no-qad`` for PTQ only).
@@ -389,6 +389,37 @@ def main(argv=None):
     z.add_argument("--by", choices=("kind", "layer", "tensor"), default="kind")
     z.add_argument("--top", type=int, default=20, help="rows of the breakdown table")
     z.add_argument("--json", action="store_true", help="print the report as JSON")
+    k = sub.add_parser(
+        "calib", help="build a mixed-domain calibration text (and a held-out text)"
+    )
+    k.add_argument("out", type=Path, help="calibration text to write")
+    k.add_argument(
+        "sources",
+        nargs="+",
+        help="SRC or SRC:WEIGHT; .txt, or .json/.jsonl with text or chat records",
+    )
+    k.add_argument(
+        "--tokens",
+        type=int,
+        default=540_672,
+        help="size of the text; the default covers QAD (264 x 2048)",
+    )
+    k.add_argument(
+        "--tokenizer",
+        type=Path,
+        default=None,
+        help="model directory whose tokenizer counts tokens (default: 4 characters each)",
+    )
+    k.add_argument("--holdout", type=Path, default=None, help="held-out text to write")
+    k.add_argument(
+        "--holdout-tokens", type=int, default=200_000, help="size of the held-out text"
+    )
+    k.add_argument(
+        "--holdout-share",
+        type=float,
+        default=0.2,
+        help="share of each source's documents kept out of the calibration text",
+    )
     c = sub.add_parser("cache", help="list, size or prune the persistent cache")
     c.add_argument("action", choices=("list", "size", "prune"))
     c.add_argument("--cache-dir", type=Path, default=None)
@@ -397,6 +428,28 @@ def main(argv=None):
     c.add_argument("--digest", action="append", default=None, help="remove this entry")
     c.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "calib":
+        from .calib import build_mix, parse_source
+
+        count = None
+        if a.tokenizer is not None:
+            from transformers import AutoTokenizer
+
+            tok = AutoTokenizer.from_pretrained(a.tokenizer)
+            count = lambda t: len(tok(t, add_special_tokens=False)["input_ids"])  # noqa: E731
+        share = a.holdout_share if a.holdout is not None else 0.0
+        text, held, rep = build_mix(
+            [parse_source(x) for x in a.sources],
+            a.tokens,
+            count,
+            share,
+            a.holdout_tokens,
+        )
+        a.out.write_text(text)
+        if a.holdout is not None:
+            a.holdout.write_text(held)
+        print(json.dumps(rep, indent=2))
+        return
     if a.cmd == "size":
         from .size import format_report, size_report
 

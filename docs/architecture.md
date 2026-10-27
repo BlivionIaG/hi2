@@ -95,6 +95,7 @@ phase (`--qad-final-kl`) trains a few parameters against the full logits.
 | `executor.py` | Compute placement on one or more devices. |
 | `evalq.py` | Perplexity, KLD, and top-1 agreement on held-out text. |
 | `size.py` | Byte accounting of a checkpoint (`hi2 size`). |
+| `calib.py` | Mixed-domain calibration text (`hi2 calib`). |
 
 ## What the cache holds
 

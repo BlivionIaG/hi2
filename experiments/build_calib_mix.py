@@ -1,8 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the hi2 project
-
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Build a mixed-domain calibration text and a disjoint held-out text from datasets already in the
 HF cache (chat, instructions, tool calling) plus a slice of the repo-docs corpus.
 usage: build_calib_mix.py <docs_text> <out_calib> <out_eval>

@@ -28,6 +28,7 @@ hi2 quantize  <hf_model_dir> <out_dir> --calib calib.txt          # PTQ + QAD
 hi2 verify    <hf_model_dir> <out_dir>                            # reload and compare
 hi2 eval      <hf_model_dir> <out_dir> --text heldout.txt         # ppl, KLD, top-1
 hi2 size      <out_dir> --src <hf_model_dir>                      # where the bytes go
+hi2 calib     calib.txt docs.txt:2 chat.jsonl:1 --holdout heldout.txt   # mixed-domain text
 ```
 
 `python -m hi2 ...` works too. The default run does PTQ and then QAD (quantization-aware

@@ -12,6 +12,7 @@ behind the defaults, read [results.md](results.md) and [design-notes.md](design-
 | `eval SRC DST --text T --skip-tokens N` | Measure perplexity of both models, KL(original to quantized), and top-1 agreement on held-out text. |
 | `export-dense SRC DST OUT` | Write the dequantized model as a plain fp16 Hugging Face directory. Use it to score the model in llama.cpp. |
 | `restack CKPT OUT --layout stacked\|per-expert` | Convert the expert layout of an MoE checkpoint without re-encoding. |
+| `calib OUT SRC[:WEIGHT] ... [--tokens N] [--holdout PATH]` | Build a mixed-domain calibration text. See "Calibration text". |
 | `size DST [--src SRC] [--by kind\|layer\|tensor] [--top N] [--json]` | Show where the bytes of a checkpoint go. See "Checking the size". |
 | `cache list\|size\|prune` | Manage the persistent cache. |
 
@@ -20,12 +21,34 @@ numerically. It is not a kernel test.
 
 ## Calibration text
 
-Calibration needs `--calib-samples` sequences of `--seq-len` tokens. Use text from the
-domain of your model. A concatenated multi-domain file works well: QAD draws random
-windows from the whole file. `experiments/build_calib_mix.py` shows how the study text was
-built.
+Calibration needs `--calib-samples` sequences of `--seq-len` tokens. QAD needs more: 264
+sequences of 2048 tokens, which is 540 672 tokens. Use text from the domain of your model.
 
-Evaluate on text that is not in the calibration region. Use `--skip-tokens` to skip it.
+The domain mix matters. A model calibrated only on documentation text had about 3 times the
+KLD on chat and tool-calling text. PTQ reads the first tokens of the file and QAD draws
+windows from all of it, so the domains must be mixed through the whole file. A file that
+holds one domain after the other fails that rule. `hi2 calib` builds a file that follows it:
+
+```bash
+hi2 calib calib.txt docs.txt:2 chat.jsonl:1 tools.json:1 --holdout heldout.txt \
+    --tokenizer Qwen3.5-4B
+```
+
+* A source is a `.txt` file (blocks separated by blank lines), or a `.json` or `.jsonl` file
+  whose records have `text`, or chat turns in `messages` or `conversations`.
+* `:WEIGHT` sets the share of each source (default 1). The tool interleaves the documents by
+  token share, so every stretch of the file has every domain.
+* `--tokens` sets the size (default 540 672). The tool warns when the sources are smaller.
+* `--tokenizer` counts real tokens. Without it, 4 characters count as one token.
+* `--holdout` writes a second text from documents that the calibration text does not contain
+  (20 % of each source; `--holdout-share` changes this), with the same mix, up to
+  `--holdout-tokens` (default 200 000). Pass it to `hi2 eval --text`.
+
+`experiments/build_calib_mix.py` is the script that built the study texts from datasets in the
+Hugging Face cache.
+
+Evaluate on text that is not in the calibration region. Use `--skip-tokens` to skip it, or the
+held-out text from `hi2 calib`.
 
 Without `--calib`, the tool runs data-free: all column weights are 1, rounding is
 nearest, and the model is not loaded. QAD is skipped with a warning.
