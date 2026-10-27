@@ -1,0 +1,18 @@
+seq 1/8
+seq 2/8
+seq 3/8
+seq 4/8
+seq 5/8
+seq 6/8
+seq 7/8
+seq 8/8
+{
+  "tokens": 16376,
+  "ppl_original": 4.106898784637451,
+  "ppl_quantized": 4.2822089195251465,
+  "kld_nats_per_token": 0.09007580081136506,
+  "top1_agreement": 0.8881289692232536,
+  "ear": 0.901456690323778,
+  "lossless": false,
+  "dtype": "float16"
+}

@@ -337,14 +337,24 @@ Read this as follows.
 2. **QAD helps on the decisions.** It matches BF16's first decision on 12 points more prompts
    than PTQ (the intervals overlap; by stage QAD is ahead in four of six, level in one, behind in one) and makes more
    well-formed calls. On docs perplexity the gain is small (x 1.043 against x 1.049).
-3. **The mix perplexity is not a fidelity measure here.** The PTQ model scores below BF16
-   (x 0.937) on that text, so a ratio near 1 does not mean the same distribution. There is no
-   KLD at this size: the BF16 model does not fit one GPU in fp32, which `hi2 eval` needs.
+3. **KLD against BF16 (fp16 evaluation split over four GPUs, `hi2 eval --device
+   cuda:0,cuda:1,cuda:2,cuda:3 --dtype float16`, 8 x 2048 held-out tokens):**
+
+   | | PTQ | PTQ + QAD |
+   | --- | ---: | ---: |
+   | Docs: KLD / top-1 / EAR | 0.0975 / 88.1 % / 0.894 | **0.0901** / **88.8 %** / **0.901** |
+   | Mix: KLD / top-1 / EAR | **0.2171** / **86.6 %** / **0.873** | 0.2947 / 85.3 % / 0.863 |
+
+   The mix perplexity alone misleads: the PTQ model scores below BF16 (x 0.937) on that text,
+   so a ratio near 1 does not mean the same distribution. The KLD shows what the perplexity
+   hides: **QAD improves the docs text slightly and makes the mix text worse** (KLD +36 %).
+   The `fast` QAD run did not generalise across domains on the 27B, even though its
+   first-tool agreement is higher. Raw results: `experiments/results/kld_27b_2026-10-27/`.
 4. **QAD gained little per layer.** The `fast` preset spent 6 619 of 19 200 steps (7.2 h on one
    V620) and early-stopped at a median held-out layer-error gain of 1.5 % (layer 0: 24 %),
    against 15 to 38 % on the 0.8B. With bf16 hidden-state buffers (the fp32 ones need 41 GiB of
    RAM) it is likely undertrained rather than limited; the default preset (three times the steps)
-   was not run.
+   was not run. Given point 3, a rerun should be judged on the mix KLD as well as the decisions.
 
 Decisions and perplexities per run: `experiments/results/decision_fidelity_27b_2026-10-27/`
 (the harness is `experiments/decision_fidelity.sh`). Not measured: the multiple-choice tasks,
