@@ -284,3 +284,23 @@ def test_int8_force_rule_puts_the_most_sensitive_tensors_on_int8(tiny, tmp_path)
             assert nb == {8}
         else:
             assert 8 not in nb
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="needs two GPUs for the layer-wise split"
+)
+def test_final_kl_splits_the_network_over_two_devices(tiny, tmp_path):
+    from hi2.pipeline import run
+
+    kw = dict(qad={"final_kl": 4, "final_lr_p": 0.5})
+    one = _rc(tiny, tmp_path, "one", devices=["cuda:0"], **kw)
+    two = _rc(tiny, tmp_path, "two", devices=["cuda:0", "cuda:1"], **kw)
+    for rc in (one, two):
+        run(rc, log=lambda *_: None)
+    i1 = json.loads((one.workdir / "final_kl.json").read_text())
+    i2 = json.loads((two.workdir / "final_kl.json").read_text())
+    assert i2["val_after"] <= i2["val_before"]
+    assert i2["val_before"] == pytest.approx(i1["val_before"], rel=1e-2)
+    a, b = _hi2(one.dst), _hi2(two.dst)
+    for k in a:
+        assert torch.equal(a[k].codes, b[k].codes)

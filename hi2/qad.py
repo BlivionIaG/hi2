@@ -97,7 +97,7 @@ class QadConfig:
     # Final logit-KL phase after the layer-wise one (hi2.finalkl): final_kl optimizer steps
     # of KL(teacher || student) over the whole network, training only the per-block ladder
     # bytes and the RMSNorm weights (codes frozen); 0 = off. The presets set it (default and
-    # thorough: on); a model whose student does not fit one GPU skips the phase with a note.
+    # thorough: on); the network is split layer-wise over the devices, and the phase is skipped with a note if it still does not fit.
     final_kl: int = 0
     final_batch: int = 2  # sequences per step
     # ladder bytes, in 8-bit levels per step: 0.02 is the Qwen3.5-4B value (0.05 was best on

@@ -357,8 +357,8 @@ def main(argv=None):
         metavar="STEPS",
         help="after layer-wise QAD, STEPS optimizer steps of whole-network logit KL "
         "training the ladder bytes and norm weights only (default 200 with the default "
-        "and thorough presets, 0 with fast; skipped when the student does not fit "
-        "one GPU; 0 turns it off; docs/lowbit.md)",
+        "and thorough presets, 0 with fast; split over the devices when it does not fit one GPU; "
+        "skipped if it still does not fit; 0 turns it off; docs/lowbit.md)",
     )
     for flag, typ in (
         ("--qad-kl-layers", int),

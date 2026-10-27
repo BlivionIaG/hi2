@@ -225,25 +225,39 @@ def final_kl(
     tensors: dict[str, HI2Tensor],
     dense: dict[str, torch.Tensor],
     qc,
-    dev: torch.device,
+    devs: torch.device | list[torch.device],
     resolve,
     log=print,
 ) -> tuple[dict, dict, dict]:
     """Train ladder bytes and norm weights of the whole student for ``qc.final_kl``
     steps; returns ``(tensors, dense, info)`` with the kept state (``tensors`` and
     ``dense`` updated copies of the inputs). ``model`` is the unquantized model (in RAM);
-    it is modified in place (its quantized Linears become :class:`LadderLinear`)."""
+    it is modified in place (its quantized Linears become :class:`LadderLinear`). With
+    several ``devs`` the teacher and the student are split layer-wise over them
+    (:func:`hi2.sensitivity.shard_layers`), so models larger than one GPU train too."""
     from .layerwise import find_layers
+    from .sensitivity import shard_layers
+
+    devs = [devs] if isinstance(devs, torch.device) else list(devs)
+    dev, last = devs[0], devs[-1]
+
+    def place():
+        if len(devs) == 1:
+            model.to(dev)
+            return []
+        return shard_layers(model, devs)
 
     t0 = time.time()
     torch.manual_seed(qc.seed)
     lm = model.get_output_embeddings()
     # 1. teacher: the LM head's input on every window (unquantized model, on the GPU)
-    model.to(dev)
+    hooks = place()
     teach = {}
     with torch.no_grad():
         for i in sorted(set(train_idx) | set(val_idx)):
             teach[i] = _head_input(model, ids[i : i + 1].to(dev)).float().cpu()
+    for h in hooks:
+        h.remove()
     model.cpu()
     t_teacher = time.time() - t0
     # 2. student: quantized Linears -> LadderLinear, norms from the layer-wise phase
@@ -276,7 +290,8 @@ def final_kl(
             p.data = p.data.float()
             p.requires_grad_(True)
         groups.append({"params": list(norms.values()), "lr": qc.final_lr_norm})
-    model.to(dev).eval()
+    place()
+    model.eval()
     _, layers = find_layers(model)
     opt = torch.optim.AdamW(groups, weight_decay=0.0)
     steps = qc.final_kl
@@ -305,20 +320,21 @@ def final_kl(
     def positions():
         if k_tok >= n_tok:
             return None
-        return torch.randperm(n_tok, generator=gen)[:k_tok].sort().values.to(dev)
+        return torch.randperm(n_tok, generator=gen)[:k_tok].sort().values.to(last)
 
     @torch.no_grad()
     def val_kl() -> float:
         tot = 0.0
         for i in val_idx:
             hs = _head_input(model, ids[i : i + 1].to(dev)).float()
-            tot += _kl_loss(lm, hs, teach[i].to(dev), None, grad=False)
+            tot += _kl_loss(lm, hs, teach[i].to(last), None, grad=False)
         return tot / max(len(val_idx), 1)
 
     acc = getattr(torch, "accelerator", None)
     on_gpu = dev.type != "cpu" and acc is not None
     if on_gpu:
-        acc.reset_peak_memory_stats()
+        for d in devs:
+            torch.cuda.reset_peak_memory_stats(d)
     v0 = val_kl()
     best, best_state = v0, snapshot()
     log(
@@ -342,7 +358,7 @@ def final_kl(
             for i in batch:
                 hs = _head_input(model, ids[i : i + 1].to(dev)).float()
                 hd = hs.detach().requires_grad_(True)
-                tot += _kl_loss(lm, hd, teach[i].to(dev), positions()) / len(batch)
+                tot += _kl_loss(lm, hd, teach[i].to(last), positions()) / len(batch)
                 hs.backward(hd.grad / len(batch))
             # norms outside the decoder path (e.g. a vision tower) get no gradient
             if step == 0:
@@ -377,7 +393,9 @@ def final_kl(
         "steps": steps,
         "seconds": time.time() - t0,
         "teacher_seconds": t_teacher,
-        "gpu_peak_gib": acc.max_memory_allocated() / 2**30 if on_gpu else None,
+        "gpu_peak_gib": max(torch.cuda.max_memory_allocated(d) for d in devs) / 2**30
+        if on_gpu
+        else None,
         "trace": trace,
     }
     log(

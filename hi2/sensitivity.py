@@ -95,7 +95,8 @@ def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
     """Split the model layer-wise over ``devices``: embeddings and everything before the
     layers on the first, contiguous groups of decoder layers on each, the final norm and
     the output head on the last (tied embeddings are copied). A pre-hook on every layer
-    moves its inputs to its device."""
+    moves its inputs to its device. Returns the hook handles (remove them to undo the
+    input moves)."""
     from .layerwise import find_layers, to_device
 
     path, layers = find_layers(model)
@@ -115,16 +116,18 @@ def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
         if tail is not None:
             tail.to(last)
     n = len(devices)
+    handles = []
     for k, dev in enumerate(devices):
         for layer in layers[len(layers) * k // n : len(layers) * (k + 1) // n]:
             layer.to(dev)
-            layer.register_forward_pre_hook(
+            handles.append(layer.register_forward_pre_hook(
                 lambda _m, args, kwargs, dev=dev: (
                     to_device(args, dev),
                     to_device(kwargs, dev),
                 ),
                 with_kwargs=True,
-            )
+            ))
+    return handles
 
 
 def load_probe_model(src, dtype: torch.dtype, ex: Executor, log=print):

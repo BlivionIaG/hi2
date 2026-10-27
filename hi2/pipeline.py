@@ -482,25 +482,29 @@ def _qad_encode(
 
 
 def _final_kl_fits(rc, ex, model, tensors, log) -> bool:
-    """The final-KL phase keeps the whole student on one device (codes at 1 byte per weight
-    plus the dense parameters); skip it, with a note, when that does not fit."""
-    dev = ex.primary
-    if dev.type != "cuda":
+    """The final-KL phase splits the student (codes at 1 byte per weight plus the dense
+    parameters) and the teacher (the model's own weights) layer-wise over the executor's
+    devices; skip it, with a note, when even that does not fit."""
+    devs = ex.devices
+    if devs[0].type != "cuda":
         return True
     resolve = make_resolver(weight_map(rc.src))
-    quant, rest = 0, 0
+    quant, rest, teacher = 0, 0, 0
     for name, p in model.named_parameters():
+        teacher += p.numel() * p.element_size()
         if name.endswith(".weight") and resolve(name) in tensors:
             quant += p.numel()
         else:
             rest += p.numel()
-    need = (1.1 * quant + 2 * rest) / 2**30 + 4.0  # + activations, optimizer, logits chunks
-    have = torch.cuda.get_device_properties(dev).total_memory / 2**30
+    student = 1.1 * quant + 2 * rest
+    n = len(devs)
+    need = max(student, teacher) / n / 2**30 + 4.0  # + activations, optimizer, logits chunks
+    have = min(torch.cuda.get_device_properties(d).total_memory for d in devs) / 2**30
     if need <= 0.9 * have:
         return True
     log(
-        f"final KL: skipped, the student needs about {need:.0f} GiB on one device and "
-        f"{dev} has {have:.0f} GiB (set --qad-final-kl 0 to silence this)"
+        f"final KL: skipped, the student needs about {need:.0f} GiB per device over {n} "
+        f"device(s) of {have:.0f} GiB (--qad-final-kl 0 silences this)"
     )
     return False
 
@@ -538,7 +542,7 @@ def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag=""):
         tensors,
         dense,
         qc,
-        ex.primary,
+        ex.devices,
         make_resolver(weight_map(rc.src)),
         log,
     )

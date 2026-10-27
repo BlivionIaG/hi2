@@ -12,7 +12,7 @@ rows already exist in the format.
 | Item | Result | Default |
 | --- | --- | --- |
 | INT8 rows (`--bits 2,4,8`) | Works end to end: quality allocation, probe, cache, fused GPTQ, QAD, writer, verify, export-dense. At 3.0-3.5 bpw the allocator gives INT8 to 0.01-0.03 % of the weights, and every metric stays the same. Forcing the most sensitive tensors to INT8 is worse. | Opt-in, unchanged |
-| Final logit-KL phase (`--qad-final-kl STEPS`) | KLD -14 % (docs text) and -10 % (mix) on the 0.8B model; -6 % and -7 % on the 4B model at 3.5 bpw. The perplexity excess is about half. Multiple-choice accuracy stays the same. | On with the `default` and `thorough` presets (200 steps), off with `fast`: about +50 % QAD time. Skipped with a note when the student does not fit one GPU (27B on a 30 GiB card). `--qad-final-kl 0` turns it off |
+| Final logit-KL phase (`--qad-final-kl STEPS`) | KLD -14 % (docs text) and -10 % (mix) on the 0.8B model; -6 % and -7 % on the 4B model at 3.5 bpw. The perplexity excess is about half. Multiple-choice accuracy stays the same. | On with the `default` and `thorough` presets (200 steps), off with `fast`: about +50 % QAD time. Teacher and student are split layer-wise over the devices, so the 27B trains on four V620s; skipped with a note only if that does not fit. `--qad-final-kl 0` turns it off |
 | Norm weights in the layer-wise phase | Within seed noise | Off |
 | KL term at the last layers of the layer-wise phase | Within seed noise | Off |
 | 2x QAD samples (512 instead of 256) | No gain: the docs KLD is 0.0598 against 0.0607, the perplexity is higher. | Off |
