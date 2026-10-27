@@ -106,8 +106,10 @@ def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
         # the embeddings, so the copy cannot drift)
         head.weight = nn.Parameter(emb.weight.detach().clone())
     first, last = devices[0], devices[-1]
+    in_layers = {id(m) for m in layers.modules()}
     for m in model.modules():
-        _move_own(m, first)
+        if id(m) not in in_layers:  # the layers go to their own devices below
+            _move_own(m, first)
     parent = model.get_submodule(path.rsplit(".", 1)[0]) if "." in path else model
     for tail in (head, getattr(parent, "norm", None)):
         if tail is not None:
@@ -125,7 +127,7 @@ def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
             )
 
 
-def load_probe_model(src, dtype: torch.dtype, ex: Executor):
+def load_probe_model(src, dtype: torch.dtype, ex: Executor, log=print):
     """``(model, first device, sharded)`` of the probe. The model sits on the primary
     device when its weights fit there, otherwise it is split layer-wise across the
     executor's devices (``HI2_PROBE_SHARD=1`` forces the split, for tests)."""
@@ -145,6 +147,13 @@ def load_probe_model(src, dtype: torch.dtype, ex: Executor):
     if plan == "single" or len(ex.devices) == 1:
         return model.to(dev), dev, False
     shard_layers(model, ex.devices)
+    held: dict[str, int] = {}
+    for p in model.parameters():
+        held[str(p.device)] = held.get(str(p.device), 0) + p.numel() * p.element_size()
+    log(
+        "sensitivity probe: model split layer-wise, "
+        + ", ".join(f"{d} {b / 2**30:.1f} GiB" for d, b in sorted(held.items()))
+    )
     return model, dev, True
 
 
@@ -177,7 +186,7 @@ def probe_sensitivity(
     first layer instead of recomputing them (they do not change), which gives the same
     logits bit for bit. ``batch`` sequences go through the model per forward (1 = the
     original per-sequence probe; larger is faster but rounds the logits differently)."""
-    model, dev, sharded = load_probe_model(src, dtype, ex)
+    model, dev, sharded = load_probe_model(src, dtype, ex, log)
     fwd = {"use_cache": False} if sharded else {}  # no per-layer caches across devices
     resolve = make_resolver(weight_map(src))
     params = {}
