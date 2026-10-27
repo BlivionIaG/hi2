@@ -363,8 +363,8 @@ on 4B exactly (6.2 was run) and PTQ at ratio 4 on 4B with this calibration.
 ## What is not done
 
 * A full-network final phase. `--qad-final-kl STEPS` trains a small set of parameters
-  (the quantized Linears' ladder bytes and the norms) against the logits; it is opt-in
-  (200 steps is the measured value) and splits the network layer-wise over the devices when
+  (the quantized Linears' ladder bytes and the norms) against the logits; it is on with the
+  `default` and `thorough` presets (200 steps) and splits the network layer-wise over the devices when
   it does not fit one GPU ([lowbit.md](lowbit.md)). A pass that trains everything needs the student, teacher and optimizer state together.
 * Training the dense norm weights in the layer-wise phase is available as an option
   (`train_norms` in the QAD config) and is off: it was within seed noise

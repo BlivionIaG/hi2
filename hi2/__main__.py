@@ -116,6 +116,68 @@ def _refine_passes(a, qc) -> int:
     )
 
 
+def _tune_rc(a, rc):
+    """``--target-kld``: measure PTQ checkpoints at a few error ratios (one shared phase 1,
+    probe and encode pass per round), evaluate each, and return ``rc`` with the ratio
+    that meets the target (hi2.tune)."""
+    import dataclasses
+    import shutil
+
+    from .evalq import evaluate
+    from .tune import START_RATIOS, tune
+
+    if a.eval_text is None or rc.calib is None:
+        raise SystemExit("--target-kld needs --calib and --eval-text")
+    if a.target_bpw is not None or a.max_error_ratio is not None:
+        raise SystemExit("--target-kld replaces --target-bpw and --max-error-ratio")
+    if a.dry_run:
+        return dataclasses.replace(rc, max_error_ratio=START_RATIOS[0])
+
+    def measure(ratios):
+        ratios = list(ratios)
+        if len(ratios) == 1:  # a single ratio would use the final run's markers
+            ratios.append(ratios[0] * 1.5)
+        probe = dataclasses.replace(
+            rc,
+            dst=Path(str(rc.dst) + "-tune"),
+            qad=None,
+            target_bpw=None,
+            max_error_ratio=None,
+            max_error_ratios=ratios,
+        )
+        out = run(probe)["outputs"]
+        pts = []
+        for r in ratios:
+            d = Path(f"{probe.dst}-r{r:g}")
+            res = evaluate(
+                rc.src,
+                d,
+                a.eval_text,
+                device=a.eval_device,
+                skip_tokens=a.eval_skip_tokens,
+                dtype=a.eval_dtype,
+                log=lambda *_: None,
+            )
+            pts.append((r, res["kld_nats_per_token"], out[str(d)]["allocation_bpw"]))
+            shutil.rmtree(d, ignore_errors=True)
+        return pts
+
+    fit = tune(measure, a.target_kld, a.tune_ratios or START_RATIOS)
+    (rc.dst.parent / (rc.dst.name + ".tune.json")).write_text(json.dumps(fit, indent=2))
+    if fit["status"] != "ok":
+        print(
+            f"warning: target KLD {a.target_kld} is {fit['status']} the measured range; "
+            f"using ratio {fit['ratio']:.2f} (about {fit['bpw']:.2f} bpw)",
+            file=sys.stderr,
+        )
+    print(
+        f"target KLD {a.target_kld}: error ratio {fit['ratio']:.2f}, about "
+        f"{fit['bpw']:.2f} bpw (PTQ-measured; QAD lowers the KLD further)",
+        file=sys.stderr,
+    )
+    return dataclasses.replace(rc, max_error_ratio=fit["ratio"], max_error_ratios=None)
+
+
 def main(argv=None):
     if hasattr(
         sys.stdout, "reconfigure"
@@ -165,6 +227,29 @@ def main(argv=None):
         default=None,
         help="model-wide bits per weight (global allocation); default is the "
         "quality mode below",
+    )
+    q.add_argument(
+        "--target-kld",
+        type=float,
+        default=None,
+        metavar="KLD",
+        help="choose the quality target from a measured fidelity target: quantize (PTQ) at "
+        "a few error ratios, measure KL(original||quantized) per token on --eval-text, and "
+        "run with the largest ratio within KLD (0.01 is the distribution-lossless "
+        "threshold). Replaces --max-error-ratio / --target-bpw; needs --calib and "
+        "--eval-text (docs/usage.md)",
+    )
+    q.add_argument("--eval-text", type=Path, default=None, help="held-out text for --target-kld")
+    q.add_argument("--eval-skip-tokens", type=int, default=0)
+    q.add_argument("--eval-device", default="cuda:0", help="device of the --target-kld evals")
+    q.add_argument(
+        "--eval-dtype", choices=("float32", "float16", "bfloat16"), default="float32"
+    )
+    q.add_argument(
+        "--tune-ratios",
+        type=_floats,
+        default=None,
+        help="first error ratios measured by --target-kld (default 2,4,8,16)",
     )
     q.add_argument(
         "--max-error-ratio",
@@ -356,8 +441,8 @@ def main(argv=None):
         default=None,
         metavar="STEPS",
         help="after layer-wise QAD, STEPS optimizer steps of whole-network logit KL "
-        "training the ladder bytes and norm weights only (off by default; 200 is the "
-        "measured value; split over the devices when it does not fit one GPU; skipped if it "
+        "training the ladder bytes and norm weights only (default 200 with the default "
+        "and thorough presets, 0 with fast; 0 turns it off; split over the devices when it does not fit one GPU; skipped if it "
         "still does not fit; docs/lowbit.md)",
     )
     for flag, typ in (
@@ -569,6 +654,8 @@ def main(argv=None):
                 expert_min_tokens=a.expert_min_tokens,
             ),
         )
+        if a.target_kld is not None:
+            rc = _tune_rc(a, rc)
         out = plan(rc) if a.dry_run else run(rc)
     else:
         out = verify_checkpoint(a.src, a.dst, a.max_tensors)

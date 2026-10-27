@@ -43,7 +43,8 @@ def test_new_qad_fields_leave_default_config_and_fingerprint_unchanged():
         k
         for k in asdict(qc)
         if not k.startswith("final_")
-        and k not in ("train_norms", "lr_norm", "kl_layers", "kl_weight", "kl_tokens")
+        and k
+        not in ("train_norms", "lr_norm", "kl_layers", "kl_weight", "kl_tokens", "data_parallel")
     }
     assert set(qad_meta(qc)) == old
     assert set(qad_fingerprint_fields(qc)) <= old

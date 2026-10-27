@@ -12,7 +12,7 @@ rows already exist in the format.
 | Item | Result | Default |
 | --- | --- | --- |
 | INT8 rows (`--bits 2,4,8`) | Works end to end: quality allocation, probe, cache, fused GPTQ, QAD, writer, verify, export-dense. At 3.0-3.5 bpw the allocator gives INT8 to 0.01-0.03 % of the weights, and every metric stays the same. Forcing the most sensitive tensors to INT8 is worse. | Opt-in, unchanged |
-| Final logit-KL phase (`--qad-final-kl STEPS`) | KLD -14 % (docs text) and -10 % (mix) on the 0.8B model; -6 % and -7 % on the 4B model at 3.5 bpw. The perplexity excess is about half. Multiple-choice accuracy stays the same. | Off (opt-in, 200 steps is the measured value): about +50 % QAD time. Teacher and student are split layer-wise over the devices, so the 27B trains on four V620s; skipped with a note only if that does not fit |
+| Final logit-KL phase (`--qad-final-kl STEPS`) | KLD -14 % (docs text) and -10 % (mix) on the 0.8B model; -6 % and -7 % on the 4B model at 3.5 bpw. The perplexity excess is about half. Multiple-choice accuracy stays the same. | On with the `default` and `thorough` presets (200 steps), off with `fast`: about +50 % QAD time. Teacher and student are split layer-wise over the devices, so the 27B trains on four V620s; skipped with a note only if that does not fit |
 | Norm weights in the layer-wise phase | Within seed noise | Off |
 | KL term at the last layers of the layer-wise phase | Within seed noise | Off |
 | 2x QAD samples (512 instead of 256) | No gain: the docs KLD is 0.0598 against 0.0607, the perplexity is higher. | Off |
@@ -87,11 +87,11 @@ Read the 0.8B table as follows.
 
 ## Defaults
 
-The tool keeps all of these options off. Turn them on with:
+The final-KL phase is on with the default QAD preset. The other options are off. Switch with:
 
 ```bash
 python -m hi2 quantize SRC DST --calib calib.txt --bits 2,4,8           # INT8 rows
-python -m hi2 quantize SRC DST --calib calib.txt --qad-final-kl 200     # final logit-KL phase
+python -m hi2 quantize SRC DST --calib calib.txt --qad-final-kl 0       # turn the final logit-KL phase off
 ```
 
 The final-KL learning rates default to the values measured on Qwen3.5-4B.

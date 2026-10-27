@@ -14,6 +14,10 @@ import torch
 
 from .checkpoint import export_dense
 
+# KL(original || quantised) per token below which the quantised model is treated as
+# distribution-lossless (the "KL below about 0.01" threshold of the SLQ paper, Fig. 1b).
+LOSSLESS_KLD = 0.01
+
 
 @torch.no_grad()
 def evaluate(
@@ -51,7 +55,7 @@ def evaluate(
         model = model.eval().to(device)
     finally:
         shutil.rmtree(dense, ignore_errors=True)
-    nll_ref = nll_q = kl = agree = 0.0
+    nll_ref = nll_q = kl = agree = acc = 0.0
     n = 0
     for i in range(ids.shape[0]):
         lg = model(ids[i : i + 1].to(device)).logits[0].float()
@@ -62,6 +66,8 @@ def evaluate(
         nll_q += -lp_q[:-1].gather(1, tgt[:, None]).sum().item()
         kl += (lp_r.exp() * (lp_r - lp_q)).sum(-1)[:-1].sum().item()
         agree += (lp_r.argmax(-1) == lp_q.argmax(-1))[:-1].sum().item()
+        # expected acceptance rate of speculative sampling: sum_x min(p, q) per token
+        acc += torch.minimum(lp_r.exp(), lp_q.exp()).sum(-1)[:-1].sum().item()
         n += tgt.numel()
         log(f"seq {i + 1}/{ids.shape[0]}")
     return {
@@ -70,6 +76,8 @@ def evaluate(
         "ppl_quantized": float(torch.exp(torch.tensor(nll_q / n))),
         "kld_nats_per_token": kl / n,
         "top1_agreement": agree / n,
+        "ear": acc / n,
+        "lossless": kl / n < LOSSLESS_KLD,
         "dtype": dtype,
     }
 

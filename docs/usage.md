@@ -9,7 +9,7 @@ behind the defaults, read [results.md](results.md) and [design-notes.md](design-
 | --- | --- |
 | `quantize SRC DST` | Convert a Hugging Face checkpoint to a rdna_hint_flex checkpoint. |
 | `verify SRC DST` | Reload the quantized tensors and compare them with the source weights. |
-| `eval SRC DST --text T --skip-tokens N` | Measure perplexity of both models, KL(original to quantized), and top-1 agreement on held-out text. |
+| `eval SRC DST --text T --skip-tokens N` | Measure perplexity of both models, KL(original to quantized), top-1 agreement and the expected acceptance rate (EAR, the mean of `sum min(p, q)` per token: the share of tokens a speculative draft from the quantized model would be accepted) on held-out text. `lossless` is true when the KLD is below 0.01. |
 | `export-dense SRC DST OUT` | Write the dequantized model as a plain fp16 Hugging Face directory. Use it to score the model in llama.cpp. |
 | `restack CKPT OUT --layout stacked\|per-expert` | Convert the expert layout of an MoE checkpoint without re-encoding. |
 | `calib OUT SRC[:WEIGHT] ... [--tokens N] [--holdout PATH]` | Build a mixed-domain calibration text. See "Calibration text". |
@@ -76,6 +76,15 @@ Do not choose a bit rate. Choose how much error you accept.
   meet this. It reports the bit rate it reached.
   Rule of thumb from the measurements: ratio 8 saves about 0.2 bpw and costs about 30 %
   more KLD; ratio 4 costs about 0.27 bpw more and removes about a third of the KLD.
+* `--target-kld K` (with `--calib` and `--eval-text`): state the fidelity you need and let the
+  tool find the ratio. It quantizes PTQ checkpoints at a few ratios (default 2, 4, 8, 16, one
+  shared phase 1, probe and encode pass per round), measures KL(original to quantized) of each
+  on the held-out text, fits log KLD against log ratio, and runs with the largest ratio whose
+  predicted KLD is within K. If K lies outside the measured range it measures more ratios
+  (up to four extensions). KLD below about 0.01 nats per token is the distribution-lossless
+  threshold (the SLQ paper); 3.0 bpw with QAD is far above it (0.061 on Qwen3.5-4B) and 4.0 bpw
+  PTQ is at 0.034. QAD lowers the KLD of the chosen ratio, so the final model meets K with
+  margin. The measured points are written to `<dst>.tune.json`.
 * `--target-bpw B`: fix the bit rate. The tool spends the bits where they help most.
 * `--max-error-ratio a,b,c`: write one checkpoint per ratio to `<out>-r<ratio>`. The tool
   shares phase 1, the probe, and the encode pass between them.
@@ -119,8 +128,10 @@ hi2 quantize <model> <out> --calib calib.txt --no-qad                # PTQ only
 | `--qad-preset fast\|default\|thorough` | Training length. |
 | `--qad-budget F` | Fraction of the preset's steps. The tool spends steps where layers still gain, with per-layer early stopping. |
 | `--qad-samples N`, `--qad-layers A-B` | Training sequences, layer range. |
-| `--qad-final-kl STEPS` | Final logit-KL phase (off by default; 200 steps is the measured value). Split layer-wise over the devices when it does not fit one GPU; skipped with a note if it still does not fit. See [lowbit.md](lowbit.md). |
+| `--qad-final-kl STEPS` | Final logit-KL phase: 200 steps with `default` and `thorough`, 0 with `fast`; 0 turns it off. Split layer-wise over the devices when it does not fit one GPU; skipped with a note if it still does not fit. See [lowbit.md](lowbit.md). |
 | `--qad-config file.json` | All settings in a file. |
+
+With several `--devices` the QAD step is data-parallel: each step's sequences are split over the devices (each holds a copy of the layer, the decoded weights go out and the gradients come back), so the per-step time falls while the gradient stays the same up to summation order. `"data_parallel": false` in `--qad-config` turns it off. On Qwen3.5-0.8B at 3 GPUs a step took about 0.09 s against 0.16 s; the whole QAD phase 1006 s against 1117 s (small layers: per-layer setup and the held-out evaluations stay on one device), with the same quality (docs KLD 0.099, mix 0.254). The gain grows with layer size.
 
 Runtimes on one V620 (QAD part, `default` and `fast`): Qwen3.5-0.8B 41 and 17 minutes;
 Qwen3.5-4B about 3.1 hours and 1.3 hours. PTQ adds 10-50 minutes. The run prints its

@@ -232,8 +232,9 @@ def test_early_stop_and_allotted_steps():
 def test_config_presets_and_layer_spec():
     assert make_config("fast").budget < 1 and make_config("default").budget == 1
     assert make_config("default").steps < make_config("thorough").steps
-    assert all(make_config(p).final_kl == 0 for p in ("fast", "default", "thorough"))
-    assert make_config("default", {"final_kl": 200}).final_kl == 200
+    assert make_config("default").final_kl > 0 and make_config("thorough").final_kl > 0
+    assert make_config("fast").final_kl == 0
+    assert make_config("default", {"final_kl": 0}).final_kl == 0
     assert make_config("default", {"steps": "7", "keep_best": "false"}).steps == 7
     assert make_config("default", {"keep_best": "false"}).keep_best is False
     with pytest.raises(SystemExit):
@@ -589,3 +590,41 @@ def test_avail_ram_reads_memavailable():
     from hi2.qad import _avail_ram
 
     assert _avail_ram() > 0
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="needs two GPUs for the data-parallel step"
+)
+def test_data_parallel_step_matches_the_single_device_run():
+    def run(devices):
+        torch.manual_seed(0)
+        layer = _MLP()
+        xs = [_x(256, 128, seed=10 + i).unsqueeze(0) for i in range(12)]
+        with torch.no_grad():
+            ys = [layer(x) for x in xs]
+        xs_s = [x + 0.02 * x.std() * torch.randn_like(x) for x in xs]
+        fq = {}
+        for name in ("up", "down"):
+            w = layer.get_submodule(name).weight.detach().float()
+            inp = torch.cat(xs).reshape(-1, 128)
+            if name == "down":
+                with torch.no_grad():
+                    inp = torch.nn.functional.silu(layer.up(torch.cat(xs))).reshape(-1, 256)
+            t0, comp = _ptq(w, inp)
+            fq[name] = FakeQuantLinear(w, t0, comp, "ptq")
+        qc = make_config(
+            "default",
+            {"steps": 40, "batch": 4, "lr_w": 1e-3, "lr_p": 0.1, "val": 2, "final_kl": 0},
+        )
+        info = train_layer(
+            layer, fq, xs_s, ys, list(range(10)), [10, 11], {}, qc, devices[0],
+            lambda *_: None, replicas=devices,
+        )
+        return info, fq
+
+    one, _ = run([torch.device("cuda:0")])
+    two, fq2 = run([torch.device("cuda:0"), torch.device("cuda:1")])
+    assert two["val_after"] < 0.95 * two["val_before"]
+    assert two["val_after"] == pytest.approx(one["val_after"], rel=0.05)
+    for m in fq2.values():
+        assert torch.equal(dequantize_stored(m.export()), m.stored(False).double().cpu())

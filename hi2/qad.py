@@ -23,6 +23,7 @@ The export takes the codes and the 8-bit parameters exactly as the last forward 
 them, so a QAD checkpoint is a normal v3.2 checkpoint (no format change).
 """
 
+import contextlib
 import copy
 import gc
 import hashlib
@@ -78,6 +79,10 @@ class QadConfig:
     warmup: float = 0.05  # fraction of steps with linear warm-up
     keep_best: bool = True
     buffer_dtype: str = "auto"  # hidden-state buffers in RAM: auto | float32 | bfloat16
+    # Split the sequences of every step over all of the run's devices (each holds a copy of
+    # the layer; the decoded weights go out and the gradients come back). Same gradient up
+    # to summation order; off for train_norms and the KL term, which run on the first device.
+    data_parallel: bool = True
     seed: int = 0
     evals: int = 4  # held-out evaluations per layer (logged)
     # random: windows across the whole calibration text; balanced: equal windows per
@@ -96,7 +101,7 @@ class QadConfig:
     kl_tokens: int = 256
     # Final logit-KL phase after the layer-wise one (hi2.finalkl): final_kl optimizer steps
     # of KL(teacher || student) over the whole network, training only the per-block ladder
-    # bytes and the RMSNorm weights (codes frozen); 0 = off (opt-in; 200 is the
+    # bytes and the RMSNorm weights (codes frozen); 0 = off. The presets set it (default and thorough: on; 200 is the
     # Qwen3.5-4B study value). The network is split layer-wise over the devices, and the phase is
     # skipped with a note if it still does not fit.
     final_kl: int = 0
@@ -119,10 +124,11 @@ FINAL_FIELDS = {f for f in QadConfig.__dataclass_fields__ if f.startswith("final
 # Chosen on Qwen3.5-0.8B at 3.0 bpw (docs/qad.md); everything else default.
 # fast = half the steps spent where layers still gain, with early stopping (better than a
 # uniform 100 steps at the same time); no reduced budget stayed within noise of default.
+FINAL_KL_STEPS = 200  # the Qwen3.5-4B study value (docs/lowbit.md)
 PRESETS: dict[str, dict] = {
     "fast": dict(budget=0.5, min_gain=0.01, min_steps=75, eval_every=50),
-    "default": dict(),
-    "thorough": dict(steps=600, batch=8, samples=512),
+    "default": dict(final_kl=FINAL_KL_STEPS),
+    "thorough": dict(steps=600, batch=8, samples=512, final_kl=FINAL_KL_STEPS),
 }
 
 
@@ -461,6 +467,47 @@ def head_kl(head, out: torch.Tensor, tgt: torch.Tensor, pos) -> torch.Tensor:
     return (lt.exp() * (lt - ls)).sum(-1).mean()
 
 
+def _parallel_step(w, wd, batch, xs, ys, workers):
+    """One data-parallel step: worker ``k`` (device, layer copy, kwargs) takes every
+    ``len(workers)``-th sequence of ``batch``, runs its forward and backward on its own
+    copy of the decoded weights, and the gradients are summed on the first device.
+    Returns ``(loss, [gradient per weight in w's order])``."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from torch.func import functional_call
+
+    n = len(workers)
+
+    def work(k):
+        dev, lay, kw = workers[k]
+        wk = wd if k == 0 else {a: v.detach().to(dev) for a, v in w.items()}
+        if k:
+            for v in wk.values():
+                v.requires_grad_(True)
+        tot = 0.0
+        with torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext():
+            for i in batch[k::n]:
+                out = _out(functional_call(lay, wk, (xs[i].to(dev).float(),), kw))
+                loss = _nmse(out, ys[i].to(dev).float()) / len(batch)
+                loss.backward()
+                tot += loss.item()
+        return wk, tot
+
+    with ThreadPoolExecutor(n) as pool:
+        res = list(pool.map(work, range(n)))
+    first = workers[0][0]
+    grads = []
+    for a in w:
+        g = None
+        for wk, _ in res:
+            gk = wk[a].grad
+            if gk is not None:
+                gk = gk.to(first)
+                g = gk if g is None else g + gk
+        grads.append(torch.zeros_like(wd[a]) if g is None else g)
+    return sum(t for _, t in res), grads
+
+
 def train_layer(
     layer: nn.Module,
     fq: dict[str, FakeQuantLinear],
@@ -476,6 +523,7 @@ def train_layer(
     fallback: dict[str, FakeQuantLinear] | None = None,
     steps: int | None = None,
     head: tuple | None = None,
+    replicas: list[torch.device] | None = None,
 ) -> dict:
     """Train the fake-quantised Linears ``fq`` (submodule name -> module) of ``layer``
     so that ``layer(xs[i]) ~ ys[i]``. Returns loss/time info; ``fq`` is left at the
@@ -500,12 +548,31 @@ def train_layer(
     )
     if on_gpu:
         acc.reset_peak_memory_stats()
-    layer = copy.deepcopy(layer).to(dev)
+    layer = copy.deepcopy(layer)
+    reps = []
+    if (
+        replicas
+        and len(replicas) > 1
+        and qc.data_parallel
+        and not qc.train_norms
+        and head is None
+    ):
+        from .executor import serialize_triton_autotune
+
+        serialize_triton_autotune()
+        for d in replicas:
+            if d != dev:
+                r = copy.deepcopy(layer).to(d)
+                for p in r.parameters():
+                    p.requires_grad_(False)
+                reps.append((d, r))
+    layer = layer.to(dev)
     for p in layer.parameters():
         p.requires_grad_(False)
     for m in fq.values():
         m.to(dev)
     kw = to_device(kwargs, dev)
+    reps = [(d, r, to_device(kwargs, d)) for d, r in reps]
     norm_params = {}
     if qc.train_norms:
         for n, p in layer.named_parameters():
@@ -606,11 +673,17 @@ def train_layer(
         w = weights()
         wd = {k: v.detach().requires_grad_(True) for k, v in w.items()}
         tot = 0.0
-        for i in batch:
-            loss = loss_fn(run(wd, i), i) / len(batch)
-            loss.backward()
-            tot += loss.item()
-        torch.autograd.backward(list(w.values()), [wd[k].grad for k in w])
+        if not reps:
+            for i in batch:
+                loss = loss_fn(run(wd, i), i) / len(batch)
+                loss.backward()
+                tot += loss.item()
+            grads = [wd[k].grad for k in w]
+        else:
+            tot, grads = _parallel_step(
+                w, wd, batch, xs, ys, [(dev, layer, kw)] + reps
+            )
+        torch.autograd.backward(list(w.values()), grads)
         opt.step()
         sched.step()
         opt.zero_grad(set_to_none=True)
@@ -672,6 +745,7 @@ def train_layer(
 # behaviour: at that value they are left out of the fingerprint, so per-layer artifacts
 # written before the field existed are still reused.
 LEGACY_DEFAULTS = {
+    "data_parallel": True,
     "latent_units": "abs",
     "budget": 1.0,
     "min_gain": 0.0,
@@ -690,6 +764,7 @@ def qad_meta(qc: QadConfig) -> dict:
     only when they differ from their default (a default run writes the same config)."""
     d = QadConfig()
     new = set(FINAL_FIELDS) | {
+        "data_parallel",
         "train_norms",
         "lr_norm",
         "kl_layers",
@@ -997,6 +1072,7 @@ def qad_layerwise(
                     fb,
                     budget.allot(),
                     head if li >= n_layers - qc.kl_layers else None,
+                    ex.devices,
                 )
                 norms = info.pop("norms", {})
                 tensors = {linears[nm]: m.export() for nm, m in fq.items()}
