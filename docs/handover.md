@@ -29,8 +29,12 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 * `bench/`: task-level evaluation suite (GSM8K, HumanEval, MBPP, instruction following, ToolACE
   tool calls, long-context retrieval, multiple choice, decisions) with paired comparison, and
   `bench/tfkld.py`, the teacher-forced domain KLD. Drivers `bench/serve_run.sh`,
-  `bench/hook.sh`. First smoke run on a served 4B (20 items per task): the four tasks ran;
-  the teacher-forced step crashed on a config lookup, fixed and not re-run yet.
+  `bench/hook.sh`. The smoke run is verified: a served 4B as the reference and a 3.0 bpw PTQ
+  checkpoint as the candidate, scored against the reference's own completions, 20 items per
+  task. The teacher-forced pass works now. The domain KLD of that checkpoint is 0.162 (gsm8k),
+  0.051 (toolcall) and 0.161 (decision). Pooled task accuracy falls from 76.2 % to 62.5 %
+  (-13.8 points, McNemar p = 0.000977), and the reference arm reproduced the earlier run
+  item for item.
 * Experiment scripts cut to three drivers with no host paths; the AWQ INT4 column added to
   the 27B comparison (AWQ is clearly better: 81.8 % first-tool agreement against 66.7 %).
 
@@ -42,19 +46,21 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   for PTQ and QAD alike. So the calibration can use cheap PTQ points.
 * Token-level KLD understates agentic loss: the 27B decisions are far below what its top-1
   agreement suggests.
+* The domain KLD of one checkpoint is not one number: the 3.0 bpw PTQ 4B checkpoint scores
+  0.16 on gsm8k and decision but 0.05 on toolcall. A target table needs a KLD per task family.
+* The 0.42 x sqrt(KLD) rule held on the smoke run as well: 18.8 % of the items flipped against
+  16.8 % predicted from the mean KLD of 0.16.
 * The first Triton autotune of the linear-attention backward takes about 10 minutes.
 
 ## Next steps
 
-1. Re-run the bench smoke test on a served 4B (`bench/serve_run.sh`, see its header), then a
-   second arm with `REF_RESULTS` set to confirm the teacher-forced pass.
-2. Calibration study (plan agreed): PTQ ladder on the 4B (ratios 2-16 in one shared pass) plus
+1. Calibration study (plan agreed): PTQ ladder on the 4B (ratios 2-16 in one shared pass) plus
    the existing 4B checkpoints, the full suite on a few points with paired statistics, domain
    KLD per task family, then a target table (KLD per use case). One anchor on the 27B.
-3. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
+2. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
    Hessians); score docs and mix KLD, decisions and the new suite. Needs a go-ahead.
-4. `--target-kld` with QAD on the 4B; decide the default quality rule from step 2.
-5. Optional: fp16 matrix math in QAD (layer forward and backward is 94 % of a step), INT3 rows,
+3. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1.
+4. Optional: fp16 matrix math in QAD (layer forward and backward is 94 % of a step), INT3 rows,
    a KLD path for AWQ checkpoints.
-6. Before sharing v1: README note that checkpoints need the vLLM fork, check old commits for
+5. Before sharing v1: README note that checkpoints need the vLLM fork, check old commits for
    internal paths, decide whether the 27B table is public.
