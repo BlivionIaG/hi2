@@ -238,3 +238,16 @@ def test_multi_device_executor_serializes_the_triton_autotuner():
     run = triton.Autotuner.run
     serialize_triton_autotune()
     assert triton.Autotuner.run is run  # idempotent
+
+
+def test_probe_placement_single_shard_or_error():
+    from hi2.sensitivity import plan_placement
+
+    gib = 2**30
+    assert plan_placement(8 * gib, 30 * gib, 1) == "single"  # 4B in fp16
+    assert plan_placement(52 * gib, 30 * gib, 4) == "shard"  # 27B in fp16, four devices
+    assert plan_placement(52 * gib, 30 * gib, 3) == "shard"
+    with pytest.raises(SystemExit, match="do not fit 2 device"):
+        plan_placement(52 * gib, 30 * gib, 2)
+    with pytest.raises(SystemExit, match="do not fit 1 device"):
+        plan_placement(111 * gib, 30 * gib, 1)
