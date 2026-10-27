@@ -150,9 +150,13 @@ def _run(
             hooks.append(mod.register_forward_pre_hook(make_hook(n)))
     kw = to_device(kwargs, dev)
     outs = {}
+    first = next(layer.parameters(), None)
+    dtype = (
+        None if first is None else first.dtype
+    )  # buffers may be bf16 for an fp32 layer
     with torch.no_grad():
         for i in items:
-            out = layer(hidden[i].to(dev), **kw)
+            out = layer(hidden[i].to(dev, dtype), **kw)
             o = (out[0] if isinstance(out, tuple) else out).detach()
             outs[i] = o if resident else o.cpu()
             groups.clear()

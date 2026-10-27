@@ -549,3 +549,18 @@ def test_qad_multi_ratio_runs_one_qad_per_output(tiny, tmp_path):
         )
         run(single, log=lambda *_: None)
         assert _ckpt_bytes(single.dst) == _ckpt_bytes(output_dir(rc.dst, r))
+
+
+def test_propagate_feeds_bf16_buffers_to_an_fp32_layer():
+    from torch import nn
+
+    from hi2.executor import Executor
+    from hi2.qad import _propagate
+
+    torch.manual_seed(0)
+    layer = nn.Linear(16, 16).float()
+    src = [torch.randn(1, 4, 16).bfloat16() for _ in range(3)]
+    dst = [torch.zeros(1, 4, 16, dtype=torch.bfloat16) for _ in range(3)]
+    _propagate(layer, Executor(["cpu"]), src, {}, dst)
+    for s, d in zip(src, dst):
+        assert torch.allclose(d.float(), layer(s.float()).bfloat16().float(), atol=2e-2)
