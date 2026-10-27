@@ -311,22 +311,24 @@ Not measured: other formats (EXL3, GGUF) on the same prompts, and the 27B model.
 
 ## Qwen3.8-27B at 3.0 bpw
 
+The last column is the 4-bit AWQ checkpoint `cyankiwi/Qwen3.8-27B-AWQ-INT4` (group 32), served the same way. It is about 1.5 bpw larger, so it is a quality ceiling for a 4-bit format and not a same-size comparison.
+
 Qwen3.8-27B (BF16, 64 layers, 24.35 B weights in the 496 quantized linears) quantized with
 `experiments/run_27b.sh`: target 3.0 bpw, the mixed calibration text, the sensitivity probe,
 four V620s for the calibration, probe and encode, and one for QAD. Served in the fork's vLLM
 (fp16), one V620 for the quantized models and four (TP=4) for the BF16 baseline.
 
-| | BF16 | HI2 PTQ | HI2 PTQ + QAD |
-| --- | ---: | ---: | ---: |
-| Quantized linears | 45.4 GiB | 8.5 GiB | 8.5 GiB |
-| Measured bpw (every byte of the linears) | 16 | 3.012 | 3.012 |
-| INT2 / INT4 share of the weights | | 66 % / 34 % | 66 % / 34 % |
-| Checkpoint | 51.7 GiB | 14.9 GiB (3.47x smaller) | 14.9 GiB |
-| Perplexity, docs text | 4.107 | 4.307 (x 1.049) | 4.282 (x 1.043) |
-| Perplexity, mix text | 5.162 | 4.835 (x 0.937) | 5.574 (x 1.080) |
-| First tool as BF16 (66 agent prompts) | 100 % | 54.5 % (43-66) | **66.7 %** (55-77) |
-| Same tool and argument | 100 % | 45.5 % | **56.1 %** |
-| Well-formed tool calls | 87.9 % | 74.2 % | 78.8 % |
+| | BF16 | HI2 PTQ | HI2 PTQ + QAD | AWQ INT4 (cyankiwi) |
+| --- | ---: | ---: | ---: | ---: |
+| Quantized linears | 45.4 GiB | 8.5 GiB | 8.5 GiB | not measured |
+| Measured bpw (every byte of the linears) | 16 | 3.012 | 3.012 | about 4.5 |
+| INT2 / INT4 share of the weights | | 66 % / 34 % | 66 % / 34 % | INT4 only |
+| Checkpoint | 51.7 GiB | 14.9 GiB (3.47x smaller) | 14.9 GiB | 20 GB |
+| Perplexity, docs text | 4.107 | 4.307 (x 1.049) | 4.282 (x 1.043) | 4.189 (x 1.020) |
+| Perplexity, mix text | 5.162 | 4.835 (x 0.937) | 5.574 (x 1.080) | 5.219 (x 1.011) |
+| First tool as BF16 (66 agent prompts) | 100 % | 54.5 % (43-66) | 66.7 % (55-77) | **81.8 %** (71-89) |
+| Same tool and argument | 100 % | 45.5 % | 56.1 % | **68.2 %** |
+| Well-formed tool calls | 87.9 % | 74.2 % | 78.8 % | 83.3 % |
 
 Read this as follows.
 
