@@ -20,10 +20,6 @@ MAX_TOKENS = 1
 DEFAULT_LIMIT = 2000
 METRICS = ("acc_norm",)
 ENV = "HI2_BENCH_MC_DATA"
-DEFAULT_DIR = (
-    "/home/chenco_adm/w4a8_runs/hadamard-int2/mc_data/"
-    "ikawrakow__validation-datasets-for-llama.cpp"
-)
 SETS = {
     "arc_easy": "arc-easy-validation.json",
     "arc_challenge": "arc-challenge-validation.json",
@@ -33,7 +29,14 @@ SETS = {
 
 
 def load(limit, seed):
-    d = Path(os.environ.get(ENV, DEFAULT_DIR))
+    root = os.environ.get(ENV, "")
+    if not root:
+        raise DatasetMissing(
+            f"set ${ENV} to the directory with the llama.cpp validation JSON files "
+            f"(ikawrakow/validation-datasets-for-llama.cpp, converted with its "
+            f"`convert` tool)"
+        )
+    d = Path(root)
     per = None if limit is None else max(1, limit // len(SETS))
     items = []
     for name, fn in SETS.items():

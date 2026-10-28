@@ -124,10 +124,11 @@ The whole suite is about 2 hours at these rates.
 The Hugging Face tasks load with `datasets.load_dataset` (`HI2_BENCH_CACHE` sets its
 `cache_dir`; `HF_DATASETS_OFFLINE=1` uses the cache only). A client environment without
 `datasets` reads jsonl exports instead: run `python -m bench.data export DIR` where
-`datasets` works and set `HI2_BENCH_DATA=DIR`. On the build box the exports are in
-`/home/chenco_adm/w4a8_runs/hadamard-int2/bench_data/export`. The MC files are found
-through `HI2_BENCH_MC_DATA` (default: the build box's copy). A missing dataset skips that
-task with a message that says how to get it; the other tasks still run.
+`datasets` works and set `HI2_BENCH_DATA=DIR`. The MC files are found through
+`HI2_BENCH_MC_DATA`, the directory with the llama.cpp validation JSON files
+(`ikawrakow/validation-datasets-for-llama.cpp`, converted with its `convert` tool). A
+missing dataset skips that task with a message that says how to get it; the other tasks
+still run.
 
 Dependencies: the standard library, plus `datasets` for the Hugging Face loaders. The
 statistics need nothing else.
