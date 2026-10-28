@@ -90,6 +90,16 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 * A single "default ratio" is the wrong knob: the budget depends on the domain, so the default
   quality rule has to be picked per use case (tool calls need a KLD below 0.01 on their own
   text, instruction following tolerates 0.13).
+* **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
+  kernels.** The faulting client is the copy engine (SDMA0), so no custom kernel is involved;
+  the faulting address is a process virtual address, and the faults walk over consecutive
+  4 KiB pages of it. The translation succeeds (`MAPPING_ERROR: 0x0`, `WALKER_ERROR: 0x0`) and
+  the protection check refuses the access, which is what the runtime's "Page not present or
+  supervisor privilege" means. The two crashes are the two directions of a bulk transfer
+  between VRAM and pageable host memory: a read during the probe's host-to-device weight
+  loads, a write when a layer's artifact is copied back to the host. The box is not short of
+  memory (about 328 GiB free, no swap pressure, no OOM kill) and no other process has ever
+  faulted on those cards - the serving arms ran for hours over the same four.
 
 ## Next steps
 
@@ -105,6 +115,19 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    they moved to a different card, so they are not one bad card. The run is 2 h of a 5.3 h
    phase each time, and the probe cache is complete, so a restart is cheap: the probe is
    skipped and the phase starts again.
+
+   The kernel log says what they are (see the finding above): the copy engine addressing
+   **pageable host memory**, in both directions. What to try next, in order:
+
+   a. **Pin the host buffers the big transfers use** - a pinned staging buffer for the 40 MiB
+      hidden-state slices that go to the card each step, and for the write-back of a layer's
+      artifact - so the copy engine never addresses pageable memory. The cost is one extra
+      host memcpy of 40 MiB a step, about 4 ms against a 1 s step.
+   b. **Serialize the copies against the optimizer step**, so a copy cannot still be in flight
+      when its host buffer is released.
+   c. **Reproduce it outside the pipeline**: a loop of pageable 40 MiB copies in both
+      directions under a 150 GiB RSS process, on one card, for a few hours. That is the
+      cheapest way to tell the runtime's direct-DMA path from our own use of it.
 3. The teacher-forced domain KLD of the 27B anchor is still missing: the BF16 reference arm
    carries no teacher-forced pass, so the reference's own log-probs on its completions are
    absent. It needs a second BF16 27B serve at TP=4, which needs all four cards. **Armed** in
