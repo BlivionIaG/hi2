@@ -371,9 +371,11 @@ on the reference's own completions.
 ### The ladder
 
 Four points from one shared phase 1, one probe and one encode pass (`--max-error-ratio
-2,4,8,16 --no-qad`, mixed calibration, sensitivity probe, 128 x 2048 tokens, so the same
-calibration and the same allocation mode as the 4B checkpoints above). The KLD is `hi2 eval` on
-the held-out study text: the same measurement as the rest of this page.
+2,4,8,16 --no-qad`, the study text as the calibration, sensitivity probe, 128 x 2048 tokens, so
+the same allocation mode as the 4B checkpoints above). The KLD is `hi2 eval` on the held-out
+study text: the same measurement as the rest of this page. The calibration tokens are the
+first 262 144 tokens of that text and the measurement starts after 800 000, so the KLD is on
+tokens the calibration never saw, but it is still the corpus the model was calibrated on.
 
 | point | ratio | bpw | KLD | top-1 | PPL x |
 | --- | --- | --- | --- | --- | --- |
@@ -388,9 +390,9 @@ mc 52.1 %, decision 72.7 %.
 
 ### What the KLD costs on the suite
 
-The ladder's four points and the three 4B checkpoints that were already on the box, against
+The ladder's four points and the four 4B checkpoints that were already on the box, against
 the same reference. Accuracy of the quantized model minus the reference, in points, with a
-paired bootstrap 95 % CI. The last three rows are the earlier checkpoints: they were made with
+paired bootstrap 95 % CI. The last four rows are the earlier checkpoints: they were made with
 an older version of the quantizer, so they are a second series, not a continuation of the
 ladder.
 
@@ -403,6 +405,7 @@ ladder.
 | ptq-b3.0 | 2.998 | 0.1607 | **-11.8 [-13.0, -10.6]** | -18.0 [-20.5, -15.6] | -22.0 [-29.9, -14.6] | -21.0 [-26.5, -15.6] | -9.2 [-13.0, -5.6] | -13.0 [-17.2, -9.0] | -0.6 [-1.9, 0.0] | -6.7 [-8.3, -5.0] | -4.5 [-10.6, +1.5] |
 | b3.0-qad | 2.998 | 0.0607 | **-9.9 [-11.0, -8.8]** | -14.3 [-16.7, -12.1] | -20.1 [-28.0, -12.2] | -15.2 [-20.6, -9.7] | -15.2 [-19.2, -11.4] | -6.6 [-10.2, -3.2] | -0.6 [-1.9, 0.0] | -5.4 [-7.1, -3.9] | -3.0 [-9.1, +3.0] |
 | b3.5-qad | 3.499 | 0.0416 | **-4.5 [-5.4, -3.5]** | -3.5 [-5.2, -1.7] | -9.1 [-15.9, -2.4] | -10.1 [-15.2, -5.4] | -11.0 [-14.4, -7.8] | -2.2 [-5.4, +0.8] | -0.6 [-1.9, 0.0] | -3.3 [-4.7, -2.0] | 0.0 [-7.6, +7.6] |
+| b4.0-sens | 4.000 | 0.0344 | **-2.5 [-3.3, -1.7]** | -1.7 [-3.3, -0.2] | -1.2 [-6.7, +4.3] | **-6.2 [-10.5, -1.9]** | **-3.2 [-5.8, -0.6]** | **-4.4 [-7.6, -1.4]** | -1.3 [-3.1, 0.0] | -1.1 [-2.2, +0.1] | **-28.8 [-39.4, -18.2]** |
 
 What it says:
 
@@ -415,12 +418,17 @@ What it says:
    with the fewest items and the widest CI, only breaks at 0.0900, where it loses 22 points.
    Instruction following, tool calls and long-context retrieval are flat at 0.0188, and
    long-context retrieval never loses more than 0.6 points anywhere on the ladder.
-3. **At equal KLD the two series are not equal.** The ladder's r16 point (2.693 bpw, KLD
-   0.1595) loses 18.2 points, the older 3.0 bpw PTQ checkpoint (KLD 0.1607) loses 11.8. The
-   QAD checkpoint at 3.0 bpw (KLD 0.0607) loses 9.9 where the ladder at a slightly higher KLD
-   (0.0900) loses 8.1. The KLD is the better predictor, but the older checkpoints hold up
-   better than the ladder at the same KLD, which is the opposite of what a pure
-   distribution-shift story would predict and is worth a separate look.
+3. **At equal KLD the two series are not equal, and the KLDs are not on the same footing.** The
+   ladder's r16 point (2.693 bpw, KLD 0.1595) loses 18.2 points, the older 3.0 bpw PTQ checkpoint
+   (KLD 0.1607) loses 11.8. The QAD checkpoint at 3.0 bpw (KLD 0.0607) loses 9.9 where the
+   ladder at a slightly higher KLD (0.0900) loses 8.1. Part of this is measurement: the ladder
+   and the 4.0 bpw point are calibrated on the study text and their KLD is measured on it (on
+   tokens the calibration did not see), so their KLD is flattered, while the three mixed-calibrated
+   checkpoints are measured out of domain. The fair comparison is the domain KLD below, and it
+   still shows the ladder's points are the weaker ones where it matters (the decision family).
+   Inside the group that *is* comparable the curve is consistent: the 4.0 bpw point, calibrated on
+   the same text as the ladder, loses 2.5 points at a KLD of 0.0344, between the ladder's r2
+   (-0.3 at 0.0188) and r4 (-3.1 at 0.0461).
 4. **QAD buys KLD, not task accuracy.** Going from the 3.0 bpw PTQ checkpoint to the 3.0 bpw
    QAD one halves the KLD (0.161 to 0.061) and improves the pooled loss from -11.8 to -9.9
    points: most of the KLD gain does not reach the tasks. The 3.5 bpw QAD checkpoint, with
@@ -447,6 +455,7 @@ the number to look at for a given use case.
 | ptq-b3.0 | 2.998 | 0.1607 | 0.1703 | 0.0902 | 0.2029 | 0.6132 | 0.0573 | 0.1814 |
 | b3.0-qad | 2.998 | 0.0607 | 0.1293 | 0.0794 | 0.1742 | 0.5386 | 0.0344 | 0.1508 |
 | b3.5-qad | 3.499 | 0.0416 | 0.0838 | 0.0496 | 0.1066 | 0.3140 | 0.0235 | 0.1462 |
+| b4.0-sens | 4.000 | 0.0344 | 0.0592 | 0.0300 | 0.0648 | 0.2166 | 0.0219 | 0.1086 |
 
 The spread across families is large and it is not the same spread everywhere: at the 4.2 bpw
 point the instruction-following text is 14 times off the study KLD (0.1296 against 0.0188)
