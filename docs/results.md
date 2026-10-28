@@ -436,35 +436,40 @@ Three things follow from the count.
    per tensor: Q5_K (131 tensors), IQ4_XS (117), Q4_K (104), Q6_K (30), IQ4_NL (7), Q3_K (7),
    IQ3_S (4), Q8_0 (106).
 
-### The quality side: KLD against BF16 on the same window
+### The quality side: KLD against BF16 on the same windows
 
 The same comparison for quality. The method is llama.cpp's own KLD
 (`llama-perplexity --kl-divergence`): KL(BF16 || quantized) over the whole vocabulary, in
-nats/token, on the **same held-out window the HI2 numbers use** (the study text at offset
-800 000, 8 x 2048 tokens), against the GGUF's own BF16 base (unsloth's BF16 conversion of the
-same weights). Two differences to keep in mind: llama.cpp scores the second half of each
-2048-token chunk (8 192 positions) while `hi2 eval` scores every position (16 376), and the
-two run in different engines (llama.cpp against transformers). The KLD is the same quantity in
-both, which is why the 4B tables compare them.
+nats/token, on the **same held-out windows the HI2 numbers use** (the study text at offset
+800 000 and the mix text, 8 x 2048 tokens each), against the GGUF's own BF16 base (unsloth's
+BF16 conversion of the same weights). Two differences to keep in mind: llama.cpp scores the
+second half of each 2048-token chunk (8 192 positions) while `hi2 eval` scores every position
+(16 376), and the two run in different engines (llama.cpp against transformers). The KLD is the
+same quantity in both, which is why the 4B tables compare them.
 
-| format | bpw (body) | body MiB | file MiB | KLD (nats/token) | PPL x | same top-1 |
-|---|---:|---:|---:|---:|---:|---:|
-| BF16 | 16 | - | 52 126 MiB (GGUF) | 0 | 1.000 | 100 % |
-| **GGUF Q4_K_M (unsloth)** | 4.738 | 13 963 | 15 702 | **0.0142** | 1.009 | 95.0 % |
-| AWQ INT4 (cyankiwi) | 4.625 | 13 395 | 20 044 | not measured | 1.020 | not measured |
-| **HI2 3.0 bpw (PTQ)** | 3.012 | 8 745 | 15 290 | 0.0975 | 1.049 | 88.1 % |
-| **HI2 3.0 bpw (PTQ + QAD)** | 3.012 | 8 745 | 15 290 | **0.0901** | 1.043 | 88.8 % |
+| format | bpw (body) | body MiB | file MiB | KLD docs | KLD mix | PPL x docs | PPL x mix | top-1 docs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| BF16 | 16 | - | 52 126 MiB (GGUF) | 0 | 0 | 1.000 | 1.000 | 100 % |
+| **GGUF Q4_K_M (unsloth)** | 4.738 | 13 963 | 15 702 | **0.0142** | **0.0776** | 1.009 | 1.066 | 95.0 % |
+| AWQ INT4 (cyankiwi) | 4.625 | 13 395 | 20 044 | not measured | not measured | 1.020 | 1.011 | not measured |
+| **HI2 3.0 bpw (PTQ)** | 3.012 | 8 745 | 15 290 | 0.0975 | 0.2171 | 1.049 | 0.937 | 88.1 % |
+| **HI2 3.0 bpw (PTQ + QAD)** | 3.012 | 8 745 | 15 290 | **0.0901** | 0.2947 | 1.043 | 1.080 | 88.8 % |
 
-1. **The GGUF buys its quality with bits.** Q4_K_M has a KLD of 0.0142, six times lower than
-   HI2 at 3.0 bpw (0.0901 with QAD), and it pays 1.57 bpw more for it: 13 963 MiB of decoder
-   linears against 8 745. The file sizes are much closer (15 702 against 15 290 MiB) because the
-   GGUF also quantizes the embedding, the head and the MTP layer.
-2. **At equal file size HI2 is ahead**, and it is the only one of the three that is under
+1. **The GGUF buys its quality with bits.** Q4_K_M has a KLD of 0.0142 on the docs text, six
+   times lower than HI2 at 3.0 bpw (0.0901 with QAD), and it pays 1.57 bpw more for it:
+   13 963 MiB of decoder linears against 8 745. The file sizes are much closer (15 702 against
+   15 290 MiB) because the GGUF also quantizes the embedding, the head and the MTP layer.
+2. **The mix text is where the formats separate.** Every format is far worse on it than on the
+   docs text: the GGUF's KLD goes from 0.0142 to 0.0776 (x 5.5), HI2 PTQ from 0.0975 to 0.2171
+   (x 2.2) and HI2 QAD from 0.0901 to 0.2947 (x 3.3). QAD helps on the docs text and hurts on
+   the mix text, which is the same split the 27B section above reports; the GGUF, which has no
+   distillation step, is the only one of the three that does not have a bad text.
+3. **At equal file size HI2 is ahead**, and it is the only one of the three that is under
    16 GiB. The AWQ INT4 checkpoint is the largest file of the three, 28 % above the GGUF and
    31 % above HI2, and it has no KLD yet: it is a compressed-tensors pack-quantized
-   checkpoint, not an HI2 checkpoint, so `hi2 eval` cannot read it and a KLD path for it does
-   not exist (next step 5 in the handover).
-3. **The AWQ's perplexity says it is close to BF16** (x 1.020 on the docs text against
+   checkpoint, not an HI2 checkpoint, so `hi2 eval` cannot read it and llama.cpp's converter
+   has no support for it either (next step 5 in the handover).
+4. **The AWQ's perplexity says it is close to BF16** (x 1.020 on the docs text against
    x 1.043 for HI2 with QAD and x 1.009 for the GGUF), but that is a perplexity ratio in
    vLLM, not a distribution distance, and the HI2 mix text already shows how a ratio near 1
    can hide a different distribution (point 3 of the 27B section above).
