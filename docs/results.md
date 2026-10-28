@@ -428,8 +428,8 @@ Three things follow from the count.
    smaller than the AWQ (15 290 MiB against 15 702 and 20 044), and its quantized body is a third
    smaller than AWQ's. The AWQ number is its weight files; its tokenizer adds 22 MiB.
 2. **The AWQ number is not 4.5 but 4.625 bpw**: 4.000 bpw of packed int4, 0.500 of scales
-   (fp16, group 32) and 0.125 of zero points. It also leaves 97 of the 496 linears dense,
-   and keeps the embedding and the head in fp16.
+   (bf16, group 32) and 0.125 of zero points (int32, one per eight groups). It also leaves 97 of
+   the 496 linears dense, and keeps the embedding and the head in fp16.
 3. **The GGUF quantizes more than the others**: besides the decoder linears (4.738 bpw) it
    quantizes the embedding and the head (2 542.8 M weights, 1 676.7 MiB, 5.531 bpw) and the
    MTP layer (52.4 M weights, 41.0 MiB), which HI2 and AWQ keep in fp16. Its types are mixed
