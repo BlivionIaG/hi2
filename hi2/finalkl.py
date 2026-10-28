@@ -31,7 +31,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 
 from .format import HI2Tensor, assemble, decode_params, fwht_groups, ladder_dequantize
-from .pinned import PinnedWindow, module_to_host
+from .pinned import PinnedWindow, module_to_device, module_to_host
 from .qad import _ste, is_norm_param
 
 LOSS_CHUNK = 256  # positions per LM-head chunk in the loss
@@ -247,7 +247,7 @@ def final_kl(
 
     def place():
         if len(devs) == 1:
-            model.to(dev)
+            module_to_device(model, dev)
             return []
         return shard_layers(model, devs)
 

@@ -13,6 +13,7 @@ from pathlib import Path
 import torch
 
 from .checkpoint import export_dense
+from .pinned import module_to_device
 
 # KL(original || quantised) per token below which the quantised model is treated as
 # distribution-lossless (the "KL below about 0.01" threshold of the SLQ paper, Fig. 1b).
@@ -24,7 +25,7 @@ def _place(model, devices: list[str]):
     not fit one GPU in the evaluation dtype). Returns the device of the inputs."""
     devs = [torch.device(d) for d in devices]
     if len(devs) == 1:
-        return model.to(devs[0]), devs[0]
+        return module_to_device(model, devs[0]), devs[0]
     from .sensitivity import shard_layers
 
     shard_layers(model, devs)

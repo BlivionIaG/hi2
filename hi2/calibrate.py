@@ -299,6 +299,8 @@ def encode_many(
         prepared.append((w, inv))
     n_dev = max((len(ex.shards(r.table.shape[0])) for r in reqs), default=1)
 
+    stager = PinnedWindow()
+
     def on_device(i: int):
         dev = ex.devices[i]
         activate(dev)
@@ -312,7 +314,7 @@ def encode_many(
                 continue
             _, lo, hi = shards[i]
             had, k = r.table.had, r.table.shape[1]
-            wt = w[lo:hi].to(dev, torch.float32)
+            wt = stager.to_device(w[lo:hi], dev, dtype=torch.float32)
             wt = fwht_groups(wt, had) if had.any() else wt
             if use_gptq[ri]:
                 fk = _factor_key(r, ri)
@@ -439,8 +441,10 @@ def encode_with_picks_reference(
 
     use_gptq = cfg.rounding == "gptq" and sigma is not None
 
+    stager = PinnedWindow()
+
     def shard(dev, lo, hi):
-        wt = w[lo:hi].to(dev, torch.float32)
+        wt = stager.to_device(w[lo:hi], dev, dtype=torch.float32)
         wt = fwht_groups(wt, had) if had.any() else wt
         if use_gptq:
             from .hessian import (
