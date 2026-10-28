@@ -402,11 +402,67 @@ What it says:
    53.0 % for the same-size format. The extra 1.5 bpw buy most of the loss, which is the
    clearest single argument for raising the default bit rate on agentic work.
 
-Not measured here: the teacher-forced domain KLD of the 27B anchor. The BF16 reference arm
-carries no teacher-forced pass (the reference is its own reference), so the reference's own
-log-probs on its completions are missing and the candidates' log-probs cannot be turned into
-a KLD against it. That needs a second BF16 serve at TP=4, which needs all four cards and so
-waits for the 27B rerun to finish; it is armed and runs on its own when the rerun lands.
+Measured on 2026-10-28, in the next section.
+
+### The teacher-forced domain KLD of the 27B anchor
+
+The measurement the anchor was missing: a second BF16 27B serve at TP=4 that carries a
+teacher-forced pass, scored on the **first** reference's completions, so it pairs exactly with
+the candidates' log-probs. KL(BF16 || quantized) over the vocabulary, in nats/token, per task
+family, on the text the tasks were scored on.
+
+| candidate | bpw (body) | gsm8k | humaneval | mbpp | ifeval | toolcall | decision |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| HI2 3.0 bpw (PTQ) | 3.012 | 0.04187 | 0.02604 | 0.05670 | 0.18594 | 0.02984 | 0.07913 |
+| HI2 3.0 bpw (PTQ + QAD) | 3.012 | 0.05068 | 0.02590 | 0.05485 | 0.18384 | 0.04875 | 0.06925 |
+| **AWQ INT4 (cyankiwi)** | 4.625 | **0.00353** | **0.00191** | **0.00719** | **0.02002** | **0.00980** | **0.02323** |
+
+(The QAD row is the 2026-10-27 `fast` checkpoint, the one the suite table above scores.)
+
+1. **The 4B study's budgets hold at 27B.** The target table further down says a tool-calling
+   workload needs a domain KLD below 0.0094, instruction following tolerates 0.1296 and math
+   0.0350. AWQ INT4 is inside every one of those budgets (tool calls at 0.0098, just outside),
+   which is what its suite column shows: the smallest pooled loss of the three. HI2 at 3.0 bpw
+   is over the tool-call budget on both points (PTQ 3.2x over, QAD 5.2x over) and over the
+   instruction-following one (1.4x over), and those are the two families where it loses.
+2. **The QAD moved the damage.** It buys the decision family (0.06925 against PTQ's 0.07913,
+   13 % less) and gives a little on mbpp, humaneval and ifeval, and it pays for it on the two
+   families the suite shows it losing: tool calls (0.04875 against 0.02984, **63 % worse**) and
+   math (0.05068 against 0.04187, 21 % worse). A recipe that improves the model's agreement
+   with the reference's *decision* while making its *tool content* worse is what the pooled
+   -8.2 against -6.2 in the table above already said.
+3. **The gap AWQ closes is not a rounding difference.** It is 4 to 12x lower on every family,
+   including 9.3x on instruction following and 11.9x on math. It buys that with 1.6 bpw more
+   (4.625 against 3.012) and a 31 % bigger file.
+
+### The 27B noise floor: the same model, twice
+
+The BF16 27B reference was run a second time at TP=4 on the same four cards, with the
+teacher-forced pass, and paired against the first run exactly like the quantized points.
+
+| task | n | run 1 % | run 2 % | diff [95 % CI] | R->W % | W->R % |
+|---|---|---|---|---|---|---|
+| gsm8k | 100 | 95.0 | 95.0 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| humaneval | 100 | 95.0 | 95.0 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| mbpp | 100 | 93.0 | 93.0 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| ifeval | 100 | 94.0 | 94.0 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| toolcall | 100 | 60.0 | 60.0 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| needle | 100 | 100.0 | 100.0 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| mc | 100 | 64.0 | 64.0 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| decision | 66 | 87.9 | 87.9 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| **pooled** | 766 | 86.1 | 86.1 | **+0.0 [+0.0, +0.0]** | | |
+
+**The floor at this size is exactly zero, not a fraction of a point.** The two runs are greedy
+decodes of the same weights on the same cards with the same batching, and every one of the 766
+items lands the same way - the decision family reproduces the same first tool call on all 66
+prompts and the same argument on all 66. The 4B floor was half a point, because there the two
+runs sat on different GPUs and different servers.
+
+So at 27B every difference against the reference is the model's and none of it is the harness's:
+the intervals in the suite table above are the item-level uncertainty alone. The one caveat is
+the needle family, where the harness reported a prompt fingerprint difference between the two
+runs (it is the only family that does not reproduce byte-identically); it scored 100 % in both,
+so it did not move a number.
 
 ### What the other formats cost at this size (measured)
 
