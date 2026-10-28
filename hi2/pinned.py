@@ -18,6 +18,8 @@ on the device, after the copy, exactly as ``tensor.to(dev, dtype)`` would do it.
 
 from __future__ import annotations
 
+import threading
+
 import torch
 
 DEFAULT_WINDOW = 64 << 20  # 64 MiB
@@ -26,21 +28,25 @@ DEFAULT_WINDOW = 64 << 20  # 64 MiB
 class PinnedWindow:
     """A pinned host window the copy engine can address safely.
 
-    One instance per thread: the copies run in parallel worker threads, and a
-    shared buffer would be a race. The window holds the staging buffers, one per
-    (shape, dtype) it has seen.
+    The staging buffers are **per thread**: the encoders shard a tensor across the
+    devices and run the shards in parallel threads, and a shared buffer would have the
+    shards overwrite each other's data. One window per thread, the buffers reused
+    within it, so the pinned memory stays bounded.
     """
 
     def __init__(self, nbytes: int = DEFAULT_WINDOW):
         self.nbytes = int(nbytes)
-        self._bufs: dict[tuple, torch.Tensor] = {}
+        self._local = threading.local()
 
     def _buf(self, shape: tuple, dtype: torch.dtype) -> torch.Tensor:
+        bufs = getattr(self._local, "bufs", None)
+        if bufs is None:
+            bufs = self._local.bufs = {}
         key = (shape, dtype)
-        b = self._bufs.get(key)
+        b = bufs.get(key)
         if b is None:
             b = torch.empty(shape, dtype=dtype, pin_memory=True)
-            self._bufs[key] = b
+            bufs[key] = b
         return b
 
     def _rows(self, src: torch.Tensor) -> int:
