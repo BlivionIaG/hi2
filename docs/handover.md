@@ -37,6 +37,10 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   item for item.
 * Experiment scripts cut to three drivers with no host paths; the AWQ INT4 column added to
   the 27B comparison (AWQ is clearly better: 81.8 % first-tool agreement against 66.7 %).
+* Calibration study on the 4B: a four-point PTQ ladder (one shared phase 1, probe and encode)
+  plus the four checkpoints already on the box, eight points on the full 4765-item suite with
+  paired statistics, the teacher-forced domain KLD per task family, a target table per use case
+  and the noise floor. The tables and the reasoning are in [results.md](results.md).
 
 ## Findings to keep in mind
 
@@ -51,15 +55,31 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 * The 0.42 x sqrt(KLD) rule held on the smoke run as well: 18.8 % of the items flipped against
   16.8 % predicted from the mean KLD of 0.16.
 * The first Triton autotune of the linear-attention backward takes about 10 minutes.
+* **The suite is stable enough to read small differences.** A second run of the same BF16 model,
+  on another GPU and another server, reproduces the first: under half a point on every family,
+  a fifth of a point pooled, the same first tool call on all 66 decision prompts, and a
+  teacher-forced KLD of 2e-05 or less. Every difference in the calibration tables is therefore a
+  property of the checkpoint.
+* **On this 4B nothing below 4.2 bpw is free.** The families that break break early: tool calls
+  lose at a domain KLD of 0.0219 (4.0 bpw), math at 0.0592, instruction following at 0.2166,
+  short programs at 0.0442 (4.2 bpw). The agent-decision family is not ordered by KLD at all:
+  two checkpoints 0.2 bpw apart land 44 points apart on it.
+* A single "default ratio" is the wrong knob: the budget depends on the domain, so the default
+  quality rule has to be picked per use case (tool calls need a KLD below 0.01 on their own
+  text, instruction following tolerates 0.13).
 
 ## Next steps
 
-1. Calibration study (plan agreed): PTQ ladder on the 4B (ratios 2-16 in one shared pass) plus
-   the existing 4B checkpoints, the full suite on a few points with paired statistics, domain
-   KLD per task family, then a target table (KLD per use case). One anchor on the 27B.
+1. Calibration study: **done**. PTQ ladder on the 4B (ratios 2-16 in one shared pass) plus the
+   existing 4B checkpoints, the full suite on eight points with paired statistics, the domain
+   KLD per task family, a target table (KLD per use case) and the noise floor. In
+   [results.md](results.md). The 27B anchor is running.
 2. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
-   Hessians); score docs and mix KLD, decisions and the new suite. Needs a go-ahead.
-3. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1.
+   Hessians); score docs and mix KLD, decisions and the new suite. Staged and queued behind
+   the anchor. It needs `--sens-dtype float16`: the 27B in fp32 does not fit a shard of a
+   30 GiB card.
+3. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1, per use case
+   rather than as one global ratio.
 4. Optional: fp16 matrix math in QAD (layer forward and backward is 94 % of a step), INT3 rows,
    a KLD path for AWQ checkpoints.
 5. Before sharing v1: README note that checkpoints need the vLLM fork, check old commits for

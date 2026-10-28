@@ -365,8 +365,9 @@ EXL3 or GGUF at this size, and a QAD run with the default preset.
 
 The KLD in the tables above is a number on held-out text. This section asks what it costs on
 work. The method: a PTQ ladder on Qwen3.5-4B, the full task suite run against a BF16 reference
-of the same model, every item paired, and the teacher-forced domain KLD of each point measured
-on the reference's own completions.
+of the same model, every item paired, the teacher-forced domain KLD of each point measured on
+the reference's own completions, and a second run of the reference itself to know what the
+measurement can produce on its own (the noise floor, below).
 
 ### The ladder
 
@@ -417,7 +418,8 @@ What it says:
    mbpp (-5.4 points, p = 0.007) and the multiple-choice set (-1.1). HumanEval, the family
    with the fewest items and the widest CI, only breaks at 0.0900, where it loses 22 points.
    Instruction following, tool calls and long-context retrieval are flat at 0.0188, and
-   long-context retrieval never loses more than 0.6 points anywhere on the ladder.
+   long-context retrieval is the most robust family of all: it never loses more than 2.5
+   points anywhere in the table, and 1.3 outside the 3.3 bpw point.
 3. **At equal KLD the two series are not equal, and the KLDs are not on the same footing.** The
    ladder's r16 point (2.693 bpw, KLD 0.1595) loses 18.2 points, the older 3.0 bpw PTQ checkpoint
    (KLD 0.1607) loses 11.8. The QAD checkpoint at 3.0 bpw (KLD 0.0607) loses 9.9 where the
@@ -437,8 +439,39 @@ What it says:
 5. **The agent-decision set moves the other way at the top of the ladder.** The 4B at
    0.0188 makes *more* well-formed first tool calls than BF16 (87.9 % against 72.7 %, 11 items
    of 66). This is the opposite of the 27B result above, where the QAD model trailed the PTQ
-   model on first-tool agreement. It needs the noise floor before it can be believed: greedy
-   decoding is not bit-stable on this stack, and the decision set is small.
+   model on first-tool agreement. The noise floor below says it is not a measurement artefact.
+
+### The noise floor: the same model, twice
+
+Greedy decoding is not bit-stable everywhere, and the decision family has only 66 items, so a
+difference has to be read against what the measurement itself can produce. The BF16 reference
+was therefore run a second time, on another GPU and another server, through the same 4765-item
+suite, and paired against the first run exactly like the quantized points.
+
+| task | n | run 1 % | run 2 % | diff [95 % CI] | R->W % | W->R % |
+|---|---|---|---|---|---|---|
+| gsm8k | 1319 | 91.5 | 91.4 | -0.1 [-0.4, +0.2] | 0.2 | 0.1 |
+| humaneval | 164 | 82.9 | 83.5 | +0.6 [+0.0, +1.8] | 0.0 | 0.6 |
+| mbpp | 257 | 75.1 | 74.7 | -0.4 [-1.2, +0.0] | 0.4 | 0.0 |
+| ifeval | 500 | 92.2 | 92.2 | +0.0 [-0.8, +0.8] | 0.4 | 0.4 |
+| toolcall | 500 | 56.2 | 56.2 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| needle | 160 | 100.0 | 100.0 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| mc | 1799 | 52.1 | 52.0 | -0.1 [-0.2, +0.0] | 0.1 | 0.0 |
+| decision | 66 | 72.7 | 72.7 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
+| **pooled** | 4765 | 77.8 | 77.9 | **-0.0 [-0.2, +0.1]** | | |
+
+The floor is under half a point on every family and a fifth of a point pooled, and the
+teacher-forced pass of the same model against itself gives a KLD of 2e-05 or less in every
+family: that is the serving stack's own spread in log-prob space, three orders of magnitude
+below the smallest quantized point (0.0094 on tool calls). The decision set, the smallest
+family, is the one that reproduces exactly: the same first tool call on all 66 prompts, and
+the same argument on all 66.
+
+Two consequences. The decision family's +15.2 points at the 4.2 bpw ladder point is not
+noise, and neither is the -28.8 points of the 4.0 bpw point: two checkpoints 0.2 bpw apart
+land 44 points apart on that family, and no KLD orders them (the 3.8 bpw point, with a higher
+domain KLD than both, loses 4.5). And the flip rates in the table above are all real: the
+floor flips 0.0 to 0.4 % of a family's items, the quantized points flip 3.5 to 21.7 %.
 
 ### The KLD depends on the domain
 
@@ -466,23 +499,26 @@ little about what a model will do on a given kind of work.
 
 For each family, the domain KLD up to which the family shows no measurable loss, and the
 bit rate that reaches it. "Flat" means the paired 95 % CI of the accuracy difference contains
-zero; the next column is the first ladder point that does lose.
+zero; the next column is the first point that does lose. The noise floor is half a point, so
+a CI that excludes zero is a real loss. The needle and multiple-choice families are not scored
+teacher-forced, so they have no domain KLD and get no budget.
 
 | use case | family | flat up to (domain KLD) | bpw | first point that loses |
 | --- | --- | --- | --- | --- |
-| tool calling | toolcall | 0.0094 | 4.2 | 0.0267 at 3.8 bpw: -5.0 points |
-| math | gsm8k | 0.0350 | 4.2 | 0.0931 at 3.8 bpw: -2.4 points |
+| tool calling | toolcall | 0.0094 | 4.2 | 0.0219 at 4.0 bpw: -4.4 points |
+| math | gsm8k | 0.0350 | 4.2 | 0.0592 at 4.0 bpw: -1.7 points |
 | code, function synthesis | humaneval | 0.0413 | 3.8 | 0.0761 at 3.3 bpw: -22.0 points |
 | code, short programs | mbpp | below 0.0442 | above 4.2 | 0.0442 at 4.2 bpw: -5.4 points |
-| instruction following | ifeval | 0.1296 | 4.2 | 0.3247 at 3.8 bpw: -6.2 points |
-| long-context retrieval | needle | not measurable | any | -0.6 points at 2.7 bpw |
-| agent decisions | decision | see the noise floor | | |
+| instruction following | ifeval | 0.1296 | 4.2 | 0.2166 at 4.0 bpw: -3.2 points |
+| long-context retrieval | needle | not measurable | any | -2.5 points at 3.3 bpw |
+| agent decisions | decision | 0.0751 | 4.2 | 0.1086 at 4.0 bpw: -28.8 points, and the KLD does not order this family |
 
 Two things to take from it. The budget is not uniform: a tool-calling workload needs a KLD
 below 0.01 on its own text, while instruction following tolerates 0.13, thirteen times more.
-And on this 4B model **nothing below 4.2 bpw is free**: every family that has a measurable
-loss starts losing between 4.2 and 3.8 bpw, and the format's default recipe (ratio 6 with
-QAD, 3.0 to 3.5 bpw) sits in the range where the code and instruction-following families
-lose 5 to 15 points. The QAD checkpoints buy KLD where it is cheapest (tool calls, 0.0344 at
-3.0 bpw against 0.0573 for PTQ) and barely at all where it is most needed (instruction
-following, 0.5386 against 0.6132).
+And on this 4B model **nothing below 4.2 bpw is free**: the 4.2 bpw point is the last one
+without a measurable loss on the families that break, and the next point down (4.0 bpw) already
+loses on tool calls (-4.4 points), instruction following (-3.2), math (-1.7) and short programs
+(-6.2). The format's default recipe (ratio 6 with QAD, 3.0 to 3.5 bpw) sits in the range where
+the code and instruction-following families lose 5 to 15 points. The QAD checkpoints buy KLD
+where it is cheapest (tool calls, 0.0344 at 3.0 bpw against 0.0573 for PTQ) and barely at all
+where it is most needed (instruction following, 0.5386 against 0.6132).
