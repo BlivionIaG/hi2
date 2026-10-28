@@ -91,15 +91,25 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   quality rule has to be picked per use case (tool calls need a KLD below 0.01 on their own
   text, instruction following tolerates 0.13).
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
-  kernels.** The faulting client is the copy engine (SDMA0), so no custom kernel is involved;
-  the faulting address is a process virtual address, and the faults walk over consecutive
-  4 KiB pages of it. The translation succeeds (`MAPPING_ERROR: 0x0`, `WALKER_ERROR: 0x0`) and
-  the protection check refuses the access, which is what the runtime's "Page not present or
-  supervisor privilege" means. The two crashes are the two directions of a bulk transfer
-  between VRAM and pageable host memory: a read during the probe's host-to-device weight
-  loads, a write when a layer's artifact is copied back to the host. The box is not short of
-  memory (about 328 GiB free, no swap pressure, no OOM kill) and no other process has ever
-  faulted on those cards - the serving arms ran for hours over the same four.
+  kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
+  involved; the faulting address is a process virtual address, and the faults walk over
+  consecutive 4 KiB pages of it. The translation succeeds (`MAPPING_ERROR: 0x0`,
+  `WALKER_ERROR: 0x0`) and the protection check refuses the access, which is what the runtime's
+  "Page not present or supervisor privilege" means. The three crashes are the two directions of a
+  bulk transfer between VRAM and **pageable** host memory: a read during the probe's
+  host-to-device weight loads, a write when a layer's artifact is copied back to the host, and a
+  read of the hidden states in the QAD phase. The box is not short of memory (about 328 GiB free,
+  no swap pressure, no OOM kill) and no other process has ever faulted on those cards - the
+  serving arms ran for hours over the same four.
+* **The QAD's host-device copies now go through a pinned window** (`hi2/pinned.py`,
+  `PinnedWindow`). The QAD moves about 1.6 TB of host memory per run (40 MiB of hidden state
+  per sequence per step, 264 sequences per layer), all of it pageable, and the copy engine
+  addresses those pages directly. The staged copies are bit-identical to the direct ones in
+  both directions, with and without a dtype cast, and for tensors larger than the window
+  (`experiments/pinned_copy_check.py`). The cost is 7.5 ms a transfer (a 40 MiB host copy
+  into the pinned window) against a 1 s step, and the device-to-host direction is actually
+  *faster* than the direct copy (14.2 ms against 26.9 ms), because the window is reused
+  instead of a fresh pageable tensor being allocated each time.
 
 ## Next steps
 
@@ -109,25 +119,29 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    anchor on the reduced suite. In [results.md](results.md).
 2. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
    Hessians); score docs and mix KLD, decisions and the new suite. **Crashed twice**: a GPU
-   page fault in the probe (2026-10-28 11:28) and another one in the QAD phase (14:59, at
-   layer 19 of 64, after 2 h). Both are device-memory faults with no host-side error
-   ("Page not present or supervisor privilege", `PERMISSION_FAULTS` in the kernel log) and
-   they moved to a different card, so they are not one bad card. The run is 2 h of a 5.3 h
-   phase each time, and the probe cache is complete, so a restart is cheap: the probe is
-   skipped and the phase starts again.
+   page fault in the probe (2026-10-28 11:28), one in the QAD phase (14:59, at layer 19 of 64,
+   after 2 h) and a third in the QAD phase of the fast recipe (18:36, at layer 48 of 64, after
+   2.4 h). All are device-memory faults with no host-side error ("Page not present or supervisor
+   privilege", `PERMISSION_FAULTS` in the kernel log), and they moved between cards, so they are
+   not one bad card.
 
    The kernel log says what they are (see the finding above): the copy engine addressing
-   **pageable host memory**, in both directions. What to try next, in order:
+   **pageable host memory**, in both directions. The fix for it is in: the copies go through a
+   pinned window (`hi2/pinned.py`), the QAD's tests are green with it, and the run has been
+   restarted with it. The run is 2 h of a 5.3 h phase each time, the probe cache is complete and
+   the per-layer artifacts are cached, so a restart is cheap: the probe is skipped and the
+   layers that were already distilled are reused.
 
-   a. **Pin the host buffers the big transfers use** - a pinned staging buffer for the 40 MiB
-      hidden-state slices that go to the card each step, and for the write-back of a layer's
-      artifact - so the copy engine never addresses pageable memory. The cost is one extra
-      host memcpy of 40 MiB a step, about 4 ms against a 1 s step.
+   Still worth doing:
+
+   a. **Watch the restarted run's copy counters.** The pinned window makes the copy engine
+      address mapped memory, but only the crash rate says whether that was the whole story.
    b. **Serialize the copies against the optimizer step**, so a copy cannot still be in flight
       when its host buffer is released.
    c. **Reproduce it outside the pipeline**: a loop of pageable 40 MiB copies in both
       directions under a 150 GiB RSS process, on one card, for a few hours. That is the
-      cheapest way to tell the runtime's direct-DMA path from our own use of it.
+      cheapest way to tell the runtime's direct-DMA path from our own use of it, and it does
+      not need the 27B.
 3. The teacher-forced domain KLD of the 27B anchor is still missing: the BF16 reference arm
    carries no teacher-forced pass, so the reference's own log-probs on its completions are
    absent. It needs a second BF16 27B serve at TP=4, which needs all four cards. **Armed** in

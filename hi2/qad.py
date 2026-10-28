@@ -46,6 +46,7 @@ from .format import (
     fwht_groups,
     ladder_dequantize,
 )
+from .pinned import PinnedWindow
 
 # ---- configuration -----------------------------------------------------------
 
@@ -492,10 +493,13 @@ def _parallel_step(w, wd, batch, xs, ys, workers, dtype=torch.float32):
             for v in wk.values():
                 v.requires_grad_(True)
         tot = 0.0
+        stager = PinnedWindow()
         with torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext():
             for i in batch[k::n]:
-                out = _out(functional_call(lay, wk, (xs[i].to(dev, dtype=dtype),), kw))
-                loss = _nmse(out.float(), ys[i].to(dev).float()) / len(batch)
+                x = stager.to_device(xs[i], dev, dtype=dtype)
+                out = _out(functional_call(lay, wk, (x,), kw))
+                tgt = stager.to_device(ys[i], dev).float()
+                loss = _nmse(out.float(), tgt) / len(batch)
                 loss.backward()
                 tot += loss.item()
         return wk, tot
@@ -589,6 +593,7 @@ def train_layer(
         m.to(dev)
     kw = to_device(kwargs, dev)
     reps = [(d, r, to_device(kwargs, d)) for d, r in reps]
+    stager = PinnedWindow()
     norm_params = {}
     if qc.train_norms:
         for n, p in layer.named_parameters():
@@ -608,7 +613,7 @@ def train_layer(
         val_pos = {i: torch.randperm(n_tok, generator=kg)[:k_tok] for i in val_idx}
 
     def loss_fn(out, i, pos=None):
-        tgt = ys[i].to(dev).float()
+        tgt = stager.to_device(ys[i], dev).float()
         loss = _nmse(out.float(), tgt)
         if hd is not None:
             if pos is None:
@@ -620,7 +625,7 @@ def train_layer(
         return {f"{n}.weight": m() for n, m in (mods or fq).items()}
 
     def run(wd, i):
-        return _out(functional_call(layer, wd, (xs[i].to(dev, dtype=dt),), kw))
+        return _out(functional_call(layer, wd, (stager.to_device(xs[i], dev, dtype=dt),), kw))
 
     @torch.no_grad()
     def val_loss(mods=None) -> float:
@@ -853,9 +858,10 @@ def _propagate(layer, ex, src, kwargs, dst) -> None:
     from .layerwise import _layer_pass
 
     res = _layer_pass(layer, ex.devices, len(src), src, kwargs, {}, {}, False)
+    stager = PinnedWindow()
     for o, *_ in res:
         for i, v in o.items():
-            dst[i].copy_(v)
+            dst[i].copy_(stager.to_host(v))
     del res
 
 

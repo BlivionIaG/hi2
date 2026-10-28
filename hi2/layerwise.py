@@ -23,6 +23,7 @@ from torch import nn
 from .calibrate import Config, build_table, shared_transform
 from .checkpoint import is_eligible, table_hessian_path, table_stats_path
 from .executor import Executor, activate
+from .pinned import PinnedWindow
 from .hessian import HessianStats
 from .moe import blend, coverage, expert_parts, group_key, sibling_leader
 from .stats import ColumnStats
@@ -154,11 +155,12 @@ def _run(
     dtype = (
         None if first is None else first.dtype
     )  # buffers may be bf16 for an fp32 layer
+    stager = PinnedWindow()
     with torch.no_grad():
         for i in items:
-            out = layer(hidden[i].to(dev, dtype), **kw)
+            out = layer(stager.to_device(hidden[i], dev, dtype), **kw)
             o = (out[0] if isinstance(out, tuple) else out).detach()
-            outs[i] = o if resident else o.cpu()
+            outs[i] = o if resident else stager.to_host(o)
             groups.clear()
             keep_alive.clear()
     for h in hooks:

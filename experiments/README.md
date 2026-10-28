@@ -56,4 +56,5 @@ the MC and decision sets below as paired tasks) is in [`../bench/`](../bench/REA
 | `qad_dtype_check.py` | The same real layer in float32, float16 and bfloat16: the time of a step, the held-out nMSE and the difference of the gradient the optimizer sees (does the QAD still learn the same in half precision?). |
 | `qad_budget_sim.py` | Replay a QAD log through the step budget and the early stop of `hi2/qad.py` and price the recipes: the steps, the time and the held-out nMSE a different recipe would have cost. |
 | `fp16_gemm_check.py` | The same matrix product and the same backward in float32 and float16: the time and the relative difference of the result and of the two gradients. |
+| `pinned_copy_check.py` | The host-device copies through the pinned window (`hi2/pinned.py`) against the direct ones: are the numbers the same, and what does the staging cost? |
 | `isa/probe.hip`, `isa/run.hip` | Check RDNA2 instruction facts (spec section 7) on a V620. |
