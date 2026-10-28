@@ -112,7 +112,9 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    exactly with the candidates' log-probs).
 4. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1, per use case
    rather than as one global ratio.
-5. **The QAD's speed, in the order the measurements put it** (all of it in
+5. **The QAD's speed, in the order the measurements put it** (the modes - recipe, math
+   dtype, buffer dtype - and what each one costs are in
+   [qad.md](qad.md#the-modes); the measurement behind this list is in
    [qad.md](qad.md#the-27b-at-four-gpus-measured-on-the-2026-10-28-rerun)):
    a. **fp16 matrix math for the QAD's layer forward and backward - measured, and it
       does not work on this hardware.** `--qad-dtype float16` runs the layer's matrix

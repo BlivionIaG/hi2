@@ -97,6 +97,76 @@ domain of a concatenated file is represented. Without calibration text the run f
 back to PTQ with a warning; too little text fails before phase 1 with a message naming
 the option to change.
 
+## The modes
+
+Three independent switches, all on the command line of `hi2 quantize`:
+
+* the **recipe** decides how much the QAD trains (`--qad-preset`, or any field of
+  `QadConfig` through `--qad-config` / `--qad-budget`),
+* the **math dtype** decides how the layer's matrix products are computed
+  (`--qad-dtype`),
+* the **buffer dtype** decides how much RAM the hidden states take (`buffer_dtype` in
+  `--qad-config`).
+
+### The recipe
+
+| mode | steps per layer | budget | early stop | sequences per layer | final logit-KL | 0.8B time | 0.8B docs/mix ppl ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `fast` | at most 300, weighted by the gain the earlier layers showed | 0.5 | under 1 % per 50 steps (at least 75) | 256 | 0 (the 27B runs set 200) | 17 min | 1.085 / 1.330 |
+| `default` | 300 | 1.0 | none | 256 | 200 | 41 min | 1.061 / 1.286 |
+| `thorough` | 600 | 1.0 | none | 512 (batch 8) | 200 | 141 min | 1.047 / 1.267 |
+
+The budget spreads `budget x steps x layers` optimizer steps over the layers, weighted by
+how much the previous layers gained (clamped to 0.5x..2x, the first layer 2x), and the
+early stop ends a layer when one evaluation interval improves its held-out nMSE by less
+than `min_gain`. `--qad-budget F` sets the budget alone, `--qad-config file.json` sets
+any field (`{"budget": 0.75, "min_gain": 0.005, "buffer_dtype": "float32"}`), and
+`--qad-final-kl STEPS` sets the final whole-network logit-KL phase (the `fast` preset
+leaves it off, `default` and `thorough` set 200).
+
+What the recipes cost and buy, measured:
+
+| | 0.8B | 4B | 27B |
+| --- | --- | --- | --- |
+| `default` | 41 min | 3.1 h | 5.3 h (four V620s) |
+| `fast` | 17 min | about 1.3 h (estimate) | about 2.6 h (four V620s, measured) |
+
+### The math dtype (`--qad-dtype`)
+
+| dtype | what it does | verdict on gfx1030 |
+| --- | --- | --- |
+| `float32` | the default: the layer and its input in float32 | **the only one that works here** |
+| `float16` | the layer and its input in half precision; the latents, the ladder bytes and the loss stay float32 | implemented and measured: 1.43x faster on the 27B's layer 10 (2019 ms a step against 1414 ms), but the QAD **stops learning** (the held-out nMSE falls 1.8 % against 45 % in float32) and the full-attention layers (every fourth one) do not run at all. Off by default; the measurement is in "The half-precision math, measured" |
+| `bfloat16` | as float16 | refused on gfx10: RDNA2 has no `fdot2.bf16` instruction and the compiler stops with "Cannot select: intrinsic %llvm.amdgcn.fdot2.bf16.bf16" |
+
+A float16 QAD is also not bit-comparable with a float32 one, so a checkpoint written
+with it cannot be compared with the earlier runs.
+
+### The hidden-state buffers (`buffer_dtype`)
+
+| dtype | what it costs | when |
+| --- | --- | --- |
+| `float32` | 41 GiB of RAM at the 27B (the hidden states of every calibration window) | what the runs use |
+| `bfloat16` | half of that | when the float32 buffers do not fit |
+| `auto` | float32 when it fits in half the free RAM, else bfloat16 | the default |
+
+**bfloat16 buffers and a 1 % early stop do not mix**: the rounding of the buffers is
+0.4 % of the activation, which is the noise floor the early stop's threshold sits on, so
+the stop fires on noise. The first fast run at the 27B (2026-10-27) had bf16 buffers and
+its early stop fired at a median layer gain of 1.5 % - the noise, not the layer's
+progress. The 27B run of 2026-10-28 uses `--qad-config '{"buffer_dtype": "float32"}'`
+for that reason.
+
+### What to pick
+
+| situation | mode |
+| --- | --- |
+| 4B or smaller, quality first | `default` (41 min at the 0.8B, 3.1 h at the 4B): 2.4x the time of `fast` for a third less error on the mix text |
+| 4B or smaller, a checkpoint in minutes | `fast` |
+| the last percent at the 0.8B, time no object | `thorough` (141 min): about 1.5 % more than `default` |
+| 27B | `default` is the quality-optimal recipe by the small-size studies, but it is 5.3 h and it died twice to GPU page faults (2026-10-28 11:28 and 14:59). The `fast` recipe is 2.6 h; **its mix KLD decides** whether that is acceptable (the earlier fast checkpoint came out worse than PTQ on the mix text, 0.2947 against 0.2171, but with bf16 buffers) |
+| any size, a QAD for a *reference* | `default` with float32 buffers and float32 math - the other modes are only worth their time if the mix KLD says so |
+
 ## Step time
 
 A QAD optimizer step decodes the fake-quantised weights, runs the layer forward and backward,
@@ -192,9 +262,9 @@ So the order of work is:
 | Flag | Meaning |
 | --- | --- |
 | `--qad` / `--no-qad` | QAD is on by default when `--calib` is given (and implies `--sensitivity probe` unless given); `--no-qad` = PTQ only |
-| `--qad-preset fast\|default\|thorough` | steps, budget and sequences per layer (table below) |
+| `--qad-preset fast\|default\|thorough` | steps, budget and sequences per layer (see "The modes") |
 | `--qad-budget F` | fraction of `steps x layers` to spend (preset default) |
-| `--qad-dtype float32\|float16\|bfloat16` | math dtype of the QAD layer forward and backward (default float32); the latents, the ladder bytes and the loss stay float32 |
+| `--qad-dtype float32\|float16\|bfloat16` | math dtype of the QAD layer forward and backward (default float32); the latents, the ladder bytes and the loss stay float32. Only float32 works on gfx1030 (see "The modes") |
 | `--qad-samples N` | training sequences of `--seq-len` tokens |
 | `--qad-layers "0-5,9"` | train only these layers (the others keep PTQ) |
 | `--qad-config file.json` | any field of `hi2.qad.QadConfig` (advanced) |
@@ -215,11 +285,7 @@ math dtype of the layer forward and backward), `seed`, `evals`, `sampling` (`ran
 `balanced` = equal windows from each calibration file, or `head`). Example `--qad-config`
 file: `{"sampling": "balanced", "budget": 0.5}`.
 
-| Preset | Steps | Training sequences | 0.8B QAD time | 0.8B result (docs / mix ppl ratio) |
-| --- | --- | --- | --- | --- |
-| `fast` | budget 0.5 of 300 x layers, early stop under 1 % per 50 steps (min 75) | 256 | 17 min | 1.085 / 1.330 |
-| `default` | 300 per layer | 256 | 41 min | 1.061 / 1.286 |
-| `thorough` | 600 per layer, 8 sequences per step | 512 | 141 min | 1.047 / 1.267 (absolute latents) |
+The three presets are described in "The modes" above, with what they cost and buy.
 
 Other defaults: batch 4 sequences per step, 8 held-out sequences, `lr_w` 0.01 (step
 units), `lr_p` 0.05 bytes per step, warm-up 5 % then cosine over each layer's allotment,
