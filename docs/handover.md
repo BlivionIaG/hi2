@@ -114,16 +114,24 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    rather than as one global ratio.
 5. **The QAD's speed, in the order the measurements put it** (all of it in
    [qad.md](qad.md#the-27b-at-four-gpus-measured-on-the-2026-10-28-rerun)):
-   a. **fp16 matrix math for the QAD's layer forward and backward - done.**
-      `--qad-dtype float16` (or `bfloat16`) runs the layer's matrix products in half
-      precision; the latents, the ladder bytes and the loss stay float32. The step is
-      float32-compute-bound with the matrix units idle (`average_mm_activity` 0 % on all
-      four cards), so this is the lever that does not change the result. The cost: the
-      gradients change, so a float16 QAD is not bit-comparable with the earlier runs.
-      `experiments/qad_dtype_check.py` measures the speed and the quality of one real
-      layer in every dtype.
-   b. **Stop the layers that stopped gaining - a flag.** `--qad-preset fast` (budget 0.5,
-      early stop under 1 %) or `--qad-config '{"budget": ..., "min_gain": ...}'`.
+   a. **fp16 matrix math for the QAD's layer forward and backward - measured, and it
+      does not work on this hardware.** `--qad-dtype float16` runs the layer's matrix
+      products in half precision (the latents, the ladder bytes and the loss stay
+      float32). It is 1.43x faster (2019 ms a step against 1414 ms on one card, the
+      27B's layer 10) and not 3x, because a float16 product of the MLP's shape is only
+      1.47x faster than a float32 one on this stack (`experiments/fp16_gemm_check.py`),
+      not the 4x the V_DOT2 peak suggests. Worse, the QAD stops learning: the held-out
+      nMSE falls 1.8 % in float16 against 45 % in float32, and the full-attention layers
+      (every fourth layer) do not run at all - the model reaches the attention with q
+      and k in float32 and v in float16. Bfloat16 is not an option either: RDNA2 has no
+      `fdot2.bf16`. The option stays in the code (default float32) with the measurement
+      in [qad.md](qad.md#the-half-precision-math-measured-2026-10-28); a usable version
+      would keep the attention and the recurrence in float32 and put only the MLP in
+      float16.
+   b. **Stop the layers that stopped gaining - a flag, and running.** `--qad-preset fast`
+      (budget 0.5, early stop under 1 %) or `--qad-config '{"budget": ..., "min_gain":
+      ...}'`. The 27B rerun of 2026-10-28 (after 15:00) runs it with the float32
+      buffers, so the early stop is not firing on the bf16 rounding.
       `experiments/qad_budget_sim.py` replays a measured run through both rules and prices
       the recipes: on the first 19 layers of the 27B, the `fast` recipe spends 38 % of the
       steps for +0.3 % of the layer-wise held-out nMSE. The layer-wise nMSE is a proxy

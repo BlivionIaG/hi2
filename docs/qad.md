@@ -440,3 +440,78 @@ on 4B exactly (6.2 was run) and PTQ at ratio 4 on 4B with this calibration.
   do split across devices; the training step runs on the first device).
 * Decision fidelity (spec 12.3) and a kernel-side check of a QAD checkpoint in the
   fork's HI2 loader (the format is unchanged, so it is expected to load as-is).
+
+### The half-precision math, measured (2026-10-28)
+
+`--qad-dtype float16` runs the layer's matrix products in half precision: the layer and its
+input are cast, the latents, the ladder bytes and the loss stay float32, and the rounding
+of the decoded weight is a straight-through (the gradient of the rounded weight reaches
+the latent unchanged). `experiments/qad_dtype_check.py` runs one real decoder layer of the
+27B (layer 10: 8 quantized Linears, 383 M weights, 6 x 2048 tokens) through the production
+training loop in every dtype. One card, 60 steps:
+
+| dtype | ms a step | held-out nMSE | after 60 steps |
+| --- | ---: | ---: | --- |
+| float32 | 2019 | 2.1598e-03 -> 1.1906e-03 | **-45 %** |
+| float16 | 1414 | 2.1599e-03 -> 2.1211e-03 | **-1.8 %** |
+
+Two results, one good and one bad:
+
+* **The speed is 1.43x, not 3x.** The matrix products are about 42 % of a step (the 4B
+  profile above), so they got about 3x faster, but the gated-delta-rule recurrence (23 %)
+  and the backward through the decode stay float32. The step of the 27B, four cards with
+  the data-parallel split, would go from about 1.0 s to about 0.7 s, not to 0.3-0.4 s.
+  The reason is the matrix product itself: on this stack (torch 2.12, ROCm 7.14, gfx1030)
+  a float16 product of the MLP's shape is only **1.47x** faster than the float32 one
+  (57 ms against 84 ms for [2048, 5120] x [5120, 17408] with the backward,
+  `experiments/fp16_gemm_check.py`), not the 4x the V_DOT2 peak would suggest. The float16
+  product and its backward are numerically fine (relative difference 3.6e-04), so this is
+  the speed the hardware gives, not a rounding effect.
+* **The QAD does not learn in float16.** The first loss is the same to five digits (the
+  forward is fine: 2.1598e-03 against 2.1599e-03), but the training loss *rises* above
+  the held-out loss and stalls: the update moves the latent in a direction that does not
+  help. That is the signature of a gradient that is mostly noise.
+
+Bfloat16 is not an option on gfx1030 at all: RDNA2 has no `fdot2.bf16` instruction and
+the compiler stops with "Cannot select: intrinsic %llvm.amdgcn.fdot2.bf16.bf16"
+(`hi2/qad.py` refuses the dtype on gfx10 before that happens).
+
+Two more things the half-precision path costs:
+
+* **The full-attention layers do not run.** The attention of the model computes the
+  rotary embedding in float32 and casts q and k back, but v keeps the activation dtype,
+  so a float16 layer reaches the scaled dot-product attention with q and k in float32
+  and v in float16: "Expected query, key, and value to have the same dtype". That is
+  the model's code, not the quantizer's (the 27B has a full-attention layer every
+  fourth layer).
+* **The float16 kernels of the gated delta rule have to be compiled again.** The Triton
+  kernels of the linear attention are compiled per dtype, and the AMD backend needs
+  more than ten minutes for the float16 variants (cached afterwards).
+
+So the half-precision QAD is **not** a usable speedup of the 27B QAD on this hardware:
+1.43x instead of 3x, and the numerics break (the full-attention layers crash, the
+linear-attention layers do not learn). The option stays in the code (`--qad-dtype`,
+default float32, so nothing changes) and the measurement is here; a usable version
+would keep the attention and the recurrence in float32 and put only the MLP in float16,
+which is a per-branch dtype the model code does not offer.
+
+### What is left, in order
+
+1. **The recipe** (the lever that works): `--qad-preset fast` spends the steps where
+   they still gain. The 27B rerun of 2026-10-28 runs it with the float32 buffers (the
+   earlier fast run had bf16 buffers, whose 0.4 % rounding sits at the noise floor of
+   the 1 % early stop, so its early stop fired on noise). It has to be judged on the mix
+   KLD: the layer-wise nMSE is a proxy that did not predict the one end-to-end result
+   we have.
+2. **The copies.** The per-step PCIe traffic is about 9.6 GB (the decoded weights to the
+   three workers and the gradients back) and it is hidden behind the compute now (the
+   four-way split is within 2 % of ideal). If the workers decoded the weights locally
+   from the codes and the ladder - about 110 MB instead of 1.6 GB - the traffic would
+   halve, but the gradient that comes back is the same size, so the win is 2x on the
+   traffic and nothing on the step until the compute is much faster.
+3. **The hidden-state buffers.** 168 MB a tensor, re-uploaded every step (about 1.3 GB
+   a step over the four cards, 8 ms a card, 2 % of a step). Keeping them device-resident
+   does not fit (264 sequences would need 44 GB); pinned host memory would buy a few
+   milliseconds. The real cost is the 41 GiB of RAM they take, which is why the earlier
+   fast run fell back to bf16 - and bf16 buffers put the early stop's 1 % threshold at
+   the noise floor, so they and the early stop do not mix.

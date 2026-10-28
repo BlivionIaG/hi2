@@ -556,6 +556,14 @@ def train_layer(
     if on_gpu:
         acc.reset_peak_memory_stats()
     dt = getattr(torch, qc.dtype)  # the math dtype of the layer forward and backward
+    if dt is torch.bfloat16 and dev.type == "cuda" and torch.version.hip:
+        arch = torch.cuda.get_device_properties(dev).gcnArchName
+        if arch.startswith("gfx10"):
+            raise SystemExit(
+                f"bfloat16 matrix math is not available on {arch}: RDNA2 has no "
+                "fdot2.bf16 instruction and the compiler stops with 'Cannot select: "
+                "intrinsic %llvm.amdgcn.fdot2.bf16.bf16'. Use --qad-dtype float16."
+            )
     layer = copy.deepcopy(layer)
     reps = []
     if (
@@ -616,7 +624,7 @@ def train_layer(
 
     @torch.no_grad()
     def val_loss(mods=None) -> float:
-        wd = {k: v.detach() for k, v in weights(mods).items()}
+        wd = {k: v.detach().to(dt) for k, v in weights(mods).items()}
         return sum(
             loss_fn(run(wd, i), i, val_pos[i] if hd is not None else None).item()
             for i in val_idx
