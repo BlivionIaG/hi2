@@ -242,6 +242,25 @@ def test_final_kl_phase_writes_a_normal_checkpoint_and_resumes(tiny, tmp_path):
     assert any("final KL: reusing" in ln for ln in logs)
 
 
+def test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves(tiny, tmp_path):
+    from hi2.finalkl import _head_input
+    from hi2.pipeline import run
+
+    rc = _rc(tiny, tmp_path, "fkl-saved", qad={"final_kl": 4, "final_lr_p": 0.5})
+    logs: list[str] = []
+    run(rc, log=lambda *a: logs.append(" ".join(map(str, a))))
+    assert any("saved the teacher's head inputs" in ln for ln in logs)
+    rec = torch.load(rc.workdir / "qad" / "head_inputs.pt", weights_only=False)
+    saved = rec["head_inputs"]
+    assert saved.shape == (10, 1, 64, 128)
+    d, model, ids = tiny
+    live = _head_input(model, ids[0:1])
+    assert torch.allclose(saved[0], live, rtol=1e-4, atol=1e-5)
+    info = json.loads((rc.workdir / "final_kl.json").read_text())
+    assert info["teacher_seconds"] == 0  # the teacher was not placed
+    assert info["val_after"] <= info["val_before"]
+
+
 def test_layerwise_norms_and_kl_term(tiny, tmp_path):
     from hi2.pipeline import run
 

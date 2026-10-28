@@ -1186,4 +1186,22 @@ def qad_layerwise(
         gc.collect()  # training closures/optimizer form reference cycles
     if todo:
         log(budget.summary())
+    # The final logit-KL phase needs the teacher's LM-head input (the unquantized
+    # model's last hidden state after the final norm). Placing the 27B teacher on the
+    # GPUs does not fit four V620s (the fit check skipped it), but the layer-wise
+    # propagation already computed it: after the last layer ``xt`` holds the
+    # unquantized layer's output. Save it so the phase can run without the teacher
+    # placement (hi2.finalkl, ``head_inputs``).
+    if propagate and qc.final_kl > 0 and n_layers == len(layers) and xt:
+        norm = final_norm(model, path)
+        out = torch.empty((len(xt), *xt[0].shape), dtype=torch.float32)
+        with torch.no_grad():
+            for i, x in enumerate(xt):
+                out[i].copy_(norm(x.float()))
+        torch.save({"fingerprint": fp, "head_inputs": out}, qdir / "head_inputs.pt")
+        log(
+            f"QAD: saved the teacher's head inputs ({out.numel() * 4 / 2**30:.1f} GiB) "
+            "for the final logit-KL phase"
+        )
+        del out
     return res

@@ -232,13 +232,17 @@ def final_kl(
     devs: torch.device | list[torch.device],
     resolve,
     log=print,
+    head_inputs: torch.Tensor | None = None,
 ) -> tuple[dict, dict, dict]:
     """Train ladder bytes and norm weights of the whole student for ``qc.final_kl``
     steps; returns ``(tensors, dense, info)`` with the kept state (``tensors`` and
     ``dense`` updated copies of the inputs). ``model`` is the unquantized model (in RAM);
     it is modified in place (its quantized Linears become :class:`LadderLinear`). With
     several ``devs`` the teacher and the student are split layer-wise over them
-    (:func:`hi2.sensitivity.shard_layers`), so models larger than one GPU train too."""
+    (:func:`hi2.sensitivity.shard_layers`), so models larger than one GPU train too.
+    ``head_inputs`` (``[n, 1, T, H]``, the unquantized model's post-final-norm hidden
+    states) skips the teacher placement; the layer-wise phase saves it
+    (``<workdir>/qad/head_inputs.pt``) because a 27B teacher does not fit the devices."""
     from .layerwise import find_layers
     from .sensitivity import shard_layers
 
@@ -255,16 +259,23 @@ def final_kl(
     torch.manual_seed(qc.seed)
     lm = model.get_output_embeddings()
     stager = PinnedWindow()
-    # 1. teacher: the LM head's input on every window (unquantized model, on the GPU)
-    hooks = place()
-    teach = {}
-    with torch.no_grad():
-        for i in sorted(set(train_idx) | set(val_idx)):
-            teach[i] = stager.to_host(_head_input(model, ids[i : i + 1].to(dev)).float())
-    for h in hooks:
-        h.remove()
-    module_to_host(model, stager)
-    t_teacher = time.time() - t0
+    # 1. teacher: the LM head's input on every window (unquantized model, on the GPU),
+    # or the head inputs the layer-wise phase saved (no teacher placement).
+    if head_inputs is not None:
+        teach = {i: head_inputs[i] for i in sorted(set(train_idx) | set(val_idx))}
+        t_teacher = 0.0
+    else:
+        hooks = place()
+        teach = {}
+        with torch.no_grad():
+            for i in sorted(set(train_idx) | set(val_idx)):
+                teach[i] = stager.to_host(
+                    _head_input(model, ids[i : i + 1].to(dev)).float()
+                )
+        for h in hooks:
+            h.remove()
+        module_to_host(model, stager)
+        t_teacher = time.time() - t0
     # 2. student: quantized Linears -> LadderLinear, norms from the layer-wise phase
     mods = {}
     for name, mod in list(model.named_modules()):

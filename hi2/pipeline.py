@@ -476,15 +476,34 @@ def _qad_encode(
     )
     (rc.workdir / f"qad_report{tag}.json").write_text(json.dumps(out.layers, indent=1))
     tensors, dense = out.tensors, out.dense
-    if qc.final_kl > 0 and _final_kl_fits(rc, ex, model, tensors, log):
-        tensors, dense = _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag)
+    head = _saved_head_inputs(rc, tag, fp)
+    if qc.final_kl > 0 and _final_kl_fits(rc, ex, model, tensors, head is not None, log):
+        tensors, dense = _final_kl(
+            rc, ex, model, ids, tensors, dense, fp, log, tag, head
+        )
     return tensors, dense
 
 
-def _final_kl_fits(rc, ex, model, tensors, log) -> bool:
+def _saved_head_inputs(rc, tag, fp):
+    """The teacher's post-final-norm head inputs the layer-wise phase saved, or None.
+
+    They let the final logit-KL phase skip the teacher placement, which does not fit a
+    27B on four V620s (``_final_kl_fits``)."""
+    path = rc.workdir / f"qad{tag}" / "head_inputs.pt"
+    if not path.exists():
+        return None
+    try:
+        rec = torch.load(path, weights_only=False, mmap=True)
+    except Exception:
+        return None
+    return rec.get("head_inputs") if rec.get("fingerprint") == fp else None
+
+
+def _final_kl_fits(rc, ex, model, tensors, have_head_inputs, log) -> bool:
     """The final-KL phase splits the student (codes at 1 byte per weight plus the dense
     parameters) and the teacher (the model's own weights) layer-wise over the executor's
-    devices; skip it, with a note, when even that does not fit."""
+    devices; skip it, with a note, when even that does not fit. With the saved head
+    inputs the teacher is not placed, so only the student has to fit."""
     devs = ex.devices
     if devs[0].type != "cuda":
         return True
@@ -499,19 +518,20 @@ def _final_kl_fits(rc, ex, model, tensors, log) -> bool:
     student = 1.1 * quant + 2 * rest
     n = len(devs)
     need = (
-        max(student, teacher) / n / 2**30 + 4.0
-    )  # + activations, optimizer, logits chunks
+        student if have_head_inputs else max(student, teacher)
+    ) / n / 2**30 + 4.0  # + activations, optimizer, logits chunks
     have = min(torch.cuda.get_device_properties(d).total_memory for d in devs) / 2**30
     if need <= 0.9 * have:
         return True
+    what = "the student" if have_head_inputs else "the teacher and the student"
     log(
-        f"final KL: skipped, the student needs about {need:.0f} GiB per device over {n} "
+        f"final KL: skipped, {what} needs about {need:.0f} GiB per device over {n} "
         f"device(s) of {have:.0f} GiB (--qad-final-kl 0 silences this)"
     )
     return False
 
 
-def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag=""):
+def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag="", head_inputs=None):
     """Phase 3k: the final logit-KL phase (:mod:`hi2.finalkl`) on top of the layer-wise
     result, resumable from ``workdir/qad<tag>/final_kl.pt``."""
     from dataclasses import asdict
@@ -547,6 +567,7 @@ def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag=""):
         ex.devices,
         make_resolver(weight_map(rc.src)),
         log,
+        head_inputs=head_inputs,
     )
     torch.save({"fingerprint": ffp, "tensors": t, "dense": d, "info": info}, art)
     (rc.workdir / f"final_kl{tag}.json").write_text(

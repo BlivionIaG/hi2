@@ -1,7 +1,18 @@
-# Handover (2026-10-27)
+# Handover (2026-10-29)
 
 State of the project at the end of this session, and what comes next. Detail lives in the
 linked documents. Machine-specific paths and hosts are deliberately not written here.
+
+## In flight
+
+* **The 27B default run is running.** PTQ (sensitivity probe, quality allocation, GPTQ,
+  smoothing + rotation) + QAD `default` (300 steps per layer, 256 sequences, no early stop)
+  + the final logit-KL phase (200 steps), at `--target-bpw 3.0` (3.012 bpw body), float32
+  buffers, four V620s. It reuses the 20 layers the crashed `default` attempt finished and the
+  cached statistics, tables and probe, so it trains layers 20-63 and then runs the final
+  phase. The previous 27B QAD checkpoints and their workdirs were removed (their
+  `config.json` and per-layer report are archived); the 3.0 bpw PTQ checkpoint and the 48 GB
+  Hessian cache stay.
 
 ## Where things are
 
@@ -11,15 +22,20 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 * Long jobs run on the GPU build box (8 Radeon PRO V620; HIP devices 2-5 are ours) from a
   frozen copy of the repository, never from a directory that is re-synced; nothing under
   `/tmp`; stop only your own processes, by explicit pid.
-* Checkpoints on the box: Qwen3.8-27B at 3.0 bpw (PTQ and PTQ + QAD, 14.9 GiB each), Qwen3.5-4B
-  at 3.0, 3.5 and 4.0 bpw (PTQ and QAD), 0.8B references. The 27B Hessian cache (48 GB) is
-  kept for reruns.
+* Checkpoints on the box: Qwen3.8-27B at 3.0 bpw (the PTQ one, 14.9 GiB; the two `fast` QAD
+  checkpoints and their workdirs were removed on 2026-10-29 and their config/per-layer report
+  archived), Qwen3.5-4B at 3.0, 3.5 and 4.0 bpw (PTQ and QAD), 0.8B references. The 27B
+  Hessian cache (48 GB) is kept for reruns.
+* [`docs/surfaces.md`](surfaces.md): every knob that can move the result, which ones the tool
+  decides itself, the measured evidence behind each, and the 27B status (measured / untested /
+  dead end). Start there before planning another 27B run.
 
 ## Done this session
 
 * **The 27B rerun finished and the verdict is in: the QAD does not beat PTQ at this size.**
-  The `fast` recipe with the float32 buffers and the final logit-KL phase, on four V620s,
-  after four GPU page faults that the pinned staging then fixed. Mix KLD **0.28846** against
+  The `fast` recipe with the float32 buffers on four V620s (the requested final logit-KL phase
+  was skipped by its fit check), after four GPU page faults that the pinned staging then fixed.
+  Mix KLD **0.28846** against
   PTQ's **0.21710** (the previous `fast` checkpoint: 0.29470); docs KLD 0.09373 against
   0.09747. The suite arm that would have scored the new checkpoint per family was killed
   rather than left to run 3.5 hours. The teacher-forced domain KLD of the 27B anchor was
@@ -120,12 +136,24 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   `fast` checkpoint's mix KLD is **0.28846** against PTQ's **0.21710** - 33 % worse than not
   doing the QAD at all - while its per-layer held-out nMSE matched the previous run's to
   within 2 % on 21 of 42 layers and within 5 % on all 42, and the layer phase was 2.76x
-  faster. The float32 buffers and the 200-step final logit-KL phase moved the number by 2 %
-  of a 33 % gap. The teacher-forced domain KLD says where the damage is: tool calls 63 % worse
+  faster. The float32 buffers and the one-to-four-GPU split moved the number by 2 %
+  of a 33 % gap; the requested 200-step final logit-KL phase was **skipped** (see the
+  finding below). The teacher-forced domain KLD says where the damage is: tool calls 63 % worse
   than PTQ and math 21 % worse, against the agent-decision text 13 % better. **The layer-wise
   nMSE is a proxy that did not predict the one end-to-end result there is, so a recipe cannot
   be judged on it.** The verdict and the numbers:
   [qad.md](qad.md#the-verdict-2026-10-28-the-fast-recipe-does-not-beat-ptq-at-27b).
+* **The 27B final logit-KL phase never ran: the fit check skipped it.** Both 27B QAD
+  checkpoints are layer-wise only. The 2026-10-28 log says `final KL: skipped, the student
+  needs about 29 GiB per device over 4 device(s) of 30 GiB`; the guard takes the larger of
+  teacher and student, and the float32 teacher is 102 GiB, so a four-way layer split is
+  25.6 GiB a card plus activations against a 27 GiB limit. **Fixed 2026-10-29**: the
+  layer-wise phase already computes the teacher's last hidden state (the last layer's
+  target), so it saves the post-final-norm head inputs to `<workdir>/qad/head_inputs.pt`
+  (10.3 GiB at the 27B); the final phase loads them and skips the teacher placement, and the
+  fit check then needs only the student (about 12 GiB per device on four V620s). Tested on
+  the CPU tiny model
+  (`tests/test_lowbit.py::test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves`).
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
   kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
   involved; the faulting address is a process virtual address, and the faults walk over
@@ -165,10 +193,12 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    KLD per task family, a target table (KLD per use case) and the noise floor, then the 27B
    anchor on the reduced suite. In [results.md](results.md).
 2. 27B rerun: **done, and the verdict is negative.** The `fast` recipe with the float32
-   buffers and the 200-step final logit-KL phase finished cleanly on 2026-10-28 after four GPU
+   buffers finished cleanly on 2026-10-28 after four GPU
    page faults (the probe at 11:28, the QAD phase at 14:59, 18:36 and 20:53), all of them the
-   copy engine on pageable host memory, all of them fixed by the pinned staging. The
-   checkpoint's **mix KLD is 0.28846 against PTQ's 0.21710** - 33 % worse than not doing the QAD
+   copy engine on pageable host memory, all of them fixed by the pinned staging. The 200-step
+   final logit-KL phase was requested but **skipped**: the 27B teacher in float32 needs 29 GiB
+   per device on four 30 GiB cards and the guard allows 27 (`q27b-b3.0-qad-fast.quant.log`).
+   The checkpoint's **mix KLD is 0.28846 against PTQ's 0.21710** - 33 % worse than not doing the QAD
    at all, and 2 % better than the 2026-10-27 `fast` checkpoint (0.29470). The docs text is 4 %
    better than PTQ (0.09373 against 0.09747). The stop condition was met and this line stops
    here: the suite arm that would have scored the new checkpoint's per-family accuracy was

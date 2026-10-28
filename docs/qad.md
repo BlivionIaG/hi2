@@ -174,7 +174,7 @@ finished at the time of writing:
 | --- | --- | --- |
 | buffers | bfloat16 (the float32 ones did not fit) | float32 |
 | the QAD runs on | one GPU | four GPUs, data-parallel |
-| final logit-KL phase | none | 200 steps |
+| final logit-KL phase | none | requested 200, **skipped** (the teacher did not fit four V620s) |
 | layer time, those 42 layers | 203.8 min | 73.9 min (2.76x less) |
 | steps spent on them | 4269 | 4333 |
 | mean per-layer gain | -3.94 % | -3.98 % |
@@ -186,13 +186,29 @@ Two things follow from it.
 the batch and the gradients are summed, so it is the same step on four cards: 2.86 s a step on
 one card against 1.02 s on four. The recipe is unchanged, only the wall clock is.
 
-**The first fast checkpoint never had the final logit-KL phase.** Its log goes straight from the
-layer loop to "phase 3: encoding and writing", while the run of 2026-10-28 spends 200 steps on
-the end-to-end logit KL before it. That phase is what the mix KLD measures, so the earlier
-checkpoint's mix KLD of 0.2947 (against PTQ's 0.2171) is not a verdict on the `fast` recipe -
-it is a verdict on the `fast` recipe without the final phase. The two runs are not a bit-exact
-A/B either: the sensitivity probe was recomputed after the probe tokens changed, so their PTQ
-bases differ slightly (allocation error ratio 11.044 against 11.299).
+**Neither fast checkpoint had the final logit-KL phase.** The run of 2026-10-27 does not request
+it; the run of 2026-10-28 does (`--qad-final-kl 200`) but its fit check skipped it:
+
+```
+final KL: skipped, the student needs about 29 GiB per device over 4 device(s) of 30 GiB
+(--qad-final-kl 0 silences this)
+```
+
+(`q27b-b3.0-qad-fast.quant.log`, line 114. The message says "the student" but the guard takes the
+larger of teacher and student: the 27B teacher in float32 is 102 GiB, so a four-way layer split
+is 25.6 GiB a card plus activations, and the guard allows 27.) Its log goes straight from the
+layer loop to "phase 3: encoding and writing". So the 2 % between the two checkpoints is the
+buffers (bfloat16 to float32) and the one-to-four-GPU split, **not** the final phase, and neither
+mix KLD is a verdict on the phase. The two runs are not a bit-exact A/B either: the sensitivity
+probe was recomputed after the probe tokens changed, so their PTQ bases differ slightly
+(allocation error ratio 11.044 against 11.299).
+
+**Fixed 2026-10-29.** The layer-wise phase already computes the teacher's last hidden state (it
+is the last layer's target), so it now saves the post-final-norm head inputs to
+`<workdir>/qad/head_inputs.pt` (10.3 GiB at the 27B). The final phase loads them and skips the
+teacher placement entirely; the fit check then needs only the student (about 12 GiB per device
+on four V620s). Tested on the CPU tiny model:
+`tests/test_lowbit.py::test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves`.
 
 ### The verdict (2026-10-28): the `fast` recipe does not beat PTQ at 27B
 
@@ -208,7 +224,8 @@ The new checkpoint's end-to-end KLD, measured on the same windows as every other
 checkpoint (mix KLD 0.28846 against 0.29470, and 2 % better on the mix perplexity) and better
 than PTQ on the docs text (0.09373 against 0.09747, 4 % better), but on the mix text it is
 **33 % worse than not doing the QAD at all** (0.28846 against 0.21710). The float32 buffers and
-the 200-step final logit-KL phase bought about 2 % of a 33 % gap; they did not close it.
+the four-GPU data-parallel split bought about 2 % of a 33 % gap (the requested final phase was
+skipped, above); they did not close it.
 
 Three things follow, and they are the end of this line of work.
 

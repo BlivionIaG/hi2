@@ -513,7 +513,8 @@ same quantity in both, which is why the 4B tables compare them.
 | **HI2 3.0 bpw (PTQ + QAD, 2026-10-28)** | 3.012 | 8 745 | 15 290 | 0.0937 | 0.2885 | 1.047 | 1.035 | 88.8 % |
 
 (the two QAD rows are the two `fast` runs: the 2026-10-27 one with bf16 buffers and no final
-logit-KL phase, the 2026-10-28 one with float32 buffers and the phase. The verdict is in
+logit-KL phase, the 2026-10-28 one with float32 buffers and four GPUs; its requested final
+phase was skipped because the 27B teacher does not fit four V620s, `qad.md`). The verdict is in
 [qad.md](qad.md#the-verdict-2026-10-28-the-fast-recipe-does-not-beat-ptq-at-27b).)
 
 1. **The GGUF buys its quality with bits.** Q4_K_M has a KLD of 0.0142 on the docs text, six
