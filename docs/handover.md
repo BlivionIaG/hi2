@@ -103,6 +103,9 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   anomalous error, the mean relative error 0.0446 against 0.0443 for the run of 2026-10-27. The
   window keeps its buffers per thread now, and `tests/test_pinned.py` fails against the previous
   code (one thread gets another thread's data) and passes against this one.
+* **A restart that reuses every layer does not need the propagation.** It only feeds the
+  training, and the final logit-KL phase computes its own teacher, so a restart that finds
+  every layer's artifact skips the propagation and costs minutes instead of an hour.
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
   kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
   involved; the faulting address is a process virtual address, and the faults walk over

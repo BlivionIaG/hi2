@@ -322,9 +322,14 @@ def test_qad_pipeline_writes_a_normal_checkpoint_and_resumes(tiny, tmp_path):
     logs.clear()
     import shutil
 
+    first = _ckpt_bytes(rc.dst)
     shutil.rmtree(rc.dst)
     run(rc, log=lambda *a: logs.append(" ".join(map(str, a))))
     assert sum("QAD layer" in ln and "reusing" in ln for ln in logs) == 2
+    # every layer comes from its artifact, so the propagation is skipped - and the
+    # checkpoint must still be the one the first run wrote
+    assert any("the propagation is skipped" in ln for ln in logs)
+    assert _ckpt_bytes(rc.dst) == first
 
 
 def test_qad_layer_selection_keeps_ptq_elsewhere(tiny, tmp_path):

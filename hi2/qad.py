@@ -1025,6 +1025,20 @@ def qad_layerwise(
         )
     )
     wstager = PinnedWindow()
+    # Which layers will be trained: the ones whose artifact is missing or stale. The
+    # fingerprint is the run's and the same for every layer, so one cheap read per
+    # layer decides it. When none of them is trained the propagation is not needed at
+    # all: it only feeds the training (the final logit-KL phase computes its own
+    # teacher), and a restart that reuses every layer then costs minutes, not an hour.
+    trained: set[int] = set()
+    for li in todo:
+        art = qdir / f"layer{li:03d}.pt"
+        rec = torch.load(art, weights_only=False, mmap=True) if art.exists() else None
+        if rec is None or rec.get("fingerprint") != fp:
+            trained.add(li)
+    propagate = bool(trained)
+    if todo and not propagate:
+        log(f"QAD: every layer comes from its artifact; the propagation is skipped")
     for li in range(n_layers):
         layer = layers[li]
         linears = {}
@@ -1036,7 +1050,8 @@ def qad_layerwise(
                 ckpt = resolve(full) if resolve else full
                 if ckpt is not None and ckpt in tables:
                     linears[name] = ckpt
-        _propagate(layer, ex, xt, kwargs, yt)
+        if propagate:
+            _propagate(layer, ex, xt, kwargs, yt)
         art = qdir / f"layer{li:03d}.pt"
         rec = torch.load(art, weights_only=False) if art.exists() else None
         norms: dict = {}
@@ -1158,7 +1173,8 @@ def qad_layerwise(
             res.dense[(resolve(full) if resolve else full) or full] = val.to(
                 torch.float16
             )
-        _propagate(layer, ex, xs, kwargs, xs)
+        if propagate:
+            _propagate(layer, ex, xs, kwargs, xs)
         for name, wv in originals.items():  # the model object stays unquantized
             layer.get_submodule(name).weight.data = wv
         for pn, wv in norm_orig.items():
