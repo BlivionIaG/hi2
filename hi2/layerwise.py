@@ -23,7 +23,7 @@ from torch import nn
 from .calibrate import Config, build_table, shared_transform
 from .checkpoint import is_eligible, table_hessian_path, table_stats_path
 from .executor import Executor, activate
-from .pinned import PinnedWindow
+from .pinned import PinnedWindow, module_to_device
 from .hessian import HessianStats
 from .moe import blend, coverage, expert_parts, group_key, sibling_leader
 from .stats import ColumnStats
@@ -238,7 +238,7 @@ def _device_pass(
 ):
     activate(dev)
     return _run(
-        copy.deepcopy(layer).to(dev),
+        module_to_device(copy.deepcopy(layer), dev),
         dev,
         items,
         hidden,

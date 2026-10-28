@@ -16,6 +16,7 @@ import torch
 
 from .encode import encode_rows
 from .executor import Executor, activate
+from .pinned import PinnedWindow
 from .format import (
     GROUP,
     HI2Tensor,
@@ -219,6 +220,7 @@ def build_table(
 ) -> TensorTable:
     """``transform`` = ``(s, had)`` imposed by :func:`shared_transform`; ``n_tokens``
     overrides the reported token count (a borrowed-statistics expert reports its own)."""
+    stager = PinnedWindow()
     r, k = w.shape
     if transform is None and cfg.smooth_search:
         transform = shared_transform([w], stats, cfg, ex)
@@ -233,7 +235,7 @@ def build_table(
         w, inv = _smoothed(w, s16)
 
     def shard(dev, lo, hi):
-        wt = w[lo:hi].to(dev, torch.float32)
+        wt = stager.to_device(w[lo:hi], dev, dtype=torch.float32)
         wt = fwht_groups(wt, had) if had.any() else wt
         d = _weights(stats, k, had, dev, inv)
         sse = torch.stack(

@@ -46,7 +46,7 @@ from .format import (
     fwht_groups,
     ladder_dequantize,
 )
-from .pinned import PinnedWindow
+from .pinned import PinnedWindow, module_to_device
 
 # ---- configuration -----------------------------------------------------------
 
@@ -421,27 +421,32 @@ class FakeQuantLinear(nn.Module):
         return w
 
     @torch.no_grad()
-    def export(self) -> HI2Tensor:
+    def export(self, stager=None) -> HI2Tensor:
         pieces = []
         k = self.shape[1]
+        # The codes are the big ones (a byte per weight), and they come back to the host
+        # here: stage them through the pinned window when there is one.
+        to_host = (
+            (lambda t: stager.to_host(t)) if stager is not None else (lambda t: t.cpu())
+        )
         for g in self.groups:
             _, q, lo_b, st_b = self._group(g, False)
             params = torch.stack([lo_b, st_b], dim=-1).to(torch.uint8)
             pieces.append(
                 (
-                    g.rows.cpu(),
-                    q.reshape(-1, k).to(torch.uint8).cpu(),
-                    params.cpu(),
-                    g.consts.cpu(),
+                    to_host(g.rows),
+                    to_host(q.reshape(-1, k).to(torch.uint8)),
+                    to_host(params),
+                    to_host(g.consts),
                 )
             )
         return assemble(
             pieces,
-            self.row_nbits.cpu(),
-            self.row_block.cpu(),
-            self.had.cpu(),
+            to_host(self.row_nbits),
+            to_host(self.row_block),
+            to_host(self.had),
             k,
-            self.col_scale.cpu() if self.has_scale else None,
+            to_host(self.col_scale) if self.has_scale else None,
         )
 
 
@@ -582,15 +587,15 @@ def train_layer(
         serialize_triton_autotune()
         for d in replicas:
             if d != dev:
-                r = copy.deepcopy(layer).to(d, dtype=dt)
+                r = module_to_device(copy.deepcopy(layer), d, dtype=dt)
                 for p in r.parameters():
                     p.requires_grad_(False)
                 reps.append((d, r))
-    layer = layer.to(dev, dtype=dt)
+    layer = module_to_device(layer, dev, dtype=dt)
     for p in layer.parameters():
         p.requires_grad_(False)
     for m in fq.values():
-        m.to(dev)
+        module_to_device(m, dev)
     kw = to_device(kwargs, dev)
     reps = [(d, r, to_device(kwargs, d)) for d, r in reps]
     stager = PinnedWindow()
@@ -603,7 +608,7 @@ def train_layer(
                 norm_params[n] = p
     hd = None
     if head is not None:
-        hd = tuple(copy.deepcopy(m).to(dev).float() for m in head)
+        hd = tuple(module_to_device(copy.deepcopy(m), dev).float() for m in head)
         for m in hd:
             for p in m.parameters():
                 p.requires_grad_(False)
@@ -1019,6 +1024,7 @@ def qad_layerwise(
             else ""
         )
     )
+    wstager = PinnedWindow()
     for li in range(n_layers):
         layer = layers[li]
         linears = {}
@@ -1044,7 +1050,7 @@ def qad_layerwise(
             tl = time.time()
             reqs, loaded = [], {}
             for name, ckpt in linears.items():
-                w = layer.get_submodule(name).weight.detach().float().cpu()
+                w = wstager.to_host(layer.get_submodule(name).weight.detach().float())
                 sid = view.sigma_id(ckpt)
                 if sid is not None and sid not in loaded:  # one load per shared input
                     loaded[sid] = view.sigma(ckpt)
@@ -1067,7 +1073,7 @@ def qad_layerwise(
             if li in train_set and linears:
                 fq = {
                     name: FakeQuantLinear(
-                        layer.get_submodule(name).weight.detach().float().cpu(),
+                        wstager.to_host(layer.get_submodule(name).weight.detach().float()),
                         inits[name],
                         comps[name],
                         qc.init,
@@ -1081,7 +1087,7 @@ def qad_layerwise(
                 ):  # also score the PTQ encoding; kept if training loses
                     fb = {
                         name: FakeQuantLinear(
-                            layer.get_submodule(name).weight.detach().float().cpu(),
+                            wstager.to_host(layer.get_submodule(name).weight.detach().float()),
                             inits[name],
                             comps[name],
                             "ptq",
@@ -1106,7 +1112,7 @@ def qad_layerwise(
                     ex.devices,
                 )
                 norms = info.pop("norms", {})
-                tensors = {linears[nm]: m.export() for nm, m in fq.items()}
+                tensors = {linears[nm]: m.export(wstager) for nm, m in fq.items()}
                 del fq, fb
                 if ex.primary.type == "cuda":
                     torch.accelerator.empty_cache()

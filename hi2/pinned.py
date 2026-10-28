@@ -95,3 +95,39 @@ class PinnedWindow:
             b.copy_(part)
             out[i : i + rows].copy_(b)
         return out
+
+
+def module_to_device(mod, dev, dtype=None, stager: PinnedWindow | None = None):
+    """``mod.to(dev, dtype)``, with every parameter and buffer staged through a pinned
+    window.
+
+    The weights are the largest host-to-device traffic in the pipeline (a 27B layer is
+    about 1.5 GB, and it is copied to each of the four cards), and they are pageable
+    like everything else. Only the floating-point tensors are cast, as
+    :meth:`torch.nn.Module.to` does.
+    """
+    stager = stager if stager is not None else PinnedWindow()
+    with torch.no_grad():
+        for p in mod.parameters(recurse=True):
+            cast = dtype if (dtype is not None and p.is_floating_point()) else None
+            p.data = stager.to_device(p.detach(), dev, dtype=cast)
+        for b in mod.buffers(recurse=True):
+            cast = dtype if (dtype is not None and b.is_floating_point()) else None
+            b.data = stager.to_device(b.detach(), dev, dtype=cast)
+    return mod
+
+
+def module_to_host(mod, stager: PinnedWindow | None = None):
+    """``mod.cpu()``, with every parameter and buffer staged through a pinned window.
+
+    The final logit-KL phase brings the whole 27B model back to the host (tens of
+    gigabytes in one go), which is the single largest device-to-host transfer in the
+    pipeline.
+    """
+    stager = stager if stager is not None else PinnedWindow()
+    with torch.no_grad():
+        for p in mod.parameters(recurse=True):
+            p.data = stager.to_host(p.detach())
+        for b in mod.buffers(recurse=True):
+            b.data = stager.to_host(b.detach())
+    return mod

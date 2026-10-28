@@ -24,6 +24,7 @@ from .cache import StatsView
 from .calibrate import Config, TensorTable, encode_with_picks
 from .checkpoint import make_resolver, weight_map
 from .executor import Executor
+from .pinned import PinnedWindow, module_to_device
 from .format import dequantize
 from .stats import ColumnStats
 
@@ -84,11 +85,16 @@ def plan_placement(weight_bytes: int, device_bytes: int, n_devices: int) -> str:
 
 
 def _move_own(module: nn.Module, dev: torch.device) -> None:
-    """Move the parameters and buffers a module owns itself (its children stay)."""
+    """Move the parameters and buffers a module owns itself (its children stay).
+
+    The copies go through a pinned window: the probe loads tens of gigabytes of weights
+    onto the cards, and the copy engine must not address pageable host memory.
+    """
+    stager = PinnedWindow()
     for p in module.parameters(recurse=False):
-        p.data = p.data.to(dev)
+        p.data = stager.to_device(p.data, dev)
     for name, b in module.named_buffers(recurse=False):
-        module._buffers[name] = b.to(dev)
+        module._buffers[name] = stager.to_device(b, dev)
 
 
 def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
@@ -114,12 +120,12 @@ def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
     parent = model.get_submodule(path.rsplit(".", 1)[0]) if "." in path else model
     for tail in (head, getattr(parent, "norm", None)):
         if tail is not None:
-            tail.to(last)
+            module_to_device(tail, last)
     n = len(devices)
     handles = []
     for k, dev in enumerate(devices):
         for layer in layers[len(layers) * k // n : len(layers) * (k + 1) // n]:
-            layer.to(dev)
+            module_to_device(layer, dev)
             handles.append(
                 layer.register_forward_pre_hook(
                     lambda _m, args, kwargs, dev=dev: (
@@ -150,7 +156,7 @@ def load_probe_model(src, dtype: torch.dtype, ex: Executor, log=print):
     plan = "shard" if os.environ.get("HI2_PROBE_SHARD") == "1" else None
     plan = plan or plan_placement(need, cap, len(ex.devices))
     if plan == "single" or len(ex.devices) == 1:
-        return model.to(dev), dev, False
+        return module_to_device(model, dev), dev, False
     shard_layers(model, ex.devices)
     held: dict[str, int] = {}
     for p in model.parameters():

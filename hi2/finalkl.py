@@ -31,6 +31,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 
 from .format import HI2Tensor, assemble, decode_params, fwht_groups, ladder_dequantize
+from .pinned import PinnedWindow, module_to_host
 from .qad import _ste, is_norm_param
 
 LOSS_CHUNK = 256  # positions per LM-head chunk in the loss
@@ -133,25 +134,28 @@ class LadderLinear(nn.Module):
         return F.linear(x, self.weight().to(x.dtype), self.bias)
 
     @torch.no_grad()
-    def export(self) -> HI2Tensor:
+    def export(self, stager=None) -> HI2Tensor:
         pieces = []
+        to_host = (
+            (lambda t: stager.to_host(t)) if stager is not None else (lambda t: t.cpu())
+        )
         for i in range(len(self.cfgs)):
             lo_b, st_b = self._bytes(i)
             pieces.append(
                 (
-                    getattr(self, f"rows{i}").cpu(),
-                    getattr(self, f"codes{i}").cpu(),
-                    torch.stack([lo_b, st_b], dim=-1).to(torch.uint8).cpu(),
-                    getattr(self, f"consts{i}").cpu(),
+                    to_host(getattr(self, f"rows{i}")),
+                    to_host(getattr(self, f"codes{i}")),
+                    to_host(torch.stack([lo_b, st_b], dim=-1).to(torch.uint8)),
+                    to_host(getattr(self, f"consts{i}")),
                 )
             )
         return assemble(
             pieces,
-            self.row_nbits.cpu(),
-            self.row_block.cpu(),
-            self.had.cpu(),
+            to_host(self.row_nbits),
+            to_host(self.row_block),
+            to_host(self.had),
             self.shape[1],
-            self.col_scale.to(torch.float16).cpu() if self.has_scale else None,
+            to_host(self.col_scale.to(torch.float16)) if self.has_scale else None,
         )
 
 
@@ -250,15 +254,16 @@ def final_kl(
     t0 = time.time()
     torch.manual_seed(qc.seed)
     lm = model.get_output_embeddings()
+    stager = PinnedWindow()
     # 1. teacher: the LM head's input on every window (unquantized model, on the GPU)
     hooks = place()
     teach = {}
     with torch.no_grad():
         for i in sorted(set(train_idx) | set(val_idx)):
-            teach[i] = _head_input(model, ids[i : i + 1].to(dev)).float().cpu()
+            teach[i] = stager.to_host(_head_input(model, ids[i : i + 1].to(dev)).float())
     for h in hooks:
         h.remove()
-    model.cpu()
+    module_to_host(model, stager)
     t_teacher = time.time() - t0
     # 2. student: quantized Linears -> LadderLinear, norms from the layer-wise phase
     mods = {}
@@ -380,7 +385,7 @@ def final_kl(
     restore(best_state)
     out_t = dict(tensors)
     for ckpt, m in mods.items():
-        out_t[ckpt] = m.export()
+        out_t[ckpt] = m.export(stager)
     out_d = dict(dense)
     if qc.final_norms and steps > 0:
         for ckpt, p in norms.items():

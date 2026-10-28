@@ -20,7 +20,7 @@ import time
 
 import torch
 
-from hi2.pinned import PinnedWindow
+from hi2.pinned import PinnedWindow, module_to_device, module_to_host
 
 
 def same(a: torch.Tensor, b: torch.Tensor) -> bool:
@@ -84,6 +84,28 @@ def main() -> int:
     good = same(direct, staged)
     ok &= good
     print(f"host->device  {big.numel() * 4 / 2**20:.0f} MiB (chunked)  identical: {good}")
+
+    # a whole module, the way the pipeline moves a decoder layer onto a card
+    mod = torch.nn.Sequential(
+        torch.nn.Linear(shape[1], shape[1], bias=False),
+        torch.nn.Linear(shape[1], shape[1], bias=False),
+    ).to(dev)
+    ref = [p.detach().clone() for p in mod.parameters()]
+    stager2 = PinnedWindow(args.window)
+    module_to_device(mod, dev, dtype=torch.float32, stager=stager2)
+    good = all(
+        same(a, b.detach()) for a, b in zip(ref, mod.parameters())
+    )
+    ok &= good
+    print(f"module->device (staged)      identical: {good}")
+
+    # and back to the host, the way the final logit-KL phase brings the model back
+    module_to_host(mod, stager2)
+    good = all(
+        same(a.detach().cpu(), b.detach().cpu()) for a, b in zip(ref, mod.parameters())
+    )
+    ok &= good
+    print(f"module->host  (staged)      identical: {good}")
 
     # the cost
     t_direct = timeit(lambda: src.to(dev), args.repeat)
