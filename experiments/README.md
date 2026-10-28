@@ -23,6 +23,8 @@ the MC and decision sets below as paired tasks) is in [`../bench/`](../bench/REA
 | Script | Job |
 | --- | --- |
 | `vllm_ppl.py` | Score the perplexity of a model served in the fork's vLLM. |
+| `gguf_bpw.py` | Count the bpw of a GGUF the way `hi2 size` counts an HI2 checkpoint (every byte the loader reads over the quantized weights). Pure python, no gguf-py. |
+| `gguf_kld.sh` | The KLD of a GGUF against its own BF16 base with llama.cpp (`KL(BF16 ‖ quantized)` over the whole vocabulary), on the same window `hi2 eval` uses. Runs on the CPU when the GPUs are busy. |
 | `mc_eval.py` | Score multiple-choice tasks against a served model. |
 | `decision_prompts.py`, `decision_fidelity.py`, `data/decision_prompts.json` | The decision-fidelity prompt set, the client and the comparison. |
 | `summarize_gguf.py`, `summarize_qad.py`, `ratio_table.py`, `int8_usage.py` | Collect run logs into tables. |

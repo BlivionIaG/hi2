@@ -459,11 +459,11 @@ same quantity in both, which is why the 4B tables compare them.
    times lower than HI2 at 3.0 bpw (0.0901 with QAD), and it pays 1.57 bpw more for it:
    13 963 MiB of decoder linears against 8 745. The file sizes are much closer (15 702 against
    15 290 MiB) because the GGUF also quantizes the embedding, the head and the MTP layer.
-2. **The mix text is where the formats separate.** Every format is far worse on it than on the
-   docs text: the GGUF's KLD goes from 0.0142 to 0.0776 (x 5.5), HI2 PTQ from 0.0975 to 0.2171
-   (x 2.2) and HI2 QAD from 0.0901 to 0.2947 (x 3.3). QAD helps on the docs text and hurts on
-   the mix text, which is the same split the 27B section above reports; the GGUF, which has no
-   distillation step, is the only one of the three that does not have a bad text.
+2. **The mix text is where the formats separate.** Every format is worse on it than on the docs
+   text: the GGUF's KLD goes from 0.0142 to 0.0776, HI2 PTQ from 0.0975 to 0.2171 and HI2 QAD
+   from 0.0901 to 0.2947. The GGUF's mix-text KLD is still lower than HI2's *docs*-text KLD, and
+   QAD helps on the docs text while hurting on the mix text, the same split the 27B section
+   above reports.
 3. **At equal file size HI2 is ahead**, and it is the only one of the three that is under
    16 GiB. The AWQ INT4 checkpoint is the largest file of the three, 28 % above the GGUF and
    31 % above HI2, and it has no KLD yet: it is a compressed-tensors pack-quantized
