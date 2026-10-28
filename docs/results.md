@@ -360,6 +360,54 @@ Decisions and perplexities per run: `experiments/results/decision_fidelity_27b_2
 (the harness is `experiments/decision_fidelity.sh`). Not measured: the multiple-choice tasks,
 EXL3 or GGUF at this size, and a QAD run with the default preset.
 
+### The 27B on the task suite (anchor, reduced suite)
+
+The anchor of the calibration study: the same three checkpoints against a BF16 27B reference
+served at TP=4. The suite is reduced to 100 items per family (766 items) so that a 27B stays
+in reach, so these numbers are **not** comparable with the 4B table further down, and one
+hundred items gives an interval of about 9 points on a family.
+
+| family | n | BF16 | HI2 PTQ | HI2 PTQ + QAD | AWQ INT4 (cyankiwi) |
+|---|---|---|---|---|---|
+| gsm8k | 100 | 95.0 % | 94.0 % | 95.0 % | 95.0 % |
+| humaneval | 100 | 95.0 % | 93.0 % | 89.0 % | 95.0 % |
+| mbpp | 100 | 93.0 % | 85.0 % | 85.0 % | 90.0 % |
+| ifeval | 100 | 94.0 % | 93.0 % | 90.0 % | 94.0 % |
+| toolcall | 97 | 60.8 % | 37.1 % | 28.9 % | 49.5 % |
+| needle | 68 | 100.0 % | 100.0 % | 100.0 % | 100.0 % |
+| mc | 100 | 64.0 % | 63.0 % | 59.0 % | 67.0 % |
+| decision | 66 | 87.9 % | 74.2 % | 78.8 % | 83.3 % |
+| **macro average** | 731 | **86.2 %** | 79.9 % | 78.2 % | 84.2 % |
+| pooled difference | | | **-6.2 [-8.5, -4.0]** | **-8.2 [-10.8, -5.7]** | **-1.9 [-3.6, -0.3]** |
+| first tool as BF16 | 66 | 100 % | 53.0 % | 66.7 % | 81.8 % |
+| same tool and argument | 66 | 100 % | 43.9 % | 56.1 % | 69.7 % |
+
+What it says:
+
+1. **Tool calling is where a 27B at 3 bpw loses.** The HI2 PTQ model drops 23.7 points on the
+   tool-call family (27.8 % of the items flip right to wrong) and 13.6 points on the agent
+   decisions; the BF16 reference makes the same first tool call on 100 % of the 66 decision
+   prompts and the PTQ model on 53.0 %. Everything else is inside the interval at this size:
+   math, instruction following, multiple choice and long-context retrieval are flat, and only
+   mbpp (-8.0) and humaneval for the QAD model (-6.0) are outside it. The earlier
+   decision-fidelity harness gave 54.5 % for the same PTQ checkpoint (it used a different
+   prompt set); the QAD and AWQ numbers reproduce exactly.
+2. **The QAD checkpoint is worse than PTQ on the tasks, as the mix KLD already said.** Pooled
+   -8.2 against -6.2, and tool calls -32.0 against -23.7. QAD still wins the first tool call
+   (66.7 % against 53.0 %), so it recovers the decision format without fixing the tool-call
+   content. This is the `fast` preset with 6 619 of 19 200 steps and a median held-out layer
+   gain of 1.5 % (point 4 above): undertrained, not limited.
+3. **AWQ INT4 is a ceiling rather than a peer.** At about 4.5 bpw it loses 1.9 points pooled
+   where the 3.0 bpw models lose 6 to 8, and it keeps 81.8 % of the first tool calls against
+   53.0 % for the same-size format. The extra 1.5 bpw buy most of the loss, which is the
+   clearest single argument for raising the default bit rate on agentic work.
+
+Not measured here: the teacher-forced domain KLD of the 27B anchor. The BF16 reference arm
+carries no teacher-forced pass (the reference is its own reference), so the reference's own
+log-probs on its completions are missing and the candidates' log-probs cannot be turned into
+a KLD against it. That needs a second BF16 serve at TP=4, which needs all four cards and so
+waits for the 27B rerun to finish.
+
 
 ## Calibration: what a KLD costs on real work (Qwen3.5-4B)
 

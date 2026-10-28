@@ -41,6 +41,11 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   plus the four checkpoints already on the box, eight points on the full 4765-item suite with
   paired statistics, the teacher-forced domain KLD per task family, a target table per use case
   and the noise floor. The tables and the reasoning are in [results.md](results.md).
+* The 27B anchor on the task suite (reduced to 100 items per family, so not comparable with the
+  4B numbers): against a BF16 27B at TP=4, the 3.0 bpw PTQ model loses 6.2 points pooled and the
+  QAD one 8.2, almost all of it in tool calls (-23.7 and -32.0) and the agent decisions
+  (-13.6 and -9.1); the AWQ INT4 checkpoint loses 1.9. First tool call as BF16: 53.0 % (PTQ),
+  66.7 % (QAD), 81.8 % (AWQ).
 
 ## Findings to keep in mind
 
@@ -64,6 +69,11 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   lose at a domain KLD of 0.0219 (4.0 bpw), math at 0.0592, instruction following at 0.2166,
   short programs at 0.0442 (4.2 bpw). The agent-decision family is not ordered by KLD at all:
   two checkpoints 0.2 bpw apart land 44 points apart on it.
+* **On the 27B, tool calling is the loss.** At 3 bpw the format loses 24 points on the
+  tool-call family and 14 on the agent decisions while math, instruction following, multiple
+  choice and long-context retrieval stay flat. The AWQ INT4 checkpoint at about 4.5 bpw loses
+  1.9 points pooled against the same-size formats' 6 to 8, so the extra 1.5 bpw buy most of
+  the loss on agentic work.
 * A single "default ratio" is the wrong knob: the budget depends on the domain, so the default
   quality rule has to be picked per use case (tool calls need a KLD below 0.01 on their own
   text, instruction following tolerates 0.13).
@@ -72,15 +82,18 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 
 1. Calibration study: **done**. PTQ ladder on the 4B (ratios 2-16 in one shared pass) plus the
    existing 4B checkpoints, the full suite on eight points with paired statistics, the domain
-   KLD per task family, a target table (KLD per use case) and the noise floor. In
-   [results.md](results.md). The 27B anchor is running.
+   KLD per task family, a target table (KLD per use case) and the noise floor, then the 27B
+   anchor on the reduced suite. In [results.md](results.md).
 2. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
-   Hessians); score docs and mix KLD, decisions and the new suite. Staged and queued behind
-   the anchor. It needs `--sens-dtype float16`: the 27B in fp32 does not fit a shard of a
-   30 GiB card.
-3. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1, per use case
+   Hessians); score docs and mix KLD, decisions and the new suite. **Running** (started
+   2026-10-28 09:22): the statistics and tables caches hit, the sensitivity probe is
+   recomputed in fp16 because the 27B does not fit a shard of a 30 GiB card in fp32.
+3. The teacher-forced domain KLD of the 27B anchor is still missing: the BF16 reference arm
+   carries no teacher-forced pass, so the reference's own log-probs on its completions are
+   absent. It needs a second BF16 27B serve at TP=4, which needs all four cards.
+4. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1, per use case
    rather than as one global ratio.
-4. Optional: fp16 matrix math in QAD (layer forward and backward is 94 % of a step), INT3 rows,
+5. Optional: fp16 matrix math in QAD (layer forward and backward is 94 % of a step), INT3 rows,
    a KLD path for AWQ checkpoints.
-5. Before sharing v1: README note that checkpoints need the vLLM fork, check old commits for
+6. Before sharing v1: README note that checkpoints need the vLLM fork, check old commits for
    internal paths, decide whether the 27B table is public.
