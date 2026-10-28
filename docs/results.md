@@ -508,8 +508,13 @@ same quantity in both, which is why the 4B tables compare them.
 | BF16 | 16 | - | 52 126 MiB (GGUF) | 0 | 0 | 1.000 | 1.000 | 100 % |
 | **GGUF Q4_K_M (unsloth)** | 4.738 | 13 963 | 15 702 | **0.0142** | **0.0776** | 1.009 | 1.066 | 95.0 % |
 | AWQ INT4 (cyankiwi) | 4.625 | 13 395 | 20 044 | not measured | not measured | 1.020 | 1.011 | not measured |
-| **HI2 3.0 bpw (PTQ)** | 3.012 | 8 745 | 15 290 | 0.0975 | 0.2171 | 1.049 | 0.937 | 88.1 % |
-| **HI2 3.0 bpw (PTQ + QAD)** | 3.012 | 8 745 | 15 290 | **0.0901** | 0.2947 | 1.043 | 1.080 | 88.8 % |
+| **HI2 3.0 bpw (PTQ)** | 3.012 | 8 745 | 15 290 | 0.0975 | **0.2171** | 1.049 | 0.937 | 88.1 % |
+| HI2 3.0 bpw (PTQ + QAD, 2026-10-27) | 3.012 | 8 745 | 15 290 | **0.0901** | 0.2947 | 1.043 | 1.080 | 88.8 % |
+| **HI2 3.0 bpw (PTQ + QAD, 2026-10-28)** | 3.012 | 8 745 | 15 290 | 0.0937 | 0.2885 | 1.047 | 1.035 | 88.8 % |
+
+(the two QAD rows are the two `fast` runs: the 2026-10-27 one with bf16 buffers and no final
+logit-KL phase, the 2026-10-28 one with float32 buffers and the phase. The verdict is in
+[qad.md](qad.md#the-verdict-2026-10-28-the-fast-recipe-does-not-beat-ptq-at-27b).)
 
 1. **The GGUF buys its quality with bits.** Q4_K_M has a KLD of 0.0142 on the docs text, six
    times lower than HI2 at 3.0 bpw (0.0901 with QAD), and it pays 1.57 bpw more for it:

@@ -17,6 +17,16 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 
 ## Done this session
 
+* **The 27B rerun finished and the verdict is in: the QAD does not beat PTQ at this size.**
+  The `fast` recipe with the float32 buffers and the final logit-KL phase, on four V620s,
+  after four GPU page faults that the pinned staging then fixed. Mix KLD **0.28846** against
+  PTQ's **0.21710** (the previous `fast` checkpoint: 0.29470); docs KLD 0.09373 against
+  0.09747. The suite arm that would have scored the new checkpoint per family was killed
+  rather than left to run 3.5 hours. The teacher-forced domain KLD of the 27B anchor was
+  measured in the same pass (AWQ INT4 is 4 to 12x lower than HI2 on every family) and the
+  27B noise floor is exactly zero. Details:
+  [qad.md](qad.md#the-verdict-2026-10-28-the-fast-recipe-does-not-beat-ptq-at-27b),
+  [results.md](results.md#the-teacher-forced-domain-kld-of-the-27b-anchor).
 * Final logit-KL phase is on by default (`default` and `thorough` presets, 200 steps) and
   splits teacher and student layer-wise over the devices, so the 27B can train it.
 * Data-parallel QAD step over all `--devices` (`data_parallel`, on by default). Same quality as
@@ -106,6 +116,16 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 * **A restart that reuses every layer does not need the propagation.** It only feeds the
   training, and the final logit-KL phase computes its own teacher, so a restart that finds
   every layer's artifact skips the propagation and costs minutes instead of an hour.
+* **The QAD does not beat PTQ at 27B, and the layer-wise nMSE did not say so.** The new
+  `fast` checkpoint's mix KLD is **0.28846** against PTQ's **0.21710** - 33 % worse than not
+  doing the QAD at all - while its per-layer held-out nMSE matched the previous run's to
+  within 2 % on 21 of 42 layers and within 5 % on all 42, and the layer phase was 2.76x
+  faster. The float32 buffers and the 200-step final logit-KL phase moved the number by 2 %
+  of a 33 % gap. The teacher-forced domain KLD says where the damage is: tool calls 63 % worse
+  than PTQ and math 21 % worse, against the agent-decision text 13 % better. **The layer-wise
+  nMSE is a proxy that did not predict the one end-to-end result there is, so a recipe cannot
+  be judged on it.** The verdict and the numbers:
+  [qad.md](qad.md#the-verdict-2026-10-28-the-fast-recipe-does-not-beat-ptq-at-27b).
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
   kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
   involved; the faulting address is a process virtual address, and the faults walk over
@@ -144,36 +164,36 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    existing 4B checkpoints, the full suite on eight points with paired statistics, the domain
    KLD per task family, a target table (KLD per use case) and the noise floor, then the 27B
    anchor on the reduced suite. In [results.md](results.md).
-2. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
-   Hessians); score docs and mix KLD, decisions and the new suite. **Crashed twice**: a GPU
-   page fault in the probe (2026-10-28 11:28), one in the QAD phase (14:59, at layer 19 of 64,
-   after 2 h) and a third in the QAD phase of the fast recipe (18:36, at layer 48 of 64, after
-   2.4 h). All are device-memory faults with no host-side error ("Page not present or supervisor
-   privilege", `PERMISSION_FAULTS` in the kernel log), and they moved between cards, so they are
-   not one bad card.
+2. 27B rerun: **done, and the verdict is negative.** The `fast` recipe with the float32
+   buffers and the 200-step final logit-KL phase finished cleanly on 2026-10-28 after four GPU
+   page faults (the probe at 11:28, the QAD phase at 14:59, 18:36 and 20:53), all of them the
+   copy engine on pageable host memory, all of them fixed by the pinned staging. The
+   checkpoint's **mix KLD is 0.28846 against PTQ's 0.21710** - 33 % worse than not doing the QAD
+   at all, and 2 % better than the 2026-10-27 `fast` checkpoint (0.29470). The docs text is 4 %
+   better than PTQ (0.09373 against 0.09747). The stop condition was met and this line stops
+   here: the suite arm that would have scored the new checkpoint's per-family accuracy was
+   killed rather than left to run its 3.5 hours. The numbers and what they mean are in
+   [qad.md](qad.md#the-verdict-2026-10-28-the-fast-recipe-does-not-beat-ptq-at-27b).
 
-   The kernel log says what they are (see the finding above): the copy engine addressing
-   **pageable host memory**, in both directions. The fix for it is in: the copies go through a
-   pinned window (`hi2/pinned.py`), the QAD's tests are green with it, and the run has been
-   restarted with it. The run is 2 h of a 5.3 h phase each time, the probe cache is complete and
-   the per-layer artifacts are cached, so a restart is cheap: the probe is skipped and the
-   layers that were already distilled are reused.
+   What is left of it, and none of it needs the 27B:
 
-   Still worth doing:
-
-   a. **Watch the restarted run's copy counters.** The pinned window makes the copy engine
-      address mapped memory, but only the crash rate says whether that was the whole story.
+   a. **Watch the copy counters.** The pinned window makes the copy engine address mapped
+      memory; only the crash rate says whether that was the whole story. The count is 40 faults
+      and it did not move through the clean run and the reference arms.
    b. **Serialize the copies against the optimizer step**, so a copy cannot still be in flight
       when its host buffer is released.
    c. **Reproduce it outside the pipeline**: a loop of pageable 40 MiB copies in both
       directions under a 150 GiB RSS process, on one card, for a few hours. That is the
       cheapest way to tell the runtime's direct-DMA path from our own use of it, and it does
       not need the 27B.
-3. The teacher-forced domain KLD of the 27B anchor is still missing: the BF16 reference arm
-   carries no teacher-forced pass, so the reference's own log-probs on its completions are
-   absent. It needs a second BF16 27B serve at TP=4, which needs all four cards. **Armed** in
-   a chain (the reference arm is scored on the *first* run's completions, so it pairs
-   exactly with the candidates' log-probs).
+3. The teacher-forced domain KLD of the 27B anchor: **measured** (2026-10-28). A second BF16
+   27B serve at TP=4 carried a teacher-forced pass and was scored on the *first* run's
+   completions, so it pairs exactly with the candidates' log-probs. AWQ INT4 is 4 to 12x lower
+   than HI2 on every family (tool calls 0.00980 against PTQ's 0.02984 and the QAD's 0.04875,
+   instruction following 0.02002 against 0.18594), and the 4B study's per-use-case budgets hold
+   at this size. The 27B noise floor is **exactly zero**: the two reference runs land all 766
+   items the same way. The table is in
+   [results.md](results.md#the-teacher-forced-domain-kld-of-the-27b-anchor).
 4. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1, per use case
    rather than as one global ratio.
 5. **The QAD's speed, in the order the measurements put it** (the modes - recipe, math
@@ -194,16 +214,20 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
       in [qad.md](qad.md#the-half-precision-math-measured-2026-10-28); a usable version
       would keep the attention and the recurrence in float32 and put only the MLP in
       float16.
-   b. **Stop the layers that stopped gaining - a flag, and running.** `--qad-preset fast`
-      (budget 0.5, early stop under 1 %) or `--qad-config '{"budget": ..., "min_gain":
-      ...}'`. The 27B rerun of 2026-10-28 (after 15:00) runs it with the float32
-      buffers, so the early stop is not firing on the bf16 rounding.
+   b. **Stop the layers that stopped gaining - a flag, and running; the end-to-end result is
+      negative.** `--qad-preset fast` (budget 0.5, early stop under 1 %) or `--qad-config
+      '{"budget": ..., "min_gain": ...}'`. The 27B rerun of 2026-10-28 ran it with the float32
+      buffers, so the early stop was not firing on the bf16 rounding, and the layer phase came
+      out 2.76x faster for the same per-layer nMSE. It did not help the number that matters:
+      the mix KLD came out 0.28846 against PTQ's 0.21710. The early stop is therefore **not
+      worth tuning further** - the cheap end of the recipe range is 33 % short of PTQ on the
+      mix text, so the expensive end is not worth a 27B run to test. What it remains good for
+      is the time, if a use case can live with the mix text.
       `experiments/qad_budget_sim.py` replays a measured run through both rules and prices
       the recipes: on the first 19 layers of the 27B, the `fast` recipe spends 38 % of the
       steps for +0.3 % of the layer-wise held-out nMSE. The layer-wise nMSE is a proxy
-      that did **not** predict the one end-to-end result we have (the `fast` checkpoint at
-      the 27B came out worse than PTQ on the mix KLD), so a faster recipe has to be
-      judged on the mix KLD.
+      that did **not** predict the end-to-end result: the `fast` checkpoint at the 27B came
+      out worse than PTQ on the mix KLD, and the cheaper recipe did not change that.
    c. **The copies.** Once the math is faster, the per-step PCIe traffic (about 9.6 GB a
       step: the decoded weights to the three workers and the gradients back) becomes the
       next bottleneck. The fix is to decode on each worker from the codes and the small

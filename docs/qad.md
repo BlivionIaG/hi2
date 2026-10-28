@@ -194,6 +194,54 @@ it is a verdict on the `fast` recipe without the final phase. The two runs are n
 A/B either: the sensitivity probe was recomputed after the probe tokens changed, so their PTQ
 bases differ slightly (allocation error ratio 11.044 against 11.299).
 
+### The verdict (2026-10-28): the `fast` recipe does not beat PTQ at 27B
+
+The new checkpoint's end-to-end KLD, measured on the same windows as every other number here:
+
+| | docs KLD | mix KLD | top-1 (docs / mix) | EAR (docs / mix) |
+|---|---:|---:|---:|---:|
+| HI2 3.0 bpw, PTQ | 0.09747 | **0.21710** | 88.1 % / 86.6 % | 0.894 / 0.873 |
+| HI2 3.0 bpw, PTQ + QAD `fast` (2026-10-27) | 0.09012 | 0.29470 | 88.8 % / 85.3 % | 0.901 / 0.863 |
+| HI2 3.0 bpw, PTQ + QAD `fast` (2026-10-28) | **0.09373** | **0.28846** | 88.8 % / 85.3 % | 0.899 / 0.863 |
+
+**The answer to the question the run was for is no.** The new run is better than the old `fast`
+checkpoint (mix KLD 0.28846 against 0.29470, and 2 % better on the mix perplexity) and better
+than PTQ on the docs text (0.09373 against 0.09747, 4 % better), but on the mix text it is
+**33 % worse than not doing the QAD at all** (0.28846 against 0.21710). The float32 buffers and
+the 200-step final logit-KL phase bought about 2 % of a 33 % gap; they did not close it.
+
+Three things follow, and they are the end of this line of work.
+
+1. **The recipe is not the lever.** The per-layer nMSE said the layers were trained to the same
+   place as the previous run (within 2 % on 21 of 42 layers, within 5 % on all 42) and the run
+   was 2.76x faster, so the recipe did what it was asked to do. The end-to-end KLD still says
+   the QAD makes the model worse on the mix text. A lever that cannot move the number that
+   matters is not worth tuning: `fast` was the cheap end of the recipe range and it is 33 %
+   short, so the expensive end (`default`, three times the steps) is not worth a 27B run to
+   test.
+2. **The layer-wise nMSE does not predict the end-to-end KLD.** It did not here, and it is
+   worth knowing that it did not: it is the proxy the whole QAD is built on, and on the one
+   model where both were measured it was not on the model's side.
+3. **The docs text and the mix text disagree, and the mix text is the one that predicts the
+   tasks.** The QAD helps on the study text on both runs and hurts on the mix text on both
+   runs. The teacher-forced domain KLD says where: it makes the tool-calling text 63 % worse
+   (0.04875 against PTQ's 0.02984) and the math text 21 % worse (0.05068 against 0.04187),
+   while buying the agent-decision text (0.06925 against 0.07913). The old `fast` checkpoint
+   lost 8.2 points pooled on the task suite against PTQ's 6.2, and the tool-call family was
+   where it lost most.
+
+**So the 27B QAD line stops here.** The mix KLD of the new checkpoint is 0.28846 against PTQ's
+0.21710, the stop condition was met, and the suite arm that would have scored the new
+checkpoint's per-family accuracy was killed rather than left to run its 3.5 hours. What the
+new checkpoint does *not* have is its own row in the teacher-forced domain KLD table and its
+own column in the task-suite table; its mix KLD, its docs KLD and its perplexities are
+measured, and they are in `experiments/results/kld_27b_2026-10-28/`.
+
+What the 27B *does* keep is the part that is not the QAD's: the format is still the smallest
+file of the three (3.012 bpw, 15 290 MiB, 2.6 % below the GGUF and 23.8 % below the AWQ), the
+domain KLD of the AWQ INT4 checkpoint at 4.625 bpw is 4 to 12x lower than HI2's on every
+family, and the 4B study's per-use-case budgets hold at this size.
+
 ### What to pick
 
 | situation | mode |
@@ -201,14 +249,17 @@ bases differ slightly (allocation error ratio 11.044 against 11.299).
 | 4B or smaller, quality first | `default` (41 min at the 0.8B, 3.1 h at the 4B): 2.4x the time of `fast` for a third less error on the mix text |
 | 4B or smaller, a checkpoint in minutes | `fast` |
 | the last percent at the 0.8B, time no object | `thorough` (141 min): about 1.5 % more than `default` |
-| 27B | `default` is the quality-optimal recipe by the small-size studies, but it is 5.3 h and it died twice to GPU page faults (2026-10-28 11:28 and 14:59). The `fast` recipe is 2.6 h; **its mix KLD decides** whether that is acceptable (the earlier fast checkpoint came out worse than PTQ on the mix text, 0.2947 against 0.2171, but it had bf16 buffers and no final logit-KL phase - see above) |
+| 27B | **the QAD does not pay at this size** (the verdict: the `fast` recipe's mix KLD is 0.28846 against PTQ's 0.21710, 33 % worse than doing no QAD, and the cheap end of the recipe range is the one that was measured). Use **PTQ** at 27B, or the AWQ INT4 checkpoint at 4.625 bpw, whose domain KLD is 4 to 12x lower than HI2's on every family. The `default` recipe was not run at 27B and is not worth a run: the early stop that makes `fast` cheap did not move the number, so the expensive end is further from the target, not nearer |
 | any size, a QAD for a *reference* | `default` with float32 buffers and float32 math - the other modes are only worth their time if the mix KLD says so |
 
-**The recipe the next runs use** (decided 2026-10-28): `fast` - the early stop under 1 % with
-the float32 buffers and the float32 math. The half-precision math stays in the code
-(`--qad-dtype float16`) with its measurement attached, because it is 1.43x faster and does not
-learn on this hardware, so it is not what a run uses. The `default` recipe is the one to reach
-for when the mix KLD says the time is worth it.
+**The recipe the next runs use** (decided 2026-10-28, and revised by the verdict above): `fast`
+- the early stop under 1 % with the float32 buffers and the float32 math. The half-precision
+math stays in the code (`--qad-dtype float16`) with its measurement attached, because it is
+1.43x faster and does not learn on this hardware, so it is not what a run uses. **At 27B the
+recipe is now settled the other way: the `fast` recipe came out 33 % worse than PTQ on the mix
+KLD, so the 27B QAD line stops there and a 27B checkpoint should be the PTQ one** (or the AWQ
+INT4 checkpoint at 4.625 bpw). `default` is the recipe to reach for at the small sizes, where
+the studies say it is worth its time.
 
 ## Step time
 

@@ -1,0 +1,10 @@
+{
+  "tokens": 16376,
+  "ppl_original": 4.106898784637451,
+  "ppl_quantized": 4.301612854003906,
+  "kld_nats_per_token": 0.09373118042305265,
+  "top1_agreement": 0.8877625793844651,
+  "ear": 0.8994893724882259,
+  "lossless": false,
+  "dtype": "float16"
+}
