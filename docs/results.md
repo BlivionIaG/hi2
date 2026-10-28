@@ -408,6 +408,39 @@ log-probs on its completions are missing and the candidates' log-probs cannot be
 a KLD against it. That needs a second BF16 serve at TP=4, which needs all four cards and so
 waits for the 27B rerun to finish.
 
+### What the other formats cost at this size (measured)
+
+The "about 4.5 bpw" of the AWQ column above was an estimate. Here is the same count for
+every format on this model: every byte the loader reads over the quantized weights, divided
+by the number of weights those bytes hold. The GGUF is the `unsloth/Qwen3.8-27B-GGUF`
+Q4_K_M (their dynamic variant: the tensor types are mixed, see below).
+
+| format | quantized set | weights | body | body bpw | file on disk |
+|---|---|---|---|---|---|
+| HI2 3.0 bpw (PTQ) | 496 decoder linears | 24 350.6 M | 8 744.5 MiB | **3.012** | 15 289 MiB |
+| HI2 3.0 bpw (PTQ + QAD) | 496 decoder linears | 24 350.6 M | 8 744.5 MiB | **3.012** | 15 289 MiB |
+| AWQ INT4 (cyankiwi) | 399 linears | 24 295.5 M | 13 395.2 MiB | **4.625** | 20 044 MiB |
+| GGUF Q4_K_M (unsloth) | 503 decoder linears | 24 722.8 M | 13 963.4 MiB | **4.738** | 16 464 MiB |
+
+Three things follow from the count.
+
+1. **HI2 at 3.0 bpw is the smallest file of the three by 8 to 24 %** (15 289 MiB against
+   16 464 and 20 044), and its quantized body is a third smaller than AWQ's.
+2. **The AWQ number is not 4.5 but 4.625 bpw**: 4.000 bpw of packed int4, 0.500 of scales
+   (fp16, group 32) and 0.125 of zero points. It also leaves 97 of the 496 linears dense,
+   and keeps the embedding and the head in fp16.
+3. **The GGUF quantizes more than the others**: besides the decoder linears (4.738 bpw) it
+   quantizes the embedding and the head (2 542.8 M weights, 1 676.7 MiB, 5.531 bpw) and the
+   MTP layer (52.4 M weights, 41.0 MiB), which HI2 and AWQ keep in fp16. Its types are mixed
+   per tensor: Q5_K (131 tensors), IQ4_XS (117), Q4_K (104), Q6_K (30), IQ4_NL (7), Q3_K (7),
+   IQ3_S (4), Q8_0 (106).
+
+The quality side of this comparison (KLD against BF16 on the same held-out tokens) is not
+measured yet: llama.cpp's HIP backend on this box was built against ROCm 7.2.2 while it
+loads ROCm 7.14, so its gfx1030 code objects are rejected ("device kernel image is invalid").
+It is being rebuilt against the runtime it loads; the measurement needs a GPU, so it waits
+for the 27B rerun.
+
 
 ## Calibration: what a KLD costs on real work (Qwen3.5-4B)
 

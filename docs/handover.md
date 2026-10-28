@@ -46,6 +46,11 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   QAD one 8.2, almost all of it in tool calls (-23.7 and -32.0) and the agent decisions
   (-13.6 and -9.1); the AWQ INT4 checkpoint loses 1.9. First tool call as BF16: 53.0 % (PTQ),
   66.7 % (QAD), 81.8 % (AWQ).
+* The same count applied to the other formats on the 27B (every byte the loader reads over the
+  quantized weights, divided by the weights): HI2 3.0 bpw **3.012** (15 289 MiB file), AWQ INT4
+  **4.625** (20 044 MiB, not the 4.5 estimated before), GGUF Q4_K_M **4.738** (16 464 MiB, and
+  it also quantizes the embedding, the head and the MTP layer). HI2 is the smallest file of the
+  three. The quality half of that comparison waits on the GPU and on a llama.cpp rebuild.
 
 ## Findings to keep in mind
 
