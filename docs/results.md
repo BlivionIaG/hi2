@@ -406,7 +406,7 @@ Not measured here: the teacher-forced domain KLD of the 27B anchor. The BF16 ref
 carries no teacher-forced pass (the reference is its own reference), so the reference's own
 log-probs on its completions are missing and the candidates' log-probs cannot be turned into
 a KLD against it. That needs a second BF16 serve at TP=4, which needs all four cards and so
-waits for the 27B rerun to finish.
+waits for the 27B rerun to finish; it is armed and runs on its own when the rerun lands.
 
 ### What the other formats cost at this size (measured)
 
