@@ -431,3 +431,49 @@ What it says:
    of 66). This is the opposite of the 27B result above, where the QAD model trailed the PTQ
    model on first-tool agreement. It needs the noise floor before it can be believed: greedy
    decoding is not bit-stable on this stack, and the decision set is small.
+
+### The KLD depends on the domain
+
+The study-text KLD is one number for the whole model. The teacher-forced pass measures it per
+task family, on the reference's own completions: the text the tasks were scored on. This is
+the number to look at for a given use case.
+
+| point | bpw | study KLD | gsm8k | humaneval | mbpp | ifeval | toolcall | decision |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lad-r2 | 4.211 | 0.0188 | 0.0350 | 0.0194 | 0.0442 | 0.1296 | 0.0094 | 0.0751 |
+| lad-r4 | 3.796 | 0.0461 | 0.0931 | 0.0413 | 0.0965 | 0.3247 | 0.0267 | 0.1133 |
+| lad-r8 | 3.291 | 0.0900 | 0.1588 | 0.0761 | 0.1695 | 0.6326 | 0.0537 | 0.2196 |
+| lad-r16 | 2.693 | 0.1595 | 0.2391 | 0.1257 | 0.2849 | 1.0719 | 0.0810 | 0.3355 |
+| ptq-b3.0 | 2.998 | 0.1607 | 0.1703 | 0.0902 | 0.2029 | 0.6132 | 0.0573 | 0.1814 |
+| b3.0-qad | 2.998 | 0.0607 | 0.1293 | 0.0794 | 0.1742 | 0.5386 | 0.0344 | 0.1508 |
+| b3.5-qad | 3.499 | 0.0416 | 0.0838 | 0.0496 | 0.1066 | 0.3140 | 0.0235 | 0.1462 |
+
+The spread across families is large and it is not the same spread everywhere: at the 4.2 bpw
+point the instruction-following text is 14 times off the study KLD (0.1296 against 0.0188)
+and the tool-calling text is half of it (0.0094). A single KLD number therefore says very
+little about what a model will do on a given kind of work.
+
+### Target table: what a use case needs
+
+For each family, the domain KLD up to which the family shows no measurable loss, and the
+bit rate that reaches it. "Flat" means the paired 95 % CI of the accuracy difference contains
+zero; the next column is the first ladder point that does lose.
+
+| use case | family | flat up to (domain KLD) | bpw | first point that loses |
+| --- | --- | --- | --- | --- |
+| tool calling | toolcall | 0.0094 | 4.2 | 0.0267 at 3.8 bpw: -5.0 points |
+| math | gsm8k | 0.0350 | 4.2 | 0.0931 at 3.8 bpw: -2.4 points |
+| code, function synthesis | humaneval | 0.0413 | 3.8 | 0.0761 at 3.3 bpw: -22.0 points |
+| code, short programs | mbpp | below 0.0442 | above 4.2 | 0.0442 at 4.2 bpw: -5.4 points |
+| instruction following | ifeval | 0.1296 | 4.2 | 0.3247 at 3.8 bpw: -6.2 points |
+| long-context retrieval | needle | not measurable | any | -0.6 points at 2.7 bpw |
+| agent decisions | decision | see the noise floor | | |
+
+Two things to take from it. The budget is not uniform: a tool-calling workload needs a KLD
+below 0.01 on its own text, while instruction following tolerates 0.13, thirteen times more.
+And on this 4B model **nothing below 4.2 bpw is free**: every family that has a measurable
+loss starts losing between 4.2 and 3.8 bpw, and the format's default recipe (ratio 6 with
+QAD, 3.0 to 3.5 bpw) sits in the range where the code and instruction-following families
+lose 5 to 15 points. The QAD checkpoints buy KLD where it is cheapest (tool calls, 0.0344 at
+3.0 bpw against 0.0573 for PTQ) and barely at all where it is most needed (instruction
+following, 0.5386 against 0.6132).
