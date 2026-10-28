@@ -52,10 +52,12 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   it also quantizes the embedding, the head and the MTP layer). HI2 is the smallest file of the
   three: 2.6 % below the GGUF and 23.8 % below the AWQ.
 * The quality half of that comparison, measured on the GGUF side with llama.cpp's own KLD on the
-  same held-out window the HI2 numbers use: **GGUF Q4_K_M 0.0142 nats/token** against 0.0901 for
-  HI2 at 3.0 bpw with QAD and 0.0975 for PTQ (perplexity ratio 1.009 against 1.043 and 1.049;
-  same top-1 95.0 % against 88.8 % and 88.1 %). The GGUF buys that with 1.57 bpw more; at equal
-  file size HI2 is ahead. The AWQ INT4 checkpoint still has no KLD: it is a compressed-tensors
+  same held-out windows the HI2 numbers use: **GGUF Q4_K_M 0.0142 nats/token** on the docs text
+  and 0.0776 on the mix text, against 0.0901 / 0.2171 for HI2 at 3.0 bpw with QAD and
+  0.0975 / 0.2947 for PTQ (perplexity ratio 1.009 against 1.043 and 1.049; same top-1 95.0 %
+  against 88.8 % and 88.1 %). At the same bit rate the GGUF's own types are worse: Q2_K
+  (3.175 bpw) 0.1395, and the GGUF needs Q3_K_M at 3.95 bpw (47 % more body bytes) to match
+  HI2's 0.0901. The AWQ INT4 checkpoint still has no KLD: it is a compressed-tensors
   pack-quantized checkpoint, not an HI2 one, so `hi2 eval` cannot read it.
 
 ## Findings to keep in mind
