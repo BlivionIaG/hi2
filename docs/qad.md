@@ -124,6 +124,14 @@ any field (`{"budget": 0.75, "min_gain": 0.005, "buffer_dtype": "float32"}`), an
 `--qad-final-kl STEPS` sets the final whole-network logit-KL phase (the `fast` preset
 leaves it off, `default` and `thorough` set 200).
 
+**The early stop is mostly inert at the 27B.** It can only act on an evaluation step that
+is at least `min_steps` (75) old and before the layer's last step, and the evaluation
+grid is every 50 steps. With the budget at 0.5 a layer gets about 85-90 steps, so the
+only candidate is step 100 - past the allotment. In the run of 2026-10-28 the stop did
+not fire once in the first 26 layers: the budget alone did the cutting. The layers whose
+allotment is above 100 steps (the first ones, and the ones the budget weights up) can
+stop, and there the gain over 50 steps is still above 1 %.
+
 What the recipes cost and buy, measured:
 
 | | 0.8B | 4B | 27B |
