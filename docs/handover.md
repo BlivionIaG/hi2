@@ -127,6 +127,16 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   into the pinned window) against a 1 s step, and the device-to-host direction is actually
   *faster* than the direct copy (14.2 ms against 26.9 ms), because the window is reused
   instead of a fresh pageable tensor being allocated each time.
+* **The pinned staging costs about 4x on the weights** (`experiments/staging_rate_check.py`,
+  one V620, median of three): a 27B decoder layer (7 linears, 710 MiB in fp16) moves at
+  3.65 GiB/s directly and 0.94 GiB/s through the window, so a 54 GB teacher placement costs
+  about 40 s more than it would without. It is the price of the fix and it is not the reason
+  the placement is slow: `hi2 eval` took 13 minutes to place the 27B, and the staging
+  accounts for well under a minute of it - the rest is the first touch of the model's
+  mmap'd weights (about 13.8 M minor page faults) under a box that another job was loading
+  at the time. A variant that copies the chunk straight into the destination slice, without
+  the per-chunk device temporary, measured *slower* (1.72 against 2.24 GiB/s), so
+  `hi2/pinned.py` is left as it is.
 
 ## Next steps
 
