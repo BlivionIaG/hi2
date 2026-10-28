@@ -360,3 +360,54 @@ Decisions and perplexities per run: `experiments/results/decision_fidelity_27b_2
 (the harness is `experiments/decision_fidelity.sh`). Not measured: the multiple-choice tasks,
 EXL3 or GGUF at this size, and a QAD run with the default preset.
 
+
+## Calibration: what a KLD costs on real work (Qwen3.5-4B)
+
+The KLD in the tables above is a number on held-out text. This section asks what it costs on
+work. The method: a PTQ ladder on Qwen3.5-4B, the full task suite run against a BF16 reference
+of the same model, every item paired, and the teacher-forced domain KLD of each point measured
+on the reference's own completions.
+
+### The ladder
+
+Four points from one shared phase 1, one probe and one encode pass (`--max-error-ratio
+2,4,8,16 --no-qad`, mixed calibration, sensitivity probe, 128 x 2048 tokens, so the same
+calibration and the same allocation mode as the 4B checkpoints above). The KLD is `hi2 eval` on
+the held-out study text: the same measurement as the rest of this page.
+
+| point | ratio | bpw | KLD | top-1 | PPL x |
+| --- | --- | --- | --- | --- | --- |
+| lad-r2 | 2 | 4.211 | 0.0188 | 0.9421 | 1.009 |
+| lad-r4 | 4 | 3.796 | 0.0461 | 0.9082 | 1.029 |
+| lad-r8 | 8 | 3.291 | 0.0900 | 0.8706 | 1.060 |
+| lad-r16 | 16 | 2.693 | 0.1595 | 0.8338 | 1.117 |
+
+The reference run of the suite (BF16, 4765 items over eight task families) scored: gsm8k
+91.5 %, humaneval 82.9 %, mbpp 75.1 %, ifeval 92.2 %, toolcall 56.2 %, needle 100.0 %,
+mc 52.1 %, decision 72.7 %.
+
+### What the KLD costs on the suite
+
+Accuracy of the quantized model minus the reference, in points, with a paired bootstrap 95 %
+CI. The ladder's first three points:
+
+| point | KLD | pooled | gsm8k | humaneval | mbpp | ifeval | toolcall | needle | mc | decision |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lad-r2 | 0.0188 | -0.3 [-1.0, +0.5] | +0.7 [-0.6, +2.0] | -3.7 [-9.8, +2.4] | **-5.4 [-9.3, -1.9]** | +0.4 [-2.0, +2.8] | +1.0 [-1.6, +3.8] | 0.0 | -1.1 [-2.2, -0.1] | **+15.2 [+6.1, +25.8]** |
+| lad-r4 | 0.0461 | **-3.1 [-4.0, -2.2]** | -2.4 [-3.9, -0.8] | -5.5 [-12.8, +1.2] | -4.3 [-8.6, 0.0] | -6.2 [-9.4, -3.0] | -5.0 [-8.4, -1.6] | -1.2 [-3.1, 0.0] | -1.9 [-3.2, -0.6] | -4.5 [-10.6, 0.0] |
+| lad-r8 | 0.0900 | **-8.1 [-9.2, -7.0]** | -8.5 [-10.5, -6.5] | **-22.0 [-30.5, -13.4]** | -10.9 [-16.0, -5.8] | -9.8 [-13.6, -6.2] | -12.6 [-16.6, -8.8] | -2.5 [-5.0, -0.6] | -4.8 [-6.4, -3.2] | -9.1 [-16.7, -3.0] |
+
+Three things this says already, before the rest of the points land:
+
+1. **The pooled loss is small up to a KLD of about 0.02 and then falls off fast.** At 0.0188
+   the pooled difference is -0.3 points with a CI that contains zero; at 0.0461 it is -3.1 and
+   the CI does not; at 0.0900 it is -8.1. The loss is not linear in the KLD.
+2. **The code tasks are the first to go.** At a KLD of 0.0188 everything is flat except
+   mbpp (-5.4 points, p = 0.007) and the multiple-choice set (-1.1). HumanEval, the family
+   with the most items at risk of noise, only breaks at 0.0900, where it loses 22 points.
+   Instruction following, tool calls and long-context retrieval are flat at 0.0188.
+3. **The agent-decision set moves the other way at the top of the ladder.** The 4B at
+   0.0188 makes *more* well-formed first tool calls than BF16 (87.9 % against 72.7 %, 11 items
+   of 66). This is the opposite of the 27B result above, where the QAD model trailed the PTQ
+   model on first-tool agreement. It needs the noise floor before it can be believed: greedy
+   decoding is not bit-stable on this stack, and the decision set is small.
