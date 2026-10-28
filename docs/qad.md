@@ -165,6 +165,35 @@ its early stop fired at a median layer gain of 1.5 % - the noise, not the layer'
 progress. The 27B run of 2026-10-28 uses `--qad-config '{"buffer_dtype": "float32"}'`
 for that reason.
 
+### The two fast runs, compared per layer (2026-10-27 and 2026-10-28)
+
+Two runs of the `fast` recipe on Qwen3.8-27B, compared on the 42 layers the second one had
+finished at the time of writing:
+
+| | 2026-10-27 | 2026-10-28 |
+| --- | --- | --- |
+| buffers | bfloat16 (the float32 ones did not fit) | float32 |
+| the QAD runs on | one GPU | four GPUs, data-parallel |
+| final logit-KL phase | none | 200 steps |
+| layer time, those 42 layers | 203.8 min | 73.9 min (2.76x less) |
+| steps spent on them | 4269 | 4333 |
+| mean per-layer gain | -3.94 % | -3.98 % |
+| per-layer final held-out nMSE | the reference | within 2 % on 21 of the 42 layers, within 5 % on all 42 (mean +1.3 %, mean absolute 2.25 %) |
+
+Two things follow from it.
+
+**The data-parallel split does not change the math.** Worker *k* takes every *n*-th sequence of
+the batch and the gradients are summed, so it is the same step on four cards: 2.86 s a step on
+one card against 1.02 s on four. The recipe is unchanged, only the wall clock is.
+
+**The first fast checkpoint never had the final logit-KL phase.** Its log goes straight from the
+layer loop to "phase 3: encoding and writing", while the run of 2026-10-28 spends 200 steps on
+the end-to-end logit KL before it. That phase is what the mix KLD measures, so the earlier
+checkpoint's mix KLD of 0.2947 (against PTQ's 0.2171) is not a verdict on the `fast` recipe -
+it is a verdict on the `fast` recipe without the final phase. The two runs are not a bit-exact
+A/B either: the sensitivity probe was recomputed after the probe tokens changed, so their PTQ
+bases differ slightly (allocation error ratio 11.044 against 11.299).
+
 ### What to pick
 
 | situation | mode |
@@ -172,7 +201,7 @@ for that reason.
 | 4B or smaller, quality first | `default` (41 min at the 0.8B, 3.1 h at the 4B): 2.4x the time of `fast` for a third less error on the mix text |
 | 4B or smaller, a checkpoint in minutes | `fast` |
 | the last percent at the 0.8B, time no object | `thorough` (141 min): about 1.5 % more than `default` |
-| 27B | `default` is the quality-optimal recipe by the small-size studies, but it is 5.3 h and it died twice to GPU page faults (2026-10-28 11:28 and 14:59). The `fast` recipe is 2.6 h; **its mix KLD decides** whether that is acceptable (the earlier fast checkpoint came out worse than PTQ on the mix text, 0.2947 against 0.2171, but with bf16 buffers) |
+| 27B | `default` is the quality-optimal recipe by the small-size studies, but it is 5.3 h and it died twice to GPU page faults (2026-10-28 11:28 and 14:59). The `fast` recipe is 2.6 h; **its mix KLD decides** whether that is acceptable (the earlier fast checkpoint came out worse than PTQ on the mix text, 0.2947 against 0.2171, but it had bf16 buffers and no final logit-KL phase - see above) |
 | any size, a QAD for a *reference* | `default` with float32 buffers and float32 math - the other modes are only worth their time if the mix KLD says so |
 
 ## Step time
