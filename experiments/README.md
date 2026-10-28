@@ -53,4 +53,6 @@ the MC and decision sets below as paired tasks) is in [`../bench/`](../bench/REA
 | --- | --- |
 | `profile_encode.py`, `profile_new.py`, `profile_probe.py` | Where the quantizer spends its time. |
 | `profile_qad.py` | Where a QAD optimizer step spends its time on one real layer (decode, layer forward and backward, backward through the decode, optimizer). |
+| `qad_dtype_check.py` | The same real layer in float32, float16 and bfloat16: the time of a step, the held-out nMSE and the difference of the gradient the optimizer sees (does the QAD still learn the same in half precision?). |
+| `qad_budget_sim.py` | Replay a QAD log through the step budget and the early stop of `hi2/qad.py` and price the recipes: the steps, the time and the held-out nMSE a different recipe would have cost. |
 | `isa/probe.hip`, `isa/run.hip` | Check RDNA2 instruction facts (spec section 7) on a V620. |

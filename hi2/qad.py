@@ -79,6 +79,11 @@ class QadConfig:
     warmup: float = 0.05  # fraction of steps with linear warm-up
     keep_best: bool = True
     buffer_dtype: str = "auto"  # hidden-state buffers in RAM: auto | float32 | bfloat16
+    # Math dtype of the layer forward and backward: float32 | float16 | bfloat16. Only the
+    # matrix products of the layer change (the latents, the ladder bytes and the loss stay
+    # float32), so the matrix units of the GPU can be used. On gfx1030 the float32 step is
+    # compute-bound with the matrix path idle (docs/qad.md, "The 27B at four GPUs").
+    dtype: str = "float32"
     # Split the sequences of every step over all of the run's devices (each holds a copy of
     # the layer; the decoded weights go out and the gradients come back). Same gradient up
     # to summation order; off for train_norms and the KL term, which run on the first device.
@@ -159,6 +164,8 @@ def make_config(preset: str = "default", overrides: dict | None = None) -> QadCo
         raise SystemExit("QAD latent_units must be 'abs' or 'step'")
     if qc.init not in ("ptq", "weights"):
         raise SystemExit("QAD init must be 'ptq' or 'weights'")
+    if qc.dtype not in ("float32", "float16", "bfloat16"):
+        raise SystemExit("QAD dtype must be 'float32', 'float16' or 'bfloat16'")
     if qc.samples < 1 or qc.steps < 0 or qc.batch < 1 or qc.val < 1:
         raise SystemExit("QAD samples/batch/val must be >= 1 and steps >= 0")
     return qc
@@ -467,7 +474,7 @@ def head_kl(head, out: torch.Tensor, tgt: torch.Tensor, pos) -> torch.Tensor:
     return (lt.exp() * (lt - ls)).sum(-1).mean()
 
 
-def _parallel_step(w, wd, batch, xs, ys, workers):
+def _parallel_step(w, wd, batch, xs, ys, workers, dtype=torch.float32):
     """One data-parallel step: worker ``k`` (device, layer copy, kwargs) takes every
     ``len(workers)``-th sequence of ``batch``, runs its forward and backward on its own
     copy of the decoded weights, and the gradients are summed on the first device.
@@ -480,15 +487,15 @@ def _parallel_step(w, wd, batch, xs, ys, workers):
 
     def work(k):
         dev, lay, kw = workers[k]
-        wk = wd if k == 0 else {a: v.detach().to(dev) for a, v in w.items()}
+        wk = wd if k == 0 else {a: v.detach().to(dev, dtype=dtype) for a, v in w.items()}
         if k:
             for v in wk.values():
                 v.requires_grad_(True)
         tot = 0.0
         with torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext():
             for i in batch[k::n]:
-                out = _out(functional_call(lay, wk, (xs[i].to(dev).float(),), kw))
-                loss = _nmse(out, ys[i].to(dev).float()) / len(batch)
+                out = _out(functional_call(lay, wk, (xs[i].to(dev, dtype=dtype),), kw))
+                loss = _nmse(out.float(), ys[i].to(dev).float()) / len(batch)
                 loss.backward()
                 tot += loss.item()
         return wk, tot
@@ -502,9 +509,9 @@ def _parallel_step(w, wd, batch, xs, ys, workers):
         for wk, _ in res:
             gk = wk[a].grad
             if gk is not None:
-                gk = gk.to(first)
+                gk = gk.to(first).float()
                 g = gk if g is None else g + gk
-        grads.append(torch.zeros_like(wd[a]) if g is None else g)
+        grads.append(torch.zeros_like(wd[a], dtype=torch.float32) if g is None else g)
     return sum(t for _, t in res), grads
 
 
@@ -548,6 +555,7 @@ def train_layer(
     )
     if on_gpu:
         acc.reset_peak_memory_stats()
+    dt = getattr(torch, qc.dtype)  # the math dtype of the layer forward and backward
     layer = copy.deepcopy(layer)
     reps = []
     if (
@@ -562,11 +570,11 @@ def train_layer(
         serialize_triton_autotune()
         for d in replicas:
             if d != dev:
-                r = copy.deepcopy(layer).to(d)
+                r = copy.deepcopy(layer).to(d, dtype=dt)
                 for p in r.parameters():
                     p.requires_grad_(False)
                 reps.append((d, r))
-    layer = layer.to(dev)
+    layer = layer.to(dev, dtype=dt)
     for p in layer.parameters():
         p.requires_grad_(False)
     for m in fq.values():
@@ -593,18 +601,18 @@ def train_layer(
 
     def loss_fn(out, i, pos=None):
         tgt = ys[i].to(dev).float()
-        loss = _nmse(out, tgt)
+        loss = _nmse(out.float(), tgt)
         if hd is not None:
             if pos is None:
                 pos = torch.randperm(n_tok, generator=kg)[:k_tok]
-            loss = loss + qc.kl_weight * head_kl(hd, out, tgt, pos.to(dev))
+            loss = loss + qc.kl_weight * head_kl(hd, out.float(), tgt, pos.to(dev))
         return loss
 
     def weights(mods=None):
         return {f"{n}.weight": m() for n, m in (mods or fq).items()}
 
     def run(wd, i):
-        return _out(functional_call(layer, wd, (xs[i].to(dev).float(),), kw))
+        return _out(functional_call(layer, wd, (xs[i].to(dev, dtype=dt),), kw))
 
     @torch.no_grad()
     def val_loss(mods=None) -> float:
@@ -671,16 +679,25 @@ def train_layer(
             ]
         batch, order = order[: qc.batch], order[qc.batch :]
         w = weights()
-        wd = {k: v.detach().requires_grad_(True) for k, v in w.items()}
+        # the detached copies are the leaves the backward writes into: the rounding of the
+        # math dtype is a straight-through (the gradient of the rounded weight goes to the
+        # float32 latent unchanged)
+        wd = {
+            k: v.detach().to(dt).detach().requires_grad_(True) for k, v in w.items()
+        }
         tot = 0.0
         if not reps:
             for i in batch:
                 loss = loss_fn(run(wd, i), i) / len(batch)
                 loss.backward()
                 tot += loss.item()
-            grads = [wd[k].grad for k in w]
+            grads = [
+                wd[k].grad.float() if wd[k].grad is not None else None for k in w
+            ]
         else:
-            tot, grads = _parallel_step(w, wd, batch, xs, ys, [(dev, layer, kw)] + reps)
+            tot, grads = _parallel_step(
+                w, wd, batch, xs, ys, [(dev, layer, kw)] + reps, dtype=dt
+            )
         torch.autograd.backward(list(w.values()), grads)
         opt.step()
         sched.step()
@@ -754,6 +771,7 @@ LEGACY_DEFAULTS = {
     "kl_layers": 0,
     "kl_weight": 1.0,
     "kl_tokens": 256,
+    "dtype": "float32",
 }
 
 
@@ -979,6 +997,7 @@ def qad_layerwise(
         f"sequences of {ids.shape[1]} tokens, {qc.steps} steps x {qc.batch} seqs per layer, "
         f"lr {qc.lr_w:g}/{qc.lr_p:g}, init {qc.init}, buffers {str(dt).removeprefix('torch.')}, "
         f"training on {ex.primary}"
+        + (f", math {qc.dtype}" if qc.dtype != "float32" else "")
         + (
             f", step budget {qc.budget:g} (early stop under {qc.min_gain:.1%} per {qc.eval_every or 'eval'} steps, "
             f"at least {budget.floor})"

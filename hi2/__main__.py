@@ -99,6 +99,7 @@ def _qad_overrides(a) -> dict:
         ("final_kl", a.qad_final_kl),
         ("kl_layers", a.qad_kl_layers),
         ("train_norms", a.qad_train_norms),
+        ("dtype", a.qad_dtype),
     ):
         if val is not None:
             over[key] = val
@@ -448,6 +449,15 @@ def main(argv=None):
         "training the ladder bytes and norm weights only (default 200 with the default "
         "and thorough presets, 0 with fast; 0 turns it off; split over the devices when it does not fit one GPU; skipped if it "
         "still does not fit; docs/lowbit.md)",
+    )
+    g.add_argument(
+        "--qad-dtype",
+        choices=("float32", "float16", "bfloat16"),
+        default=None,
+        help="math dtype of the QAD layer forward and backward (preset default: float32). "
+        "The latents, the ladder bytes and the loss stay float32; only the matrix products "
+        "of the layer change, so the matrix units of the GPU are used. The QAD is then not "
+        "bit-comparable with a float32 run; docs/qad.md",
     )
     for flag, typ in (
         ("--qad-kl-layers", int),

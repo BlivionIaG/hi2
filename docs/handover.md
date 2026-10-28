@@ -98,23 +98,50 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    KLD per task family, a target table (KLD per use case) and the noise floor, then the 27B
    anchor on the reduced suite. In [results.md](results.md).
 2. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
-   Hessians); score docs and mix KLD, decisions and the new suite. **Running** (restarted
-   2026-10-28 11:33 after a GPU page fault in the probe): the statistics and tables caches hit,
-   the sensitivity probe finished in fp16 because the 27B does not fit a shard of a 30 GiB card
-   in fp32, and the QAD phase is at 300 steps per layer over 64 layers (about 350 s a layer,
-   ETA around 20:00). A chain is armed to score the result as soon as it lands: a second BF16
-   27B reference run **with** a teacher-forced pass on the first run's completions, the domain
-   KLD of every 27B candidate against it, the 27B noise floor, `hi2 eval` of the new checkpoint
-   on the docs and mix windows, and the new checkpoint on the suite.
+   Hessians); score docs and mix KLD, decisions and the new suite. **Crashed twice**: a GPU
+   page fault in the probe (2026-10-28 11:28) and another one in the QAD phase (14:59, at
+   layer 19 of 64, after 2 h). Both are device-memory faults with no host-side error
+   ("Page not present or supervisor privilege", `PERMISSION_FAULTS` in the kernel log) and
+   they moved to a different card, so they are not one bad card. The run is 2 h of a 5.3 h
+   phase each time, and the probe cache is complete, so a restart is cheap: the probe is
+   skipped and the phase starts again.
 3. The teacher-forced domain KLD of the 27B anchor is still missing: the BF16 reference arm
    carries no teacher-forced pass, so the reference's own log-probs on its completions are
    absent. It needs a second BF16 27B serve at TP=4, which needs all four cards. **Armed** in
-   the chain above (the reference arm is scored on the *first* run's completions, so it pairs
+   a chain (the reference arm is scored on the *first* run's completions, so it pairs
    exactly with the candidates' log-probs).
 4. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1, per use case
    rather than as one global ratio.
-5. Optional: fp16 matrix math in QAD (layer forward and backward is 94 % of a step), INT3 rows,
-   a KLD path for AWQ checkpoints (they are compressed-tensors pack-quantized, so `hi2 eval`
-   cannot read them; the cheapest path is the teacher-forced pass the chain already runs).
+5. **The QAD's speed, in the order the measurements put it** (all of it in
+   [qad.md](qad.md#the-27b-at-four-gpus-measured-on-the-2026-10-28-rerun)):
+   a. **fp16 matrix math for the QAD's layer forward and backward - done.**
+      `--qad-dtype float16` (or `bfloat16`) runs the layer's matrix products in half
+      precision; the latents, the ladder bytes and the loss stay float32. The step is
+      float32-compute-bound with the matrix units idle (`average_mm_activity` 0 % on all
+      four cards), so this is the lever that does not change the result. The cost: the
+      gradients change, so a float16 QAD is not bit-comparable with the earlier runs.
+      `experiments/qad_dtype_check.py` measures the speed and the quality of one real
+      layer in every dtype.
+   b. **Stop the layers that stopped gaining - a flag.** `--qad-preset fast` (budget 0.5,
+      early stop under 1 %) or `--qad-config '{"budget": ..., "min_gain": ...}'`.
+      `experiments/qad_budget_sim.py` replays a measured run through both rules and prices
+      the recipes: on the first 19 layers of the 27B, the `fast` recipe spends 38 % of the
+      steps for +0.3 % of the layer-wise held-out nMSE. The layer-wise nMSE is a proxy
+      that did **not** predict the one end-to-end result we have (the `fast` checkpoint at
+      the 27B came out worse than PTQ on the mix KLD), so a faster recipe has to be
+      judged on the mix KLD.
+   c. **The copies.** Once the math is faster, the per-step PCIe traffic (about 9.6 GB a
+      step: the decoded weights to the three workers and the gradients back) becomes the
+      next bottleneck. The fix is to decode on each worker from the codes and the small
+      surrogate state instead of shipping the decoded weights.
+   d. **The hidden-state buffers.** 168 MB a tensor, re-uploaded every step; the float32
+      ones need 41 GiB of RAM. Keep them device-resident or use bf16.
 6. Before sharing v1: README note that checkpoints need the vLLM fork, check old commits for
    internal paths, decide whether the 27B table is public.
+7. The 27B decode path does not win at this size (batch 16: HI2 7.26 s against AWQ INT4
+   5.86 s on one card, BF16 3.25 s on four), unlike the 4B (78.4 against 38.1 tok/s at c=1).
+   There is no c=1 measurement at the 27B yet, and the hybrid linear-attention recurrence is
+   the suspect: it does not shrink with the quantized weights.
+8. Also open: INT3 rows, and a KLD path for AWQ checkpoints (they are compressed-tensors
+   pack-quantized, so `hi2 eval` cannot read them; the cheapest path is the teacher-forced
+   pass the chain already runs).

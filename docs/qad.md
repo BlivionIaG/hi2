@@ -122,6 +122,71 @@ latent units, blocks outside the clamp range, zero-step blocks). `HI2_QAD_BACKEN
 the torch graph. What remains of a step is the layer itself: the fp32 matrix products (42 %) and
 the backward of the gated-delta-rule kernels (23 %).
 
+### The 27B at four GPUs (measured on the 2026-10-28 rerun)
+
+The `default` preset on Qwen3.8-27B: 300 steps per layer over 64 layers, about 295 s a layer,
+so **1.0 s a step** and 5.3 h for the phase. What that 1.0 s is made of:
+
+* **The step is fp32-compute-bound, and the fp16 matrix units never fire.** `rocm-smi
+  --showmetrics` on the live run reports `average_gfx_activity` 99 %, `average_umc_activity`
+  14-24 % and **`average_mm_activity` 0 %** on all four cards for the whole phase: the V620's
+  V_DOT2 path is idle. The reason is in the code, not in the hardware: the pipeline loads the
+  model with `compute_dtype` float32 (`hi2/pipeline.py`), `hi2/qad.py` casts the layer input
+  with `.float()`, and the fake-quantised weight the decoder produces is fp32, so every
+  matrix product of the layer runs on the fp32 FMA pipes. The ratio between that and V_DOT2
+  on a V620 has not been measured here; the 4B profile above puts the fp32 matrix products
+  at 42 % of a step, which is the number to beat.
+* **The data-parallel split is already near-ideal, so the PCIe traffic is not the problem.**
+  The same recipe on *one* V620 took 3.9 s a step (the earlier `fast` run: 6 619 steps in
+  7.2 h), so one sequence costs about 0.98 s and four cards in parallel cost 1.0 s: a 3.9x
+  speedup from the four cards. The per-step traffic is large (about 1.6 GB of decoded weights
+  out to each of the three other cards and the same back for the gradients, on a topology with
+  no peer path, so it all crosses the host) but it is hidden behind the compute. Fixing the
+  copies alone buys about 2 %, not 50 %.
+* **The steps stop paying after the early layers.** The held-out nMSE gain per layer falls
+  from -17.9 % (layer 0) and -28.5 % (layer 2) to -7.0 % (layer 9), -3.2 % (layer 12) and
+  -0.5 % to -4.1 % over layers 15 to 18. It is not monotonic, but the level is clear: from
+  layer 10 on, 300 steps buy a few percent each. `StepBudget` (budget below 1) and the early
+  stop (`min_gain`, `min_steps`, `eval_every`) exist to spend the steps where they pay; the
+  `fast` preset is budget 0.5 with a 1 % early stop.
+
+**What a cheaper recipe would cost.** `experiments/qad_budget_sim.py` replays the measured
+validation curves of the live run through the budget and the early stop of `hi2/qad.py`
+(the same arithmetic, `tests/test_qad_budget_sim.py` pins it against `StepBudget`), and
+prices the recipes on the 19 layers the run has finished:
+
+| recipe | optimizer steps | optimizer time | held-out nMSE given up |
+| --- | ---: | ---: | ---: |
+| `default` (the measured run) | 5 700 (100 %) | 1.57 h | 0.0 % |
+| budget 0.75 | 3 683 (65 %) | 1.02 h | +0.1 % |
+| budget 0.75 + 2 % early stop | 2 672 (47 %) | 0.74 h | +0.2 % |
+| budget 0.5 | 2 558 (45 %) | 0.71 h | +0.3 % |
+| `fast` (budget 0.5 + 1 % early stop) | 2 161 (38 %) | 0.60 h | +0.3 % |
+| 1 % early stop, full budget | 3 450 (61 %) | 0.95 h | +0.1 % |
+
+The layer-wise nMSE is a proxy, and it is a proxy that did not predict the one end-to-end
+result we have: the `fast` preset's checkpoint at the 27B came out **worse than PTQ** on the
+mix KLD (0.2947 against 0.2171) and on the task suite (pooled -8.2 against -6.2,
+[results.md](results.md)). That run differed in three ways at once - a third of the steps,
+bf16 hidden-state buffers and one GPU - so it does not say which of the three cost the
+quality, but it does say that the layer-wise nMSE is not what to decide on. The mix KLD is.
+
+So the order of work is:
+
+1. **fp16 matrix math for the layer forward and backward** - the same recipe, less time.
+   The model is already loaded through `--compute-dtype`, but the QAD path overrides it with
+   `.float()` in three places (`hi2/qad.py`: the layer input, the decoded weight and the
+   loss target). A dtype option for the QAD phase would let V_DOT2 do the matrix products.
+   It needs a check that the fp16 gradients do not drown the signal (the signal is a
+   1-4 % nMSE gain in the later layers), which is a 4B run, not a 27B run.
+2. **A step budget with an early stop for the 27B** - 2 to 2.6x less optimizer time, and
+   the only lever that can be worth more than the time it saves. It changes the result, so
+   it has to be judged on the mix KLD, not on the layer nMSE.
+3. **Only then the per-step PCIe traffic and the hidden-state buffers** (168 MB a tensor,
+   re-uploaded every step; the fp32 buffers need 41 GiB of RAM). The traffic is worth about
+   2 % on its own.
+
+
 ## Interface
 
 | Flag | Meaning |
@@ -129,6 +194,7 @@ the backward of the gated-delta-rule kernels (23 %).
 | `--qad` / `--no-qad` | QAD is on by default when `--calib` is given (and implies `--sensitivity probe` unless given); `--no-qad` = PTQ only |
 | `--qad-preset fast\|default\|thorough` | steps, budget and sequences per layer (table below) |
 | `--qad-budget F` | fraction of `steps x layers` to spend (preset default) |
+| `--qad-dtype float32\|float16\|bfloat16` | math dtype of the QAD layer forward and backward (default float32); the latents, the ladder bytes and the loss stay float32 |
 | `--qad-samples N` | training sequences of `--seq-len` tokens |
 | `--qad-layers "0-5,9"` | train only these layers (the others keep PTQ) |
 | `--qad-config file.json` | any field of `hi2.qad.QadConfig` (advanced) |
@@ -144,9 +210,10 @@ Hidden flags for quick experiments: `--qad-steps`, `--qad-lr` (latents),
 (`weights` or `ptq`), `latent_units` (`abs`, or `step`: latents in units of their
 block's quantization step, so `lr_w` is a fraction of a step per update), `layers`,
 `warmup`, `keep_best`, `buffer_dtype` (`auto` stores hidden states in bf16 when fp32
-does not fit in half the free RAM), `seed`, `evals`, `sampling` (`random`, `balanced` =
-equal windows from each calibration file, or `head`). Example `--qad-config` file:
-`{"sampling": "balanced", "budget": 0.5}`.
+does not fit in half the free RAM), `dtype` (`float32`, `float16` or `bfloat16`: the
+math dtype of the layer forward and backward), `seed`, `evals`, `sampling` (`random`,
+`balanced` = equal windows from each calibration file, or `head`). Example `--qad-config`
+file: `{"sampling": "balanced", "budget": 0.5}`.
 
 | Preset | Steps | Training sequences | 0.8B QAD time | 0.8B result (docs / mix ppl ratio) |
 | --- | --- | --- | --- | --- |
