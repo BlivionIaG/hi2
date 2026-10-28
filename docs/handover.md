@@ -90,17 +90,27 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 * A single "default ratio" is the wrong knob: the budget depends on the domain, so the default
   quality rule has to be picked per use case (tool calls need a KLD below 0.01 on their own
   text, instruction following tolerates 0.13).
+* **The layers a restarted run trains fresh start from a worse held-out nMSE, and the cause is
+  open.** In the 27B run of 2026-10-28, the layers the run trained itself (54 to 63) started at
+  1.9e-01 to 2.6e-01 where the run of 2026-10-27 had 1.2e-01 to 1.6e-01 for the same layers,
+  while the layers reused from the cached artifacts tracked that run to within 2.5 %. The
+  training still lands in the same place (1.24e-01 to 1.58e-01 against 1.19e-01 to 1.36e-01),
+  so the *input* to those layers is worse, not the training. The staged copies are bit-identical
+  - `experiments/module_to_device_check.py` compares the module transfer with `Module.to` on a
+  module with a bias, an int64 buffer and a tied parameter - so the cause is not the staging.
+  The checkpoint's mix KLD will say whether it matters.
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
   kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
   involved; the faulting address is a process virtual address, and the faults walk over
   consecutive 4 KiB pages of it. The translation succeeds (`MAPPING_ERROR: 0x0`,
   `WALKER_ERROR: 0x0`) and the protection check refuses the access, which is what the runtime's
-  "Page not present or supervisor privilege" means. The three crashes are the two directions of a
+  "Page not present or supervisor privilege" means. The four crashes are the two directions of a
   bulk transfer between VRAM and **pageable** host memory: a read during the probe's
-  host-to-device weight loads, a write when a layer's artifact is copied back to the host, and a
-  read of the hidden states in the QAD phase. The box is not short of memory (about 328 GiB free,
-  no swap pressure, no OOM kill) and no other process has ever faulted on those cards - the
-  serving arms ran for hours over the same four.
+  host-to-device weight loads, a write when a layer's artifact is copied back to the host, and
+  two reads in the QAD phase. The box is not short of memory (about 328 GiB free, no swap
+  pressure, no OOM kill) and no other process has ever faulted on those cards - the serving arms
+  ran for hours over the same four. Staging the hidden states alone did not stop it (the fourth
+  crash came after); the weights had to be staged as well.
 * **The QAD's host-device copies now go through a pinned window** (`hi2/pinned.py`,
   `PinnedWindow`). The QAD moves about 1.6 TB of host memory per run (40 MiB of hidden state
   per sequence per step, 264 sequences per layer), all of it pageable, and the copy engine
@@ -188,7 +198,10 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 7. The 27B decode path does not win at this size (batch 16: HI2 7.26 s against AWQ INT4
    5.86 s on one card, BF16 3.25 s on four), unlike the 4B (78.4 against 38.1 tok/s at c=1).
    There is no c=1 measurement at the 27B yet, and the hybrid linear-attention recurrence is
-   the suspect: it does not shrink with the quantized weights.
+   the suspect: it does not shrink with the quantized weights. **Deferred** (2026-10-28): there
+   are no spare resources for it right now, and it does not touch the quantizer. What it would
+   need when it is picked up: the same harness at c=1 on one card, and the dequantize-and-GEMM
+   step of the serving path measured against AWQ's, to tell the layout from the recurrence.
 8. Also open: INT3 rows, and a KLD path for AWQ checkpoints (they are compressed-tensors
    pack-quantized, so `hi2 eval` cannot read them; the cheapest path is the teacher-forced
    pass the chain already runs).

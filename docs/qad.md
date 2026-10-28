@@ -204,6 +204,12 @@ bases differ slightly (allocation error ratio 11.044 against 11.299).
 | 27B | `default` is the quality-optimal recipe by the small-size studies, but it is 5.3 h and it died twice to GPU page faults (2026-10-28 11:28 and 14:59). The `fast` recipe is 2.6 h; **its mix KLD decides** whether that is acceptable (the earlier fast checkpoint came out worse than PTQ on the mix text, 0.2947 against 0.2171, but it had bf16 buffers and no final logit-KL phase - see above) |
 | any size, a QAD for a *reference* | `default` with float32 buffers and float32 math - the other modes are only worth their time if the mix KLD says so |
 
+**The recipe the next runs use** (decided 2026-10-28): `fast` - the early stop under 1 % with
+the float32 buffers and the float32 math. The half-precision math stays in the code
+(`--qad-dtype float16`) with its measurement attached, because it is 1.43x faster and does not
+learn on this hardware, so it is not what a run uses. The `default` recipe is the one to reach
+for when the mix KLD says the time is worth it.
+
 ## Step time
 
 A QAD optimizer step decodes the fake-quantised weights, runs the layer forward and backward,
