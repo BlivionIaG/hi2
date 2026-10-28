@@ -474,6 +474,36 @@ same quantity in both, which is why the 4B tables compare them.
    vLLM, not a distribution distance, and the HI2 mix text already shows how a ratio near 1
    can hide a different distribution (point 3 of the 27B section above).
 
+### The GGUF's own types at the same bit rate
+
+The comparison above pits a 3 bpw format against a 4.7 bpw one. To make it like-for-like,
+the same BF16 base was quantized with llama.cpp to its own types, with the same importance
+matrix unsloth used, and each was measured against the **same base logits** on the **same
+window** (so the base pass ran once and every type was scored against it).
+
+| format | body bpw | body MiB | file MiB | KLD docs | PPL x | same top-1 |
+|---|---:|---:|---:|---:|---:|---:|
+| GGUF Q2_K | 3.175 | 10 341 | 10 361 | 0.1395 | 1.085 | 86.4 % |
+| **HI2 3.0 bpw (PTQ)** | 3.012 | 8 745 | 15 290 | 0.0975 | 1.049 | 88.1 % |
+| **HI2 3.0 bpw (PTQ + QAD)** | 3.012 | 8 745 | 15 290 | **0.0901** | 1.043 | 88.8 % |
+| GGUF Q3_K_M | 3.947 | 12 855 | 12 876 | 0.0592 | 1.027 | 91.2 % |
+| GGUF Q4_K_M | 4.738 | 13 963 | 15 702 | 0.0142 | 1.009 | 95.0 % |
+
+(the llama.cpp "same top-1" is the mean over the eight chunks; llama.cpp's own summary line
+prints the last chunk)
+
+1. **At 3.1 bpw HI2 has the lower KLD**: 0.0901 against Q2_K's 0.1395, a third less, with
+   2 100 MiB less body. The GGUF's closest type is worse than HI2 at the same weight.
+2. **To match HI2's 3 bpw KLD the GGUF has to spend 3.95 bpw** (Q3_K_M, 12 855 MiB against
+   8 745, 47 % more body bytes), and to beat it 4.74 bpw. The k-quants step in big jumps:
+   Q2_K to Q3_K_M to Q4_K_M is 0.1395 to 0.0592 to 0.0142, while HI2's ladder moves in
+   smaller steps at every bit rate (the 4B ladder above: 0.0188 at 4.2 bpw, 0.0461 at
+   3.8, 0.0900 at 3.3, 0.1595 at 2.7). That is the same conclusion the 4B tables reach,
+   now at 27B and on one measurement path.
+3. **The file sizes do not follow the body sizes.** Q2_K is a 10.4 GB file against HI2's
+   15.3 GB, because the GGUF quantizes the embedding, the head and the MTP layer while HI2
+   keeps them in fp16; the GGUF's file only catches up at Q4_K_M (15.7 GB).
+
 
 ## Calibration: what a KLD costs on real work (Qwen3.5-4B)
 
