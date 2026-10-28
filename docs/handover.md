@@ -47,10 +47,16 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   (-13.6 and -9.1); the AWQ INT4 checkpoint loses 1.9. First tool call as BF16: 53.0 % (PTQ),
   66.7 % (QAD), 81.8 % (AWQ).
 * The same count applied to the other formats on the 27B (every byte the loader reads over the
-  quantized weights, divided by the weights): HI2 3.0 bpw **3.012** (15 289 MiB file), AWQ INT4
-  **4.625** (20 044 MiB, not the 4.5 estimated before), GGUF Q4_K_M **4.738** (16 464 MiB, and
+  quantized weights, divided by the weights): HI2 3.0 bpw **3.012** (15 290 MiB file), AWQ INT4
+  **4.625** (20 044 MiB, not the 4.5 estimated before), GGUF Q4_K_M **4.738** (15 702 MiB, and
   it also quantizes the embedding, the head and the MTP layer). HI2 is the smallest file of the
-  three. The quality half of that comparison waits on the GPU and on a llama.cpp rebuild.
+  three: 2.6 % below the GGUF and 23.8 % below the AWQ.
+* The quality half of that comparison, measured on the GGUF side with llama.cpp's own KLD on the
+  same held-out window the HI2 numbers use: **GGUF Q4_K_M 0.0142 nats/token** against 0.0901 for
+  HI2 at 3.0 bpw with QAD and 0.0975 for PTQ (perplexity ratio 1.009 against 1.043 and 1.049;
+  same top-1 95.0 % against 88.8 % and 88.1 %). The GGUF buys that with 1.57 bpw more; at equal
+  file size HI2 is ahead. The AWQ INT4 checkpoint still has no KLD: it is a compressed-tensors
+  pack-quantized checkpoint, not an HI2 one, so `hi2 eval` cannot read it.
 
 ## Findings to keep in mind
 
@@ -90,15 +96,23 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    KLD per task family, a target table (KLD per use case) and the noise floor, then the 27B
    anchor on the reduced suite. In [results.md](results.md).
 2. 27B rerun with the `default` preset, final-KL and four-GPU data-parallel QAD (cached
-   Hessians); score docs and mix KLD, decisions and the new suite. **Running** (started
-   2026-10-28 09:22): the statistics and tables caches hit, the sensitivity probe is
-   recomputed in fp16 because the 27B does not fit a shard of a 30 GiB card in fp32.
+   Hessians); score docs and mix KLD, decisions and the new suite. **Running** (restarted
+   2026-10-28 11:33 after a GPU page fault in the probe): the statistics and tables caches hit,
+   the sensitivity probe finished in fp16 because the 27B does not fit a shard of a 30 GiB card
+   in fp32, and the QAD phase is at 300 steps per layer over 64 layers (about 350 s a layer,
+   ETA around 20:00). A chain is armed to score the result as soon as it lands: a second BF16
+   27B reference run **with** a teacher-forced pass on the first run's completions, the domain
+   KLD of every 27B candidate against it, the 27B noise floor, `hi2 eval` of the new checkpoint
+   on the docs and mix windows, and the new checkpoint on the suite.
 3. The teacher-forced domain KLD of the 27B anchor is still missing: the BF16 reference arm
    carries no teacher-forced pass, so the reference's own log-probs on its completions are
-   absent. It needs a second BF16 27B serve at TP=4, which needs all four cards.
+   absent. It needs a second BF16 27B serve at TP=4, which needs all four cards. **Armed** in
+   the chain above (the reference arm is scored on the *first* run's completions, so it pairs
+   exactly with the candidates' log-probs).
 4. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1, per use case
    rather than as one global ratio.
 5. Optional: fp16 matrix math in QAD (layer forward and backward is 94 % of a step), INT3 rows,
-   a KLD path for AWQ checkpoints.
+   a KLD path for AWQ checkpoints (they are compressed-tensors pack-quantized, so `hi2 eval`
+   cannot read them; the cheapest path is the teacher-forced pass the chain already runs).
 6. Before sharing v1: README note that checkpoints need the vLLM fork, check old commits for
    internal paths, decide whether the 27B table is public.
