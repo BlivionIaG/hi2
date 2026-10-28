@@ -388,25 +388,45 @@ mc 52.1 %, decision 72.7 %.
 
 ### What the KLD costs on the suite
 
-Accuracy of the quantized model minus the reference, in points, with a paired bootstrap 95 %
-CI. The ladder's first three points:
+The ladder's four points and the three 4B checkpoints that were already on the box, against
+the same reference. Accuracy of the quantized model minus the reference, in points, with a
+paired bootstrap 95 % CI. The last three rows are the earlier checkpoints: they were made with
+an older version of the quantizer, so they are a second series, not a continuation of the
+ladder.
 
-| point | KLD | pooled | gsm8k | humaneval | mbpp | ifeval | toolcall | needle | mc | decision |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| lad-r2 | 0.0188 | -0.3 [-1.0, +0.5] | +0.7 [-0.6, +2.0] | -3.7 [-9.8, +2.4] | **-5.4 [-9.3, -1.9]** | +0.4 [-2.0, +2.8] | +1.0 [-1.6, +3.8] | 0.0 | -1.1 [-2.2, -0.1] | **+15.2 [+6.1, +25.8]** |
-| lad-r4 | 0.0461 | **-3.1 [-4.0, -2.2]** | -2.4 [-3.9, -0.8] | -5.5 [-12.8, +1.2] | -4.3 [-8.6, 0.0] | -6.2 [-9.4, -3.0] | -5.0 [-8.4, -1.6] | -1.2 [-3.1, 0.0] | -1.9 [-3.2, -0.6] | -4.5 [-10.6, 0.0] |
-| lad-r8 | 0.0900 | **-8.1 [-9.2, -7.0]** | -8.5 [-10.5, -6.5] | **-22.0 [-30.5, -13.4]** | -10.9 [-16.0, -5.8] | -9.8 [-13.6, -6.2] | -12.6 [-16.6, -8.8] | -2.5 [-5.0, -0.6] | -4.8 [-6.4, -3.2] | -9.1 [-16.7, -3.0] |
+| point | bpw | KLD | pooled | gsm8k | humaneval | mbpp | ifeval | toolcall | needle | mc | decision |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lad-r2 | 4.211 | 0.0188 | -0.3 [-1.0, +0.5] | +0.7 [-0.6, +2.0] | -3.7 [-9.8, +2.4] | **-5.4 [-9.3, -1.9]** | +0.4 [-2.0, +2.8] | +1.0 [-1.6, +3.8] | 0.0 | -1.1 [-2.2, -0.1] | **+15.2 [+6.1, +25.8]** |
+| lad-r4 | 3.796 | 0.0461 | **-3.1 [-4.0, -2.2]** | -2.4 [-3.9, -0.8] | -5.5 [-12.8, +1.2] | -4.3 [-8.6, 0.0] | -6.2 [-9.4, -3.0] | -5.0 [-8.4, -1.6] | -1.2 [-3.1, 0.0] | -1.9 [-3.2, -0.6] | -4.5 [-10.6, 0.0] |
+| lad-r8 | 3.291 | 0.0900 | **-8.1 [-9.2, -7.0]** | -8.5 [-10.5, -6.5] | **-22.0 [-30.5, -13.4]** | -10.9 [-16.0, -5.8] | -9.8 [-13.6, -6.2] | -12.6 [-16.6, -8.8] | -2.5 [-5.0, -0.6] | -4.8 [-6.4, -3.2] | -9.1 [-16.7, -3.0] |
+| lad-r16 | 2.693 | 0.1595 | **-18.2 [-19.5, -16.9]** | -29.7 [-32.5, -27.0] | **-37.8 [-46.3, -29.3]** | -22.6 [-28.4, -16.7] | -27.0 [-31.6, -22.4] | -13.0 [-17.0, -9.0] | -0.6 [-1.9, 0.0] | -8.1 [-9.9, -6.2] | -10.6 [-18.2, -4.5] |
+| ptq-b3.0 | 2.998 | 0.1607 | **-11.8 [-13.0, -10.6]** | -18.0 [-20.5, -15.6] | -22.0 [-29.9, -14.6] | -21.0 [-26.5, -15.6] | -9.2 [-13.0, -5.6] | -13.0 [-17.2, -9.0] | -0.6 [-1.9, 0.0] | -6.7 [-8.3, -5.0] | -4.5 [-10.6, +1.5] |
+| b3.0-qad | 2.998 | 0.0607 | **-9.9 [-11.0, -8.8]** | -14.3 [-16.7, -12.1] | -20.1 [-28.0, -12.2] | -15.2 [-20.6, -9.7] | -15.2 [-19.2, -11.4] | -6.6 [-10.2, -3.2] | -0.6 [-1.9, 0.0] | -5.4 [-7.1, -3.9] | -3.0 [-9.1, +3.0] |
+| b3.5-qad | 3.499 | 0.0416 | **-4.5 [-5.4, -3.5]** | -3.5 [-5.2, -1.7] | -9.1 [-15.9, -2.4] | -10.1 [-15.2, -5.4] | -11.0 [-14.4, -7.8] | -2.2 [-5.4, +0.8] | -0.6 [-1.9, 0.0] | -3.3 [-4.7, -2.0] | 0.0 [-7.6, +7.6] |
 
-Three things this says already, before the rest of the points land:
+What it says:
 
-1. **The pooled loss is small up to a KLD of about 0.02 and then falls off fast.** At 0.0188
+1. **The pooled loss is flat up to a KLD of about 0.02 and then falls off fast.** At 0.0188
    the pooled difference is -0.3 points with a CI that contains zero; at 0.0461 it is -3.1 and
-   the CI does not; at 0.0900 it is -8.1. The loss is not linear in the KLD.
-2. **The code tasks are the first to go.** At a KLD of 0.0188 everything is flat except
+   the CI no longer does; at 0.0900 it is -8.1 and at 0.1595 it is -18.2. The loss is not
+   linear in the KLD, and the KLD that a format reaches is not the only thing that matters.
+2. **The code tasks are the first to go.** At a KLD of 0.0188 every family is flat except
    mbpp (-5.4 points, p = 0.007) and the multiple-choice set (-1.1). HumanEval, the family
-   with the most items at risk of noise, only breaks at 0.0900, where it loses 22 points.
-   Instruction following, tool calls and long-context retrieval are flat at 0.0188.
-3. **The agent-decision set moves the other way at the top of the ladder.** The 4B at
+   with the fewest items and the widest CI, only breaks at 0.0900, where it loses 22 points.
+   Instruction following, tool calls and long-context retrieval are flat at 0.0188, and
+   long-context retrieval never loses more than 0.6 points anywhere on the ladder.
+3. **At equal KLD the two series are not equal.** The ladder's r16 point (2.693 bpw, KLD
+   0.1595) loses 18.2 points, the older 3.0 bpw PTQ checkpoint (KLD 0.1607) loses 11.8. The
+   QAD checkpoint at 3.0 bpw (KLD 0.0607) loses 9.9 where the ladder at a slightly higher KLD
+   (0.0900) loses 8.1. The KLD is the better predictor, but the older checkpoints hold up
+   better than the ladder at the same KLD, which is the opposite of what a pure
+   distribution-shift story would predict and is worth a separate look.
+4. **QAD buys KLD, not task accuracy.** Going from the 3.0 bpw PTQ checkpoint to the 3.0 bpw
+   QAD one halves the KLD (0.161 to 0.061) and improves the pooled loss from -11.8 to -9.9
+   points: most of the KLD gain does not reach the tasks. The 3.5 bpw QAD checkpoint, with
+   almost the same KLD as the ladder's r4 point (0.0416 against 0.0461), loses 4.5 points
+   where r4 loses 3.1.
+5. **The agent-decision set moves the other way at the top of the ladder.** The 4B at
    0.0188 makes *more* well-formed first tool calls than BF16 (87.9 % against 72.7 %, 11 items
    of 66). This is the opposite of the 27B result above, where the QAD model trailed the PTQ
    model on first-tool agreement. It needs the noise floor before it can be believed: greedy
