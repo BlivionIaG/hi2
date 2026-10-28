@@ -90,15 +90,19 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 * A single "default ratio" is the wrong knob: the budget depends on the domain, so the default
   quality rule has to be picked per use case (tool calls need a KLD below 0.01 on their own
   text, instruction following tolerates 0.13).
-* **The layers a restarted run trains fresh start from a worse held-out nMSE, and the cause is
-  open.** In the 27B run of 2026-10-28, the layers the run trained itself (54 to 63) started at
-  1.9e-01 to 2.6e-01 where the run of 2026-10-27 had 1.2e-01 to 1.6e-01 for the same layers,
-  while the layers reused from the cached artifacts tracked that run to within 2.5 %. The
-  training still lands in the same place (1.24e-01 to 1.58e-01 against 1.19e-01 to 1.36e-01),
-  so the *input* to those layers is worse, not the training. The staged copies are bit-identical
-  - `experiments/module_to_device_check.py` compares the module transfer with `Module.to` on a
-  module with a bias, an int64 buffer and a tied parameter - so the cause is not the staging.
-  The checkpoint's mix KLD will say whether it matters.
+* **The layers a restarted run trains fresh start from a worse held-out nMSE - and the cause was
+  a data race in the pinned staging.** In the 27B run of 2026-10-28, the layers the run trained
+  itself (54 to 63) started at 1.9e-01 to 2.6e-01 where the run of 2026-10-27 had 1.2e-01 to
+  1.6e-01 for the same layers, while the layers reused from the cached artifacts tracked that
+  run to within 2.5 %. The cause: the encoders shard a tensor across the devices and run the
+  shards in parallel threads, and they all shared one pinned staging window, so a shard could be
+  encoded from another shard's weights. The fingerprint is layer 63's initialisation: a held-out
+  nMSE of **1.0088**, an output uncorrelated with its target. The training was not affected (it
+  starts from the weights, not from the PTQ encoding, and the PTQ encoding is only the fallback
+  whose loss is reported), and the exported checkpoint was checked: all 496 tensors, no
+  anomalous error, the mean relative error 0.0446 against 0.0443 for the run of 2026-10-27. The
+  window keeps its buffers per thread now, and `tests/test_pinned.py` fails against the previous
+  code (one thread gets another thread's data) and passes against this one.
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
   kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
   involved; the faulting address is a process virtual address, and the faults walk over
