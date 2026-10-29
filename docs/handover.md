@@ -12,10 +12,13 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   saved, at the start of layer 23's encode: the pinned staging covered the QAD's weights and
   hidden states but not the encoder's `Sigma` upload, the compensated-weight readback or
   `format.assemble`'s code copies. All three are staged now (`hi2/calibrate.py`,
-  `hi2/format.py`); the run was relaunched and reuses the 23 finished layers plus the cached
-  statistics, tables and probe, so it trains layers 23-63 and then runs the final phase. The
-  previous 27B QAD checkpoints and their workdirs were removed (their `config.json` and
-  per-layer report are archived); the 3.0 bpw PTQ checkpoint and the 48 GB Hessian cache stay.
+  `hi2/format.py`). The second attempt trained all 64 layers and saved the teacher head
+  inputs, then died in the final phase: the file kept the `[1, T, H]` batch dim while
+  `hi2.finalkl._kl_loss` slices `[T, H]`. The save now strips the batch dim and the reader
+  squeezes the 4-D file, so the 64 layer artifacts are reused; the run was relaunched and
+  goes straight to the final logit-KL phase. The previous 27B QAD checkpoints and their
+  workdirs were removed (their `config.json` and per-layer report are archived); the 3.0 bpw
+  PTQ checkpoint and the 48 GB Hessian cache stay.
 
 ## Where things are
 
