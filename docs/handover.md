@@ -8,11 +8,14 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 * **The 27B default run is running.** PTQ (sensitivity probe, quality allocation, GPTQ,
   smoothing + rotation) + QAD `default` (300 steps per layer, 256 sequences, no early stop)
   + the final logit-KL phase (200 steps), at `--target-bpw 3.0` (3.012 bpw body), float32
-  buffers, four V620s. It reuses the 20 layers the crashed `default` attempt finished and the
-  cached statistics, tables and probe, so it trains layers 20-63 and then runs the final
-  phase. The previous 27B QAD checkpoints and their workdirs were removed (their
-  `config.json` and per-layer report are archived); the 3.0 bpw PTQ checkpoint and the 48 GB
-  Hessian cache stay.
+  buffers, four V620s. The first attempt faulted on GPU node-6 after layer 22's artifact was
+  saved, at the start of layer 23's encode: the pinned staging covered the QAD's weights and
+  hidden states but not the encoder's `Sigma` upload, the compensated-weight readback or
+  `format.assemble`'s code copies. All three are staged now (`hi2/calibrate.py`,
+  `hi2/format.py`); the run was relaunched and reuses the 23 finished layers plus the cached
+  statistics, tables and probe, so it trains layers 23-63 and then runs the final phase. The
+  previous 27B QAD checkpoints and their workdirs were removed (their `config.json` and
+  per-layer report are archived); the 3.0 bpw PTQ checkpoint and the 48 GB Hessian cache stay.
 
 ## Where things are
 
@@ -154,6 +157,15 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   fit check then needs only the student (about 12 GiB per device on four V620s). Tested on
   the CPU tiny model
   (`tests/test_lowbit.py::test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves`).
+* **The first `default` 27B attempt faulted in the encoder, not in the training step.** It
+  died on GPU node-6 right after layer 22's artifact was saved, at the start of layer 23's
+  encode (`quant_exit=134`, "Page not present"). The QAD's weights and hidden states were
+  staged, but `encode_many` still copied the Hessian input `Sigma` (up to 1.2 GB for a
+  17408-wide down projection) host-to-device directly, read the compensated weights back
+  with `.cpu()`, and `format.assemble` copied the packed codes and block parameters to the
+  host with `.cpu()`. All three now go through `PinnedWindow` (`hi2/calibrate.py`,
+  `hi2/format.py`); `tests/test_encode.py` (10) and `tests/test_format.py` (17) pass, and
+  the run resumes from layer 23.
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
   kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
   involved; the faulting address is a process virtual address, and the faults walk over

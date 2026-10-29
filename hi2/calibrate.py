@@ -319,7 +319,11 @@ def encode_many(
             if use_gptq[ri]:
                 fk = _factor_key(r, ri)
                 if fk not in factors:
-                    hs = transform_sigma(r.sigma.to(dev), r.table.col_scale, had)
+                    hs = transform_sigma(
+                        stager.to_device(r.sigma, dev, dtype=torch.float32),
+                        r.table.col_scale,
+                        had,
+                    )
                     d = hs.diagonal().clone()
                     perm = None
                     if cfg.act_order:
@@ -346,7 +350,7 @@ def encode_many(
                     enc = encode_rows(wt[rows.to(dev)], d, nb, b, cfg.effort)
                     out.append((rows + lo, enc.codes, enc.params, enc.consts))
                     if r.comp_out is not None:
-                        comps.append((ri, rows + lo, wt[rows.to(dev)].float().cpu()))
+                        comps.append((ri, rows + lo, stager.to_host(wt[rows.to(dev)].float())))
         want = any(reqs[ri].comp_out is not None for ri, _ in where)
         encs = encode_jobs_gptq(jobs, cfg.effort, comp=want) if jobs else []
         slot = {
@@ -375,7 +379,7 @@ def encode_many(
         for (ri, rows), enc in zip(where, encs):
             pieces[ri][next(slot[ri])] = (rows, enc.codes, enc.params, enc.consts)
             if reqs[ri].comp_out is not None:
-                comps.append((ri, rows, enc.comp.float().cpu()))
+                comps.append((ri, rows, stager.to_host(enc.comp.float())))
         return pieces, comps
 
     if n_dev == 1:
@@ -398,7 +402,7 @@ def encode_many(
         t = r.table
         nbits = torch.tensor([t.candidates[i][0] for i in r.picks.tolist()])
         block = torch.tensor([t.candidates[i][1] for i in r.picks.tolist()])
-        out.append(assemble(pieces, nbits, block, t.had, t.shape[1], t.col_scale))
+        out.append(assemble(pieces, nbits, block, t.had, t.shape[1], t.col_scale, stager=stager))
     return out
 
 
@@ -452,7 +456,11 @@ def encode_with_picks_reference(
             )
             from .hessian import inverse_factor, transform_sigma
 
-            hs = transform_sigma(sigma.to(dev), table.col_scale, had)
+            hs = transform_sigma(
+                stager.to_device(sigma, dev, dtype=torch.float32),
+                table.col_scale,
+                had,
+            )
             d = hs.diagonal().clone()
             perm = None
             if cfg.act_order:
@@ -472,11 +480,11 @@ def encode_with_picks_reference(
             else:
                 enc = encode_rows(wt[rows.to(dev)], d, nb, b, cfg.effort)
             pieces.append(
-                (rows + lo, enc.codes.cpu(), enc.params.cpu(), enc.consts.cpu())
+                (rows + lo, stager.to_host(enc.codes), stager.to_host(enc.params), stager.to_host(enc.consts))
             )
             if comp_out is not None:
                 c = enc.comp if enc.comp is not None else wt[rows.to(dev)]
-                comps.append((rows + lo, c.float().cpu()))
+                comps.append((rows + lo, stager.to_host(c.float())))
         return pieces
 
     comps: list = []
@@ -486,4 +494,4 @@ def encode_with_picks_reference(
         for rows, c in comps:
             full[rows] = c
         comp_out["comp"] = full
-    return assemble(pieces, nbits, block, had, k, table.col_scale)
+    return assemble(pieces, nbits, block, had, k, table.col_scale, stager=stager)

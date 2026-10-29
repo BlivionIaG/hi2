@@ -131,13 +131,16 @@ def assemble(
     had: torch.Tensor,
     k: int,
     col_scale: torch.Tensor | None = None,
+    stager=None,
 ) -> HI2Tensor:
     """Build flat buffers from per-config row groups.
 
     Each piece is ``(rows, codes[r, K] uint8, params[r, nb, 2] uint8,
     consts[r, 3] fp16)`` for rows sharing one ``(nbits, B)``. The buffers are built on
     the device of the first piece's codes (integer packing and scatters: the same
-    result on any device) and returned on the CPU.
+    result on any device) and returned on the CPU. ``stager`` (a
+    :class:`hi2.pinned.PinnedWindow`) routes the device-to-host copies through pinned
+    memory, which the copy engine can address safely on this driver.
     """
     dev = pieces[0][1].device if pieces else torch.device("cpu")
     r = row_nbits.numel()
@@ -166,12 +169,13 @@ def assemble(
         pidx = pidx + torch.arange(2, device=dev)
         params[pidx.reshape(-1)] = p.to(dev).reshape(-1)
         consts[rows] = rc.to(dev)
+    to_host = stager.to_host if stager is not None else (lambda t: t.cpu())
     return HI2Tensor(
-        codes=codes.cpu(),
+        codes=to_host(codes),
         code_off=code_off.to(torch.int32),
-        blk_params=params.cpu(),
+        blk_params=to_host(params),
         param_off=param_off.to(torch.int32),
-        row_consts=consts.cpu(),
+        row_consts=to_host(consts),
         row_nbits=row_nbits.to(torch.uint8),
         row_block=row_block.to(torch.uint8),
         had=had.to(torch.uint8).reshape(-1),
