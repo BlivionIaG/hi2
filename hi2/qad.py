@@ -1194,10 +1194,10 @@ def qad_layerwise(
     # placement (hi2.finalkl, ``head_inputs``).
     if propagate and qc.final_kl > 0 and n_layers == len(layers) and xt:
         norm = final_norm(model, path)
-        out = torch.empty((len(xt), *xt[0].shape), dtype=torch.float32)
+        out = torch.empty((len(xt), *xt[0].shape[1:]), dtype=torch.float32)
         with torch.no_grad():
             for i, x in enumerate(xt):
-                out[i].copy_(norm(x.float()))
+                out[i].copy_(norm(x.float())[0])
         torch.save({"fingerprint": fp, "head_inputs": out}, qdir / "head_inputs.pt")
         log(
             f"QAD: saved the teacher's head inputs ({out.numel() * 4 / 2**30:.1f} GiB) "

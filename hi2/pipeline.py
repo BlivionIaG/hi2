@@ -496,7 +496,12 @@ def _saved_head_inputs(rc, tag, fp):
         rec = torch.load(path, weights_only=False, mmap=True)
     except Exception:
         return None
-    return rec.get("head_inputs") if rec.get("fingerprint") == fp else None
+    if rec.get("fingerprint") != fp:
+        return None
+    hs = rec.get("head_inputs")
+    if hs is not None and hs.dim() == 4 and hs.shape[1] == 1:
+        hs = hs[:, 0]  # the first run saved [n, 1, T, H]; _kl_loss wants [T, H]
+    return hs
 
 
 def _final_kl_fits(rc, ex, model, tensors, have_head_inputs, log) -> bool:

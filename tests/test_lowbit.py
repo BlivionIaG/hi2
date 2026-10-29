@@ -252,7 +252,7 @@ def test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves(tiny, t
     assert any("saved the teacher's head inputs" in ln for ln in logs)
     rec = torch.load(rc.workdir / "qad" / "head_inputs.pt", weights_only=False)
     saved = rec["head_inputs"]
-    assert saved.shape == (10, 1, 64, 128)
+    assert saved.shape == (10, 64, 128)
     d, model, ids = tiny
     live = _head_input(model, ids[0:1])
     assert torch.allclose(saved[0], live, rtol=1e-4, atol=1e-5)
