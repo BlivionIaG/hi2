@@ -146,6 +146,7 @@ KL(teacher || student) on the whole network; keep-best on held-out KL.
 | `final_tokens` | 0 (all positions) | reduces the loss chunk, not the model placement |
 | `final_batch` | 2 | not swept |
 | placement | teacher and student layer-wise | **the 27B teacher in float32 does not fit four V620s** (29 GiB a card against a 27 GiB guard); both 27B QAD runs skipped it. Since 2026-10-29 the layer-wise phase saves the teacher's post-final-norm head inputs (10.3 GiB) and the phase runs from them, needing only the student (about 12 GiB a device) |
+| cost | | 4B 3.5 bpw: 200 steps 92.9 min (0.46 min/step). 27B 3.0 bpw: 2.45 min/step, about 8.2 h for 200 steps on four V620s (the student sharded, the dequantize and the checkpointed backward dominate); the phase logs every 50 steps |
 
 ## The default 27B run (in flight)
 
