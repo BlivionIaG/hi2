@@ -180,7 +180,10 @@ def _load_model(rc: RunConfig, log=print):
     from .moe import check_unfused, unfuse_experts
 
     model = AutoModelForCausalLM.from_pretrained(
-        rc.src, dtype=getattr(torch, rc.compute_dtype), low_cpu_mem_usage=True
+        rc.src,
+        dtype=getattr(torch, rc.compute_dtype),
+        low_cpu_mem_usage=True,
+        ignore_mismatched_sizes=True,  # the source may omit the excluded n-gram table
     ).eval()
     if unfuse_experts(model):
         check_unfused(model, rc.src, make_resolver(weight_map(rc.src)), log)

@@ -34,6 +34,7 @@ FIT_FRACTION = (
     0.6  # the weights may take this share of one device (the rest: activations)
 )
 SHARD_FRACTION = 0.8  # a shard may take this share of a device
+HOST_FIT_FRACTION = 0.9  # host memory holds the weights plus the replayed outputs
 _LAYER_IDX = re.compile(r"\blayers\.(\d+)\.")
 
 
@@ -93,13 +94,29 @@ def fp32_weight_bytes(src) -> int:
     return sum(f.stat().st_size for f in files) * scale
 
 
-def plan_placement(weight_bytes: int, device_bytes: int, n_devices: int) -> str:
+def host_mem_bytes() -> int:
+    """The host's total RAM: the probe's weights can stay in system memory when they do
+    not fit the cards."""
+    try:
+        import psutil
+
+        return psutil.virtual_memory().total
+    except ImportError:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+
+
+def plan_placement(
+    weight_bytes: int, device_bytes: int, n_devices: int, host_bytes: int = 0
+) -> str:
     """Where the probe model goes: ``single`` (one device holds it), ``shard`` (split
-    layer-wise over the devices) or an error when even the shards do not fit."""
+    layer-wise over the devices), ``host_shard`` (the weights in host memory, the probe's
+    layer on the cards) or an error when even the shards do not fit."""
     if weight_bytes <= FIT_FRACTION * device_bytes:
         return "single"
     if probe_fits(weight_bytes, device_bytes, n_devices):
         return "shard"
+    if host_bytes and weight_bytes <= HOST_FIT_FRACTION * host_bytes:
+        return "host_shard"
     raise SystemExit(
         f"sensitivity probe: the model's {weight_bytes / 2**30:.0f} GiB of weights do not "
         f"fit {n_devices} device(s) of {device_bytes / 2**30:.0f} GiB. Use more devices, "
@@ -177,10 +194,11 @@ def load_probe_model(src, dtype: torch.dtype, ex: Executor, log=print):
     need = sum(p.numel() * p.element_size() for p in model.parameters())
     cap = torch.cuda.get_device_properties(dev).total_memory
     plan = "shard" if os.environ.get("HI2_PROBE_SHARD") == "1" else None
-    plan = plan or plan_placement(need, cap, len(ex.devices))
+    plan = plan or plan_placement(need, cap, len(ex.devices), host_mem_bytes())
     if plan == "single" or len(ex.devices) == 1:
         return module_to_device(model, dev), dev, False
-    shard_layers(model, ex.devices)
+    devices = [torch.device("cpu")] + ex.devices if plan == "host_shard" else ex.devices
+    shard_layers(model, devices)
     held: dict[str, int] = {}
     for p in model.parameters():
         held[str(p.device)] = held.get(str(p.device), 0) + p.numel() * p.element_size()

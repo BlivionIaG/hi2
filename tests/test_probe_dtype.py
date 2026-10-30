@@ -28,3 +28,10 @@ def test_probe_fits_single_shard_and_the_27b_case():
     assert probe_fits(108 * gib, 30 * gib, 8)  # 13.5 GiB a shard
     assert plan_placement(10 * gib, 30 * gib, 1) == "single"
     assert plan_placement(80 * gib, 30 * gib, 4) == "shard"
+
+
+def test_plan_placement_falls_back_to_host_memory():
+    gib = 1 << 30
+    # 360 GiB of float32 weights do not fit 8 x 30 GiB cards (45 GiB a shard), but they
+    # fit the 512 GiB host; the probe then keeps the weights in RAM and its layer on a card
+    assert plan_placement(360 * gib, 30 * gib, 8, 512 * gib) == "host_shard"
