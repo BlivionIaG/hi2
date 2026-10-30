@@ -318,17 +318,17 @@ Qwen3.8-27B (BF16, 64 layers, 24.35 B weights in the 496 quantized linears) quan
 four V620s for the calibration, probe and encode, and one for QAD. Served in the fork's vLLM
 (fp16), one V620 for the quantized models and four (TP=4) for the BF16 baseline.
 
-| | BF16 | HI2 PTQ | HI2 PTQ + QAD (`fast`) | HI2 PTQ + QAD (`default`) | AWQ INT4 (cyankiwi) |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Quantized linears | 45.4 GiB | 8.5 GiB | 8.5 GiB | 8.5 GiB | not measured |
-| Measured bpw (every byte of the linears) | 16 | 3.012 | 3.012 | 3.012 | about 4.5 |
-| INT2 / INT4 share of the weights | | 66 % / 34 % | 66 % / 34 % | 66 % / 34 % | INT4 only |
-| Checkpoint | 51.7 GiB | 14.9 GiB (3.47x smaller) | 14.9 GiB | 15.0 GiB | 20 GB |
-| Perplexity, docs text | 4.107 | 4.307 (x 1.049) | 4.282 (x 1.043) | **4.158 (x 1.012)** | 4.189 (x 1.020) |
-| Perplexity, mix text | 5.162 | 4.835 (x 0.937) | 5.574 (x 1.080) | **4.567 (x 0.885)** | 5.219 (x 1.011) |
-| First tool as BF16 (66 agent prompts) | 100 % | 54.5 % (43-66) | 66.7 % (55-77) | not measured | **81.8 %** (71-89) |
-| Same tool and argument | 100 % | 45.5 % | 56.1 % | not measured | **68.2 %** |
-| Well-formed tool calls | 87.9 % | 74.2 % | 78.8 % | not measured | 83.3 % |
+| | BF16 | HI2 PTQ | HI2 PTQ + QAD (`fast`) | HI2 PTQ + QAD (`default`) | AWQ INT4 (cyankiwi) | GGUF Q4_K_M (unsloth) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Quantized linears | 45.4 GiB | 8.5 GiB | 8.5 GiB | 8.5 GiB | 399 (4.625 bpw) | 503 (4.738 bpw) |
+| Measured bpw (every byte of the linears) | 16 | 3.012 | 3.012 | 3.012 | 4.625 | 4.738 |
+| INT2 / INT4 share of the weights | | 66 % / 34 % | 66 % / 34 % | 66 % / 34 % | INT4 only | mixed K-quant |
+| Checkpoint | 51.7 GiB | 14.9 GiB (3.47x smaller) | 14.9 GiB | 15.0 GiB | 20 044 MiB | 15 702 MiB |
+| Perplexity, docs text | 4.107 | 4.307 (x 1.049) | 4.282 (x 1.043) | **4.158 (x 1.012)** | 4.189 (x 1.020) | not measured |
+| Perplexity, mix text | 5.162 | 4.835 (x 0.937) | 5.574 (x 1.080) | **4.567 (x 0.885)** | 5.219 (x 1.011) | not measured |
+| First tool as BF16 (66 agent prompts) | 100 % | 54.5 % (43-66) | 66.7 % (55-77) | not measured | **81.8 %** (71-89) | not measured |
+| Same tool and argument | 100 % | 45.5 % | 56.1 % | not measured | **68.2 %** | not measured |
+| Well-formed tool calls | 87.9 % | 74.2 % | 78.8 % | not measured | 83.3 % | not measured |
 
 Read this as follows.
 
@@ -351,7 +351,11 @@ Read this as follows.
    and mix KLD −15 %, top-1 and EAR up on both. The `fast` checkpoint's mix regression (+36 %)
    was the skipped final phase, not the layer-wise QAD. The mix perplexity alone misleads: the
    PTQ model scores below BF16 (x 0.937) on that text, so a ratio near 1 does not mean the same
-   distribution. Raw results: `experiments/results/kld_27b_2026-10-27/` (PTQ, `fast`) and
+   distribution. **The AWQ and GGUF KLD against BF16 at 27B are not measured**: the table above
+   carries the AWQ's ppl, suite and domain KLD and the GGUF's file only, so the cross-format
+   KLD comparison is the equal-body 4B study at the top of this file (HI2 3.0 + QAD at
+   0.061–0.068 against GGUF Q2_K 0.259, Q3_K_M 0.100 and IQ4_XS 0.041). Raw results:
+   `experiments/results/kld_27b_2026-10-27/` (PTQ, `fast`) and
    `experiments/results/kld_27b_2026-10-29/` (`default`).
 4. **The layer-wise QAD gained little per layer; the final phase is what pays.** The `fast`
    preset spent 6 619 of 19 200 steps (7.2 h on one V620) and early-stopped at a median
