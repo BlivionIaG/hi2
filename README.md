@@ -31,9 +31,11 @@ hi2 size      <out_dir> --src <hf_model_dir>                      # where the by
 hi2 calib     calib.txt docs.txt:2 chat.jsonl:1 --holdout heldout.txt   # mixed-domain text
 ```
 
-`python -m hi2 ...` works too. The default run does PTQ and then QAD (quantization-aware
-distillation) on every layer. Use `--no-qad` for PTQ only. Use `--dry-run` to see the plan
-first.
+`python -m hi2 ...` works too. The default run does PTQ, then QAD (quantization-aware
+distillation) on every layer with the `default` preset (300 steps a layer), then the 200-step
+final logit-KL phase; that is the recipe the 27B measurement favours (docs KLD −39 % and mix
+KLD −15 % against PTQ at 3.012 bpw, `docs/qad.md`). Use `--no-qad` for PTQ only. Use
+`--dry-run` to see the plan first.
 
 ## Documentation
 
