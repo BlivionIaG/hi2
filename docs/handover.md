@@ -7,9 +7,11 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 
 * **Nothing runs.** The 27B `default` checkpoint is written and scored (the result is the first
   bullet under "Done this session"). The open follow-ups are its teacher-forced domain KLD and
-  its reduced task suite (`docs/surfaces.md`, "After this run, in order"); neither is started,
-  and both need the vLLM fork's serve harness, not `hi2`. The three crashes on the way are
-  recorded below: the encoder's unstaged copies, and the head-input shape.
+  its reduced task suite (`docs/surfaces.md`, "After this run, in order"); neither is started.
+  The suite arm is blocked on the serve path: the plain `vllm-rdna-0.31.0` fork rejects the
+  checkpoint's `rdna_hint_flex` quantization method, no fork tree under the home registers it,
+  and the prior 27B suite's raw JSONs are gone (the finding below). The three crashes on the
+  way are recorded below: the encoder's unstaged copies, and the head-input shape.
 
 ## Where things are
 
@@ -35,7 +37,9 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   min, 64 layers) moved little; the 200-step final phase (470.8 min, teacher pass 0 s from the
   saved head inputs) moved the held-out KL 0.4122 → 0.2427 (−41.1 %) and the mix KLD with it.
   The `fast` checkpoint's +36 % mix regression (0.28846 against 0.21710) was the skipped final
-  phase, not the layer-wise QAD. Raw: `experiments/results/kld_27b_2026-10-29/`. Details:
+  phase, not the layer-wise QAD. `hi2 verify` on 200 tensors: worst unweighted energy loss
+  0.1426, with the INT2 tensors at 0.08–0.14 and the INT4 ones at 0.008–0.014, as the
+  allocation says. Raw: `experiments/results/kld_27b_2026-10-29/`. Details:
   [qad.md](qad.md#the-verdict-2026-10-29-the-default-recipe-with-the-final-phase-beats-ptq-at-27b).
 * Final logit-KL phase is on by default (`default` and `thorough` presets, 200 steps) and
   splits teacher and student layer-wise over the devices, so the 27B can train it.
@@ -162,6 +166,14 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   host with `.cpu()`. All three now go through `PinnedWindow` (`hi2/calibrate.py`,
   `hi2/format.py`); `tests/test_encode.py` (10) and `tests/test_format.py` (17) pass, and
   the run resumes from layer 23.
+* **The HI2 checkpoint does not boot in the plain `vllm-rdna-0.31.0` fork: `rdna_hint_flex`
+  is not a registered quantization method.** `ModelConfig` rejects it before the loader
+  (`Unknown quantization method: rdna_hint_flex`). No vLLM fork tree under the home (0.28.0 or
+  any 0.31.0 variant) contains the string, and the serving venv has no plugin that registers
+  it, so the 27B suite/domain-KLD arm needs either that fork/plugin or `hi2 export-dense`
+  (a dense fp16 checkpoint served at TP=4). The docs' 27B suite numbers were measured on
+  2026-10-28 but their raw JSONs are not on the box (`hi2-bench/experiments/results/` has only
+  the decision-fidelity and KLD files), so a fresh reference run would be needed too.
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
   kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
   involved; the faulting address is a process virtual address, and the faults walk over
