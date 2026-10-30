@@ -154,9 +154,13 @@ KL(teacher || student) on the whole network; keep-best on held-out KL.
 python -m hi2 quantize MODEL OUT --workdir OUT.work \
   --devices cuda:0,cuda:1,cuda:2,cuda:3 \
   --calib calib_qad.txt --calib-samples 128 --seq-len 2048 \
-  --sensitivity probe --sens-dtype float16 \
+  --sensitivity probe \
   --target-bpw 3.0 --qad-preset default --qad-final-kl 200
 ```
+
+`--sens-dtype` is not in the command any more: it defaults to `auto`, which picks float16
+when the float32 probe does not fit the devices (it did not on the four V620s; the run
+passed `--sens-dtype float16` explicitly before `auto` existed).
 
 Result: `q27b-b3.0-qad-default`, 15.0 GiB, 3.012 bpw body, 67 % INT2 / 33 % INT4 rows, docs
 KLD 0.0593 (PTQ 0.0975), mix KLD 0.1837 (PTQ 0.2171), top-1 90.8 % / 86.7 %, EAR 0.918 /

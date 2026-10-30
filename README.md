@@ -24,7 +24,8 @@ Install the requirements: Python 3.10 or later, `torch`, `safetensors`, `regex`,
 
 ```bash
 pip install -e .
-hi2 quantize  <hf_model_dir> <out_dir> --calib calib.txt          # PTQ + QAD
+hi2 quantize  <hf_model_dir> <out_dir> --calib calib.txt          # PTQ + QAD + final KL
+hi2 quantize  <hf_model_dir> <out_dir> --calib calib.txt --target-bpw 3.0   # the compact recipe
 hi2 verify    <hf_model_dir> <out_dir>                            # reload and compare
 hi2 eval      <hf_model_dir> <out_dir> --text heldout.txt         # ppl, KLD, top-1
 hi2 size      <out_dir> --src <hf_model_dir>                      # where the bytes go

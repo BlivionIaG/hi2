@@ -70,12 +70,35 @@ class _Replay(nn.Module):
         return self.out
 
 
+def probe_fits(weight_bytes: int, device_bytes: int, n_devices: int) -> bool:
+    """Whether the probe model fits on one device or split over ``n_devices``."""
+    return (
+        weight_bytes <= FIT_FRACTION * device_bytes
+        or weight_bytes / n_devices <= SHARD_FRACTION * device_bytes
+    )
+
+
+def fp32_weight_bytes(src) -> int:
+    """The model's weights in float32, estimated from the stored files and the checkpoint
+    dtype (bf16/fp16 store half the fp32 bytes). Used to resolve ``--sens-dtype auto``
+    without loading the model twice."""
+    import json
+    from pathlib import Path
+
+    src = Path(src)
+    cfg = json.loads((src / "config.json").read_text())
+    dt = cfg.get("torch_dtype") or cfg.get("dtype") or "bfloat16"
+    scale = 1 if str(dt).lower() in ("float32", "fp32") else 2
+    files = list(src.glob("*.safetensors")) or list(src.glob("*.bin"))
+    return sum(f.stat().st_size for f in files) * scale
+
+
 def plan_placement(weight_bytes: int, device_bytes: int, n_devices: int) -> str:
     """Where the probe model goes: ``single`` (one device holds it), ``shard`` (split
     layer-wise over the devices) or an error when even the shards do not fit."""
     if weight_bytes <= FIT_FRACTION * device_bytes:
         return "single"
-    if weight_bytes / n_devices <= SHARD_FRACTION * device_bytes:
+    if probe_fits(weight_bytes, device_bytes, n_devices):
         return "shard"
     raise SystemExit(
         f"sensitivity probe: the model's {weight_bytes / 2**30:.0f} GiB of weights do not "

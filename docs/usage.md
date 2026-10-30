@@ -3,6 +3,20 @@
 This page tells you how to run the tool and what each option does. For the reasons
 behind the defaults, read [results.md](results.md) and [design-notes.md](design-notes.md).
 
+## The simplest run
+
+```bash
+hi2 quantize MODEL OUT --calib calib.txt --target-bpw 3.0
+```
+
+That is PTQ, then QAD with the `default` preset (300 steps a layer, 256 sequences), then the
+200-step final logit-KL phase: the recipe the 27B measurement favours (`docs/qad.md`). Every
+other knob is a default: `--devices auto` (every visible GPU), `--workdir OUT.work`, the
+sensitivity probe with `--sens-dtype auto` (float32, or float16 when the model does not fit
+float32 on the devices), smoothing 0.5 and rotation. Drop `--target-bpw` to let the quality
+mode pick the bit rate (`--max-error-ratio 6`); `--no-qad` for PTQ only; `--dry-run` prints
+the plan first.
+
 ## Commands
 
 | Command | What it does |

@@ -325,10 +325,11 @@ def main(argv=None):
     )
     q.add_argument(
         "--sens-dtype",
-        choices=("float32", "float16", "bfloat16"),
-        default="float32",
-        help="dtype of the whole-model sensitivity probe (float16 when fp32 does not fit; "
-        "bfloat16 is emulated, very slowly, on gfx1030)",
+        choices=("auto", "float32", "float16", "bfloat16"),
+        default="auto",
+        help="dtype of the whole-model sensitivity probe: auto (default) uses float32 "
+        "when the model fits the probe placement, else float16; bfloat16 is emulated, "
+        "very slowly, on gfx1030",
     )
     q.add_argument(
         "--expert-min-tokens",

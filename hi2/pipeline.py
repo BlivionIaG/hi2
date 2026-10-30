@@ -62,9 +62,7 @@ class RunConfig:
     sens_len: int = 512
     sens_floor: float = 0.05
     sens_batch: int = 1  # probe sequences per forward (1 = the original probe, exact)
-    sens_dtype: str = (
-        "float32"  # dtype of the whole-model probe (float16 if fp32 does not fit)
-    )
+    sens_dtype: str = "auto"  # probe dtype: auto (float32, else float16), float32, float16
     # MoE: lower bound of an expert's routed-token share (relative to uniform routing)
     # in its allocation weight
     expert_share_floor: float = 0.05
@@ -764,11 +762,31 @@ def _expert_summary(report: dict[str, dict]) -> dict:
     return {"expert": agg(ex), "non_expert": agg(dense)}
 
 
+def _resolve_sens_dtype(src, ex: Executor, log) -> str:
+    """``--sens-dtype auto``: float32 when the model fits the probe's placement on the
+    devices, else float16 (half the bytes, the 27B case)."""
+    from .sensitivity import fp32_weight_bytes, probe_fits
+
+    if not ex.devices or ex.devices[0].type != "cuda":
+        return "float32"
+    cap = min(torch.cuda.get_device_properties(d).total_memory for d in ex.devices)
+    need = fp32_weight_bytes(src)
+    if probe_fits(need, cap, len(ex.devices)):
+        return "float32"
+    log(
+        f"sensitivity probe: {need / 2**30:.0f} GiB of float32 weights do not fit "
+        f"{len(ex.devices)} device(s) of {cap / 2**30:.0f} GiB; using float16"
+    )
+    return "float16"
+
+
 def _probe(rc: RunConfig, ex: Executor, tables, weights, log) -> dict | None:
     """Phase 2a: the sensitivity probe, reused from the cache (``probe`` entry keyed by
     the tables and the probe settings and tokens) or from the workdir."""
     from .sensitivity import REF_CANDIDATE, probe_sensitivity
 
+    if rc.sens_dtype == "auto":
+        rc.sens_dtype = _resolve_sens_dtype(rc.src, ex, log)
     pids = _probe_ids(rc)
     skey = {
         "phase1": _phase1_key(rc),
