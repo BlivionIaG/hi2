@@ -148,7 +148,7 @@ KL(teacher || student) on the whole network; keep-best on held-out KL.
 | placement | teacher and student layer-wise | **the 27B teacher in float32 does not fit four V620s** (29 GiB a card against a 27 GiB guard); both 27B QAD runs skipped it. Since 2026-10-29 the layer-wise phase saves the teacher's post-final-norm head inputs (10.3 GiB) and the phase runs from them, needing only the student (about 12 GiB a device) |
 | cost | | 4B 3.5 bpw: 200 steps 92.9 min (0.46 min/step). 27B 3.0 bpw: 2.45 min/step, about 8.2 h for 200 steps on four V620s (the student sharded, the dequantize and the checkpointed backward dominate); the phase logs every 50 steps |
 
-## The default 27B run (in flight)
+## The default 27B run (finished 2026-10-29)
 
 ```bash
 python -m hi2 quantize MODEL OUT --workdir OUT.work \
@@ -157,6 +157,12 @@ python -m hi2 quantize MODEL OUT --workdir OUT.work \
   --sensitivity probe --sens-dtype float16 \
   --target-bpw 3.0 --qad-preset default --qad-final-kl 200
 ```
+
+Result: `q27b-b3.0-qad-default`, 15.0 GiB, 3.012 bpw body, 67 % INT2 / 33 % INT4 rows, docs
+KLD 0.0593 (PTQ 0.0975), mix KLD 0.1837 (PTQ 0.2171), top-1 90.8 % / 86.7 %, EAR 0.918 /
+0.874. The layer-wise phase took 247 min (64 layers, the last at −4.3 % held-out nMSE); the
+200-step final KL took 470.8 min and moved the held-out KL 0.4122 → 0.2427 (−41.1 %), teacher
+pass 0 s from the saved head inputs. Raw: `experiments/results/kld_27b_2026-10-29/`.
 
 Decisions the tool makes: the probe and the per-row allocation at 3.0 bpw (3.012 bpw body,
 67 % INT2 / 33 % INT4 rows), smoothing 0.5 + rotation, GPTQ, no refinement (QAD), 300
@@ -169,10 +175,11 @@ checkpoints, so the result is a clean comparison at fixed size.
 
 ## After this run, in order
 
-1. Score it on the mix KLD, the teacher-forced tool-call/math KLD and the reduced suite. The
-   mix KLD alone has already misled once.
-2. If the QAD still loses to PTQ: the answer is PTQ at the same size, or a larger size
-   (ratio 6 is about 3.5 bpw on the 27B; the tool-call budget on the 4B needed 4.2 bpw).
+1. Score it on the teacher-forced tool-call/math KLD and the reduced suite. Its docs and mix
+   KLD are measured and better than PTQ's; the domain texts are where the `fast` checkpoint
+   lost, and the default's are not measured.
+2. If a domain still loses to PTQ: the answer is a larger size (ratio 6 is about 3.5 bpw on
+   the 27B; the tool-call budget on the 4B needed 4.2 bpw) or a domain-calibrated run.
 3. A calibration-domain run: a mix-heavy or tool-heavy calibration (the largest evidenced
    lever, untested at 27B) scored on the tool-call text.
 4. Final-KL tuning (steps, `final_lr_p`) now that the phase actually runs at 27B.

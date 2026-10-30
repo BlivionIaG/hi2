@@ -210,54 +210,40 @@ teacher placement entirely; the fit check then needs only the student (about 12 
 on four V620s). Tested on the CPU tiny model:
 `tests/test_lowbit.py::test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves`.
 
-### The verdict (2026-10-28): the `fast` recipe does not beat PTQ at 27B
+### The verdict (2026-10-29): the `default` recipe with the final phase beats PTQ at 27B
 
-The new checkpoint's end-to-end KLD, measured on the same windows as every other number here:
+`q27b-b3.0-qad-default` (3.012 bpw, the same allocation as PTQ and `fast`) was run with the
+`default` preset (300 steps a layer, 256 sequences, float32 buffers, four-GPU data-parallel
+steps) and the 200-step final logit-KL phase, which now runs from the teacher head inputs the
+layer-wise phase saves. Measured on the same windows as every other number here:
 
 | | docs KLD | mix KLD | top-1 (docs / mix) | EAR (docs / mix) |
 |---|---:|---:|---:|---:|
-| HI2 3.0 bpw, PTQ | 0.09747 | **0.21710** | 88.1 % / 86.6 % | 0.894 / 0.873 |
-| HI2 3.0 bpw, PTQ + QAD `fast` (2026-10-27) | 0.09012 | 0.29470 | 88.8 % / 85.3 % | 0.901 / 0.863 |
-| HI2 3.0 bpw, PTQ + QAD `fast` (2026-10-28) | **0.09373** | **0.28846** | 88.8 % / 85.3 % | 0.899 / 0.863 |
+| HI2 3.0 bpw, PTQ | 0.09747 | 0.21706 | 88.1 % / 86.6 % | 0.894 / 0.873 |
+| HI2 3.0 bpw, PTQ + QAD `fast` (no final phase) | 0.09012–0.09373 | 0.28846–0.29469 | 88.8 % / 85.3 % | 0.901 / 0.863 |
+| HI2 3.0 bpw, PTQ + QAD `default` + final phase | **0.05934** | **0.18372** | **90.8 % / 86.7 %** | **0.918 / 0.874** |
 
-**The answer to the question the run was for is no.** The new run is better than the old `fast`
-checkpoint (mix KLD 0.28846 against 0.29470, and 2 % better on the mix perplexity) and better
-than PTQ on the docs text (0.09373 against 0.09747, 4 % better), but on the mix text it is
-**33 % worse than not doing the QAD at all** (0.28846 against 0.21710). The float32 buffers and
-the four-GPU data-parallel split bought about 2 % of a 33 % gap (the requested final phase was
-skipped, above); they did not close it.
+**The answer is yes.** The default recipe improves both texts against PTQ: docs KLD −39 %,
+mix KLD −15 %, top-1 and EAR up on both. The `fast` recipe's mix regression (+36 %) was the
+missing final phase, not the layer-wise QAD: the final phase took the held-out KL from 0.4122
+to 0.2427 (−41.1 %) in 200 steps (7.85 h, teacher pass 0 s), and both `fast` runs skipped it.
 
-Three things follow, and they are the end of this line of work.
+1. **The final phase is the lever the layer-wise phase is not.** The layer-wise nMSE moved
+   within 5 % of the previous runs while the mix KLD did not; the final phase's held-out KL
+   moved 41 % and the mix KLD moved with it. At 27B, budget the final phase (about 8 h on four
+   V620s) before any more layer-wise steps: the 247 min of layer training plus the 471 min of
+   the final phase is the run that works.
+2. **The layer-wise nMSE still does not predict the end-to-end KLD.** It did not at the fast
+   runs and it did not here; the final phase's held-out KL is the proxy that did.
+3. **The docs text and the mix text now agree.** The QAD helps on both; the `fast` checkpoint
+   helped the docs text and hurt the mix text because its phase 3k was skipped, not because
+   the two texts disagree.
 
-1. **The recipe is not the lever.** The per-layer nMSE said the layers were trained to the same
-   place as the previous run (within 2 % on 21 of 42 layers, within 5 % on all 42) and the run
-   was 2.76x faster, so the recipe did what it was asked to do. The end-to-end KLD still says
-   the QAD makes the model worse on the mix text. A lever that cannot move the number that
-   matters is not worth tuning: `fast` was the cheap end of the recipe range and it is 33 %
-   short, so the expensive end (`default`, three times the steps) is not worth a 27B run to
-   test.
-2. **The layer-wise nMSE does not predict the end-to-end KLD.** It did not here, and it is
-   worth knowing that it did not: it is the proxy the whole QAD is built on, and on the one
-   model where both were measured it was not on the model's side.
-3. **The docs text and the mix text disagree, and the mix text is the one that predicts the
-   tasks.** The QAD helps on the study text on both runs and hurts on the mix text on both
-   runs. The teacher-forced domain KLD says where: it makes the tool-calling text 63 % worse
-   (0.04875 against PTQ's 0.02984) and the math text 21 % worse (0.05068 against 0.04187),
-   while buying the agent-decision text (0.06925 against 0.07913). The old `fast` checkpoint
-   lost 8.2 points pooled on the task suite against PTQ's 6.2, and the tool-call family was
-   where it lost most.
-
-**So the 27B QAD line stops here.** The mix KLD of the new checkpoint is 0.28846 against PTQ's
-0.21710, the stop condition was met, and the suite arm that would have scored the new
-checkpoint's per-family accuracy was killed rather than left to run its 3.5 hours. What the
-new checkpoint does *not* have is its own row in the teacher-forced domain KLD table and its
-own column in the task-suite table; its mix KLD, its docs KLD and its perplexities are
-measured, and they are in `experiments/results/kld_27b_2026-10-28/`.
-
-What the 27B *does* keep is the part that is not the QAD's: the format is still the smallest
-file of the three (3.012 bpw, 15 290 MiB, 2.6 % below the GGUF and 23.8 % below the AWQ), the
-domain KLD of the AWQ INT4 checkpoint at 4.625 bpw is 4 to 12x lower than HI2's on every
-family, and the 4B study's per-use-case budgets hold at this size.
+**What the new checkpoint does not have** is its own row in the teacher-forced domain KLD
+table and its own column in the task-suite table; its docs KLD, mix KLD, top-1, EAR and
+perplexities are measured and in `experiments/results/kld_27b_2026-10-29/`. The `fast` run's
+domain numbers (tool-calling 63 % worse than PTQ) are the only domain evidence at this size
+and belong to the checkpoint without the final phase, so they are not a verdict on this one.
 
 ### What to pick
 
@@ -266,17 +252,14 @@ family, and the 4B study's per-use-case budgets hold at this size.
 | 4B or smaller, quality first | `default` (41 min at the 0.8B, 3.1 h at the 4B): 2.4x the time of `fast` for a third less error on the mix text |
 | 4B or smaller, a checkpoint in minutes | `fast` |
 | the last percent at the 0.8B, time no object | `thorough` (141 min): about 1.5 % more than `default` |
-| 27B | **the QAD does not pay at this size** (the verdict: the `fast` recipe's mix KLD is 0.28846 against PTQ's 0.21710, 33 % worse than doing no QAD, and the cheap end of the recipe range is the one that was measured). Use **PTQ** at 27B, or the AWQ INT4 checkpoint at 4.625 bpw, whose domain KLD is 4 to 12x lower than HI2's on every family. The `default` recipe was not run at 27B and is not worth a run: the early stop that makes `fast` cheap did not move the number, so the expensive end is further from the target, not nearer |
+| 27B, quality first | **`default` + the final phase** (about 12 h with PTQ on four V620s): docs KLD 0.0593 and mix KLD 0.1837 against PTQ's 0.0975 / 0.2171. The final phase is what makes the QAD pay; `fast` without it is 36 % worse than PTQ on the mix |
+| 27B, no time for QAD | PTQ (3.012 bpw, the same file size) |
 | any size, a QAD for a *reference* | `default` with float32 buffers and float32 math - the other modes are only worth their time if the mix KLD says so |
 
-**The recipe the next runs use** (decided 2026-10-28, and revised by the verdict above): `fast`
-- the early stop under 1 % with the float32 buffers and the float32 math. The half-precision
-math stays in the code (`--qad-dtype float16`) with its measurement attached, because it is
-1.43x faster and does not learn on this hardware, so it is not what a run uses. **At 27B the
-recipe is now settled the other way: the `fast` recipe came out 33 % worse than PTQ on the mix
-KLD, so the 27B QAD line stops there and a 27B checkpoint should be the PTQ one** (or the AWQ
-INT4 checkpoint at 4.625 bpw). `default` is the recipe to reach for at the small sizes, where
-the studies say it is worth its time.
+**The recipe the next runs use**: `default` with float32 buffers and float32 math, plus the
+final logit-KL phase (`--qad-final-kl 200`). The half-precision math stays in the code
+(`--qad-dtype float16`) with its measurement attached, because it is 1.43x faster and does not
+learn on this hardware. `fast` is for a checkpoint in minutes, not for a quality target.
 
 ## Step time
 
