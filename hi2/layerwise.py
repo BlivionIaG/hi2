@@ -575,9 +575,7 @@ def calibrate_layerwise(
             st = merged[ld] if merged[ld].n > 0 else None
             # One group at a time: a layer of 512 experts is 163 GB of fp32 weights, which
             # on top of a 331 GB model pushes the host into swap.
-            ws = {
-                n: layer.get_submodule(n).weight.detach().float().cpu() for n in names
-            }
+            ws = {n: layer.get_submodule(n).weight.detach().cpu() for n in names}
             transform = shared_transform([ws[n] for n in names], st, cfg, ex)
             sink.stats(linears[ld], [linears[n] for n in names], st)
             for n in names:

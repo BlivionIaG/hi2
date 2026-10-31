@@ -163,7 +163,7 @@ def _fixed_transform(
     s16 = smoothing_scale(stats, alpha)
     if cfg.rotation != "auto":
         return s16, choose_rotation(ws[0], stats, cfg, ex.primary)
-    cat = torch.cat([_smoothed(w, s16)[0] for w in ws])
+    cat = torch.cat([_smoothed(w.float(), s16)[0] for w in ws])
     inv = None if s16 is None else 1.0 / s16.float()
     return s16, choose_rotation(cat, stats, cfg, ex.primary, inv)
 
@@ -226,16 +226,28 @@ def build_table(
         transform = shared_transform([w], stats, cfg, ex)
     if transform is None:
         s16 = smoothing_scale(stats, cfg.smooth)
-        w, inv = _smoothed(w, s16)
-        had = choose_rotation(w, stats, cfg, ex.primary, inv)
+        if cfg.rotation == "on":
+            had = torch.ones(k // GROUP, dtype=torch.uint8)
+        else:  # flags are chosen on the smoothed rows: needs fp32 here
+            wf, inv = _smoothed(w.float(), s16)
+            had = choose_rotation(wf, stats, cfg, ex.primary, inv)
+            del wf
     else:
         s16, had = transform  # own copies: safetensors refuses shared storage
         s16 = None if s16 is None else s16.clone()
         had = had.clone()
-        w, inv = _smoothed(w, s16)
 
     def shard(dev, lo, hi):
-        wt = stager.to_device(w[lo:hi], dev, dtype=torch.float32)
+        # The stored dtype goes over PCIe and the bf16 -> fp32 cast (exact) and the
+        # smoothing multiply happen here: half the bytes of the old fp32 host copy.
+        wt = stager.to_device(w[lo:hi], dev)
+        if wt.dtype != torch.float32:
+            wt = wt.float()
+        inv = None
+        if s16 is not None:
+            s = s16.to(dev, dtype=torch.float32)
+            wt = wt * s
+            inv = 1.0 / s
         wt = fwht_groups(wt, had) if had.any() else wt
         d = _weights(stats, k, had, dev, inv)
         sse = torch.stack(
