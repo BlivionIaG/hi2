@@ -326,19 +326,23 @@ four V620s for the calibration, probe and encode, and one for QAD. Served in the
 | Checkpoint | 51.7 GiB | 14.9 GiB (3.47x smaller) | 14.9 GiB | 15.0 GiB | 20 044 MiB | 15 702 MiB |
 | Perplexity, docs text | 4.107 | 4.307 (x 1.049) | 4.282 (x 1.043) | **4.158 (x 1.012)** | 4.189 (x 1.020) | not measured |
 | Perplexity, mix text | 5.162 | 4.835 (x 0.937) | 5.574 (x 1.080) | **4.567 (x 0.885)** | 5.219 (x 1.011) | not measured |
-| First tool as BF16 (66 agent prompts) | 100 % | 54.5 % (43-66) | 66.7 % (55-77) | not measured | **81.8 %** (71-89) | not measured |
-| Same tool and argument | 100 % | 45.5 % | 56.1 % | not measured | **68.2 %** | not measured |
-| Well-formed tool calls | 87.9 % | 74.2 % | 78.8 % | not measured | 83.3 % | not measured |
+| First tool as BF16 (66 agent prompts) | 100 % | 54.5 % (43-66) | 66.7 % (55-77) | 53.0 % (41-65) | **81.8 %** (71-89) | not measured |
+| Same tool and argument | 100 % | 45.5 % | 56.1 % | 45.5 % | **68.2 %** | not measured |
+| Well-formed tool calls | 87.9 % | 74.2 % | 78.8 % | 74.2 % | 83.3 % | not measured |
 
 Read this as follows.
 
-1. **The model works.** The `default` checkpoint loads and scores (docs top-1 90.8 %), and the
-   PTQ and `fast` models answer correctly ("Paris", arithmetic) and make well-formed tool calls
-   on three prompts in four, with no garbage and no faults.
-2. **The `fast` QAD helps on the decisions.** It matches BF16's first decision on 12 points more
-   prompts than PTQ (the intervals overlap; by stage QAD is ahead in four of six, level in one,
-   behind in one) and makes more well-formed calls. The `default` checkpoint's decisions are
-   not measured.
+1. **The model works.** The `default` checkpoint loads, serves and scores (docs top-1 90.8 %),
+   and all three 3.0 bpw checkpoints answer correctly ("Paris", arithmetic) with no garbage and
+   no faults. On the reduced suite the `default` is the best 3.0 bpw point: macro 82.5 %,
+   pooled -3.4 against BF16, with tool calls back up to 55.7 % from PTQ's 37.1 % and `fast`'s
+   28.9 %.
+2. **The `default` QAD does not recover the decisions.** It matches BF16's first tool call on
+   53.0 % of the 66 agent prompts — level with PTQ (54.5 %, intervals overlap) and behind `fast`
+   (66.7 %) — and on the argument on 45.5 %, again level with PTQ. So the final logit-KL phase
+   buys the tool-call *content* (55.7 % against PTQ's 37.1 % on the suite) and the distribution
+   (docs KLD 0.0593), not the decision *format*: `fast` is still the best of the three at the
+   format and the worst at the content.
 3. **KLD against BF16 (fp16 evaluation split over four GPUs, `hi2 eval --device
    cuda:0,cuda:1,cuda:2,cuda:3 --dtype float16`, 8 x 2048 held-out tokens):**
 
@@ -351,12 +355,20 @@ Read this as follows.
    and mix KLD −15 %, top-1 and EAR up on both. The `fast` checkpoint's mix regression (+36 %)
    was the skipped final phase, not the layer-wise QAD. The mix perplexity alone misleads: the
    PTQ model scores below BF16 (x 0.937) on that text, so a ratio near 1 does not mean the same
-   distribution. **The AWQ and GGUF KLD against BF16 at 27B are not measured**: the table above
-   carries the AWQ's ppl, suite and domain KLD and the GGUF's file only, so the cross-format
-   KLD comparison is the equal-body 4B study at the top of this file (HI2 3.0 + QAD at
-   0.061–0.068 against GGUF Q2_K 0.259, Q3_K_M 0.100 and IQ4_XS 0.041). Raw results:
-   `experiments/results/kld_27b_2026-10-27/` (PTQ, `fast`) and
-   `experiments/results/kld_27b_2026-10-29/` (`default`).
+   distribution. **The GGUF KLD against BF16 at 27B is now measured** (llama.cpp
+   `llama-perplexity -dev none`, CPU only, BF16 base against
+   `Qwen3.8-27B-UD-Q4_K_M.gguf`, on the same 16k-token docs and mix texts the `hi2 eval`
+   slices use; re-run 2026-10-31, reproduced to four decimals): docs **KLD 0.01424 ± 0.00084**
+   (ppl ratio 1.0088), mix **KLD 0.07760 ± 0.00748**. So the GGUF at 4.738 bpw is 4.2x closer
+   to BF16 than the HI2 `default` on docs text (0.0142 against 0.0593) and 2.4x closer on mix
+   text (0.0776 against 0.1837). The AWQ KLD is still not measured: hi2 cannot dequantize AWQ,
+   so the table above carries its ppl, suite and domain KLD instead. The equal-body cross-format
+   comparison remains the 4B study at the top of this file (HI2 3.0 + QAD at 0.061–0.068
+   against GGUF Q2_K 0.259, Q3_K_M 0.100 and IQ4_XS 0.041). Raw results:
+   `experiments/results/kld_27b_2026-10-27/` (PTQ, `fast`),
+   `experiments/results/kld_27b_2026-10-29/` (`default`) and
+   `experiments/results/kld_27b_gguf_2026-10-28/` (GGUF, logs on the build server under
+   `~/w4a8_runs/hadamard-int2/gguf27b/kld-final/`).
 4. **The layer-wise QAD gained little per layer; the final phase is what pays.** The `fast`
    preset spent 6 619 of 19 200 steps (7.2 h on one V620) and early-stopped at a median
    held-out layer-error gain of 1.5 % (layer 0: 24 %), against 15 to 38 % on the 0.8B. The
@@ -366,50 +378,52 @@ Read this as follows.
    moved with the final phase, not with the layer-wise nMSE.
 
 Decisions and perplexities per run: `experiments/results/decision_fidelity_27b_2026-10-27/`
-(the harness is `experiments/decision_fidelity.sh`). Not measured: the multiple-choice tasks,
-EXL3 or GGUF at this size, and the `default` checkpoint's decisions and task suite.
+(the harness is `experiments/decision_fidelity.sh`). Not measured: EXL3 at this size and the
+AWQ text KLD (hi2 cannot dequantize AWQ).
 
 ### The 27B on the task suite (anchor, reduced suite)
 
-The anchor of the calibration study: the same three checkpoints against a BF16 27B reference
-served at TP=4. The suite is reduced to 100 items per family (766 items) so that a 27B stays
-in reach, so these numbers are **not** comparable with the 4B table further down, and one
-hundred items gives an interval of about 9 points on a family.
+The anchor of the calibration study: the same four candidate checkpoints against a BF16 27B
+reference served at TP=4. The suite is reduced to 100 items per family (766 items) so that a
+27B stays in reach, so these numbers are **not** comparable with the 4B table further down,
+and one hundred items gives an interval of about 9 points on a family.
 
-| family | n | BF16 | HI2 PTQ | HI2 PTQ + QAD | AWQ INT4 (cyankiwi) |
-|---|---|---|---|---|---|
-| gsm8k | 100 | 95.0 % | 94.0 % | 95.0 % | 95.0 % |
-| humaneval | 100 | 95.0 % | 93.0 % | 89.0 % | 95.0 % |
-| mbpp | 100 | 93.0 % | 85.0 % | 85.0 % | 90.0 % |
-| ifeval | 100 | 94.0 % | 93.0 % | 90.0 % | 94.0 % |
-| toolcall | 97 | 60.8 % | 37.1 % | 28.9 % | 49.5 % |
-| needle | 68 | 100.0 % | 100.0 % | 100.0 % | 100.0 % |
-| mc | 100 | 64.0 % | 63.0 % | 59.0 % | 67.0 % |
-| decision | 66 | 87.9 % | 74.2 % | 78.8 % | 83.3 % |
-| **macro average** | 731 | **86.2 %** | 79.9 % | 78.2 % | 84.2 % |
-| pooled difference | | | **-6.2 [-8.5, -4.0]** | **-8.2 [-10.8, -5.7]** | **-1.9 [-3.6, -0.3]** |
-| first tool as BF16 | 66 | 100 % | 53.0 % | 66.7 % | 81.8 % |
-| same tool and argument | 66 | 100 % | 43.9 % | 56.1 % | 69.7 % |
+| family | n | BF16 | HI2 PTQ | HI2 PTQ + QAD (`fast`) | HI2 PTQ + QAD (`default`) | AWQ INT4 (cyankiwi) |
+|---|---|---|---|---|---|---|
+| gsm8k | 100 | 95.0 % | 94.0 % | 95.0 % | 96.0 % | 95.0 % |
+| humaneval | 100 | 95.0 % | 93.0 % | 89.0 % | 94.0 % | 95.0 % |
+| mbpp | 100 | 93.0 % | 85.0 % | 85.0 % | 84.0 % | 90.0 % |
+| ifeval | 100 | 94.0 % | 93.0 % | 90.0 % | 95.0 % | 94.0 % |
+| toolcall | 97 | 60.8 % | 37.1 % | 28.9 % | 55.7 % | 49.5 % |
+| needle | 68 | 100.0 % | 100.0 % | 100.0 % | 100.0 % | 100.0 % |
+| mc | 100 | 64.0 % | 63.0 % | 59.0 % | 61.0 % | 67.0 % |
+| decision | 66 | 87.9 % | 74.2 % | 78.8 % | 74.2 % | 83.3 % |
+| **macro average** | 731 | **86.2 %** | 79.9 % | 78.2 % | **82.5 %** | 84.2 % |
+| pooled difference | | | **-6.2 [-8.5, -4.0]** | **-8.2 [-10.8, -5.7]** | **-3.4 [-5.6, -1.2]** | **-1.9 [-3.6, -0.3]** |
+| first tool as BF16 | 66 | 100 % | 53.0 % | 66.7 % | 53.0 % | 81.8 % |
+| same tool and argument | 66 | 100 % | 43.9 % | 56.1 % | 45.5 % | 69.7 % |
 
 What it says:
 
-1. **Tool calling is where a 27B at 3 bpw loses.** The HI2 PTQ model drops 23.7 points on the
-   tool-call family (27.8 % of the items flip right to wrong) and 13.6 points on the agent
-   decisions; the BF16 reference makes the same first tool call on 100 % of the 66 decision
-   prompts and the PTQ model on 53.0 %. Everything else is inside the interval at this size:
-   math, instruction following, multiple choice and long-context retrieval are flat, and only
-   mbpp (-8.0) and humaneval for the QAD model (-6.0) are outside it. The earlier
+1. **Tool calling is where a 27B at 3 bpw loses, and the `default` QAD is what stops it.**
+   PTQ drops 23.7 points on the tool-call family, `fast` drops 32.0, and the `default`
+   checkpoint drops 5.2 (55.7 %, interval -14.4 to +4.1, which crosses zero). The decision
+   family is the one loss the `default` does not fix: -13.6 points, the same as PTQ. Outside
+   the interval for the `default` are mbpp (-9.0, p = 0.012) and decision (-13.6, p = 0.004);
+   for PTQ, mbpp (-8.0) and decision; for `fast`, tool calls, mbpp and humaneval. The earlier
    decision-fidelity harness gave 54.5 % for the same PTQ checkpoint (it used a different
-   prompt set); the QAD and AWQ numbers reproduce exactly.
-2. **The QAD checkpoint is worse than PTQ on the tasks, as the mix KLD already said.** Pooled
-   -8.2 against -6.2, and tool calls -32.0 against -23.7. QAD still wins the first tool call
-   (66.7 % against 53.0 %), so it recovers the decision format without fixing the tool-call
-   content. This is the `fast` preset with 6 619 of 19 200 steps and a median held-out layer
-   gain of 1.5 % (point 4 above): undertrained, not limited.
-3. **AWQ INT4 is a ceiling rather than a peer.** At about 4.5 bpw it loses 1.9 points pooled
-   where the 3.0 bpw models lose 6 to 8, and it keeps 81.8 % of the first tool calls against
-   53.0 % for the same-size format. The extra 1.5 bpw buy most of the loss, which is the
-   clearest single argument for raising the default bit rate on agentic work.
+   prompt set); the suite's 53.0 % is what the column shows, and the AWQ numbers reproduce
+   exactly.
+2. **The `default` recipe is what makes 3 bpw viable.** Pooled -3.4 [-5.6, -1.2] against -6.2
+   for PTQ and -8.2 for `fast`, and it recovers 27 points of tool-call accuracy over `fast`
+   and 18 over PTQ. It does not recover the decision format: 74.2 % and 53.0 % of the first
+   tool calls, level with PTQ and behind `fast` (66.7 %). So the final logit-KL phase buys the
+   distribution and the tool-call content, not the format.
+3. **AWQ INT4 is still a ceiling, but the gap is now 1.7 points.** At 4.625 bpw it loses 1.9
+   pooled against 3.4 for the `default`, and it keeps 81.8 % of the first tool calls against
+   53.0 %. Per family the `default` beats AWQ on tool calls (55.7 against 49.5) and loses on
+   mc (61.0 against 67.0) and decision (74.2 against 83.3). The format gap, not the content
+   gap, is the clearest argument for more bits on agentic work.
 
 Measured on 2026-10-28, in the next section.
 
@@ -423,26 +437,33 @@ family, on the text the tasks were scored on.
 | candidate | bpw (body) | gsm8k | humaneval | mbpp | ifeval | toolcall | decision |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | HI2 3.0 bpw (PTQ) | 3.012 | 0.04187 | 0.02604 | 0.05670 | 0.18594 | 0.02984 | 0.07913 |
-| HI2 3.0 bpw (PTQ + QAD) | 3.012 | 0.05068 | 0.02590 | 0.05485 | 0.18384 | 0.04875 | 0.06925 |
+| HI2 3.0 bpw (PTQ + QAD `fast`) | 3.012 | 0.05068 | 0.02590 | 0.05485 | 0.18384 | 0.04875 | 0.06925 |
+| HI2 3.0 bpw (PTQ + QAD `default`) | 3.012 | 0.04040 | 0.02121 | 0.05214 | 0.17396 | 0.03251 | 0.07701 |
 | **AWQ INT4 (cyankiwi)** | 4.625 | **0.00353** | **0.00191** | **0.00719** | **0.02002** | **0.00980** | **0.02323** |
 
-(The QAD row is the 2026-10-27 `fast` checkpoint, the one the suite table above scores.)
+(The `fast` row is the 2026-10-27 checkpoint; the `default` row is the 2026-10-29 checkpoint
+with the final logit-KL phase, the one the suite table above scores in its fourth column.)
 
 1. **The 4B study's budgets hold at 27B.** The target table further down says a tool-calling
    workload needs a domain KLD below 0.0094, instruction following tolerates 0.1296 and math
    0.0350. AWQ INT4 is inside every one of those budgets (tool calls at 0.0098, just outside),
-   which is what its suite column shows: the smallest pooled loss of the three. HI2 at 3.0 bpw
-   is over the tool-call budget on both points (PTQ 3.2x over, QAD 5.2x over) and over the
-   instruction-following one (1.4x over), and those are the two families where it loses.
-2. **The QAD moved the damage.** It buys the decision family (0.06925 against PTQ's 0.07913,
-   13 % less) and gives a little on mbpp, humaneval and ifeval, and it pays for it on the two
-   families the suite shows it losing: tool calls (0.04875 against 0.02984, **63 % worse**) and
-   math (0.05068 against 0.04187, 21 % worse). A recipe that improves the model's agreement
-   with the reference's *decision* while making its *tool content* worse is what the pooled
-   -8.2 against -6.2 in the table above already said.
-3. **The gap AWQ closes is not a rounding difference.** It is 4 to 12x lower on every family,
-   including 9.3x on instruction following and 11.9x on math. It buys that with 1.6 bpw more
-   (4.625 against 3.012) and a 31 % bigger file.
+   which is what its suite column shows: the smallest pooled loss. HI2 at 3.0 bpw is over the
+   tool-call budget on all three points (PTQ 3.2x, `fast` 5.2x, `default` 3.5x) and over the
+   instruction-following one (1.4x for PTQ and `default`, 1.4x for `fast`), and those are the
+   two families where it loses.
+2. **The `default` final phase moves every family except tool calls.** Against PTQ it is lower
+   on gsm8k (0.04040 against 0.04187), humaneval (0.02121 against 0.02604), mbpp (0.05214
+   against 0.05670), ifeval (0.17396 against 0.18594) and decision (0.07701 against 0.07913),
+   and slightly higher on tool calls (0.03251 against 0.02984, 9 % worse). That last cell is
+   the honest caveat: the suite shows the `default` recovering 18 points of tool-call accuracy
+   over PTQ while its teacher-forced KLD on the same text is 9 % worse, so the tool-call gain
+   is real but the distribution there did not improve. The `fast` checkpoint, by contrast,
+   pays for its decision gain (0.06925 against 0.07913, 13 % less) with a 63 % worse tool-call
+   KLD, which is the pooled -8.2 the suite table already showed.
+3. **The gap AWQ closes is not a rounding difference.** It is 3.3 to 11x lower than the
+   `default` on every family: 11.4x on math, 11.1x on humaneval, 8.7x on instruction following
+   and 3.3x on tool calls and decisions. It buys that with 1.6 bpw more (4.625 against 3.012)
+   and a 31 % bigger file.
 
 ### The 27B noise floor: the same model, twice
 
@@ -515,26 +536,30 @@ same quantity in both, which is why the 4B tables compare them.
 | format | bpw (body) | body MiB | file MiB | KLD docs | KLD mix | PPL x docs | PPL x mix | top-1 docs |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | BF16 | 16 | - | 52 126 MiB (GGUF) | 0 | 0 | 1.000 | 1.000 | 100 % |
-| **GGUF Q4_K_M (unsloth)** | 4.738 | 13 963 | 15 702 | **0.0142** | **0.0776** | 1.009 | 1.066 | 95.0 % |
+| **GGUF Q4_K_M (unsloth)** | 4.738 | 13 963 | 15 702 | **0.0142** | **0.0776** | 1.009 | 1.066 | 95.4 % |
 | AWQ INT4 (cyankiwi) | 4.625 | 13 395 | 20 044 | not measured | not measured | 1.020 | 1.011 | not measured |
 | **HI2 3.0 bpw (PTQ)** | 3.012 | 8 745 | 15 290 | 0.0975 | **0.2171** | 1.049 | 0.937 | 88.1 % |
 | HI2 3.0 bpw (PTQ + QAD, 2026-10-27) | 3.012 | 8 745 | 15 290 | **0.0901** | 0.2947 | 1.043 | 1.080 | 88.8 % |
 | **HI2 3.0 bpw (PTQ + QAD, 2026-10-28)** | 3.012 | 8 745 | 15 290 | 0.0937 | 0.2885 | 1.047 | 1.035 | 88.8 % |
+| **HI2 3.0 bpw (PTQ + QAD `default`, 2026-10-29)** | 3.012 | 8 745 | 15 290 | **0.0593** | **0.1837** | 1.012 | 0.885 | 90.8 % |
 
-(the two QAD rows are the two `fast` runs: the 2026-10-27 one with bf16 buffers and no final
-logit-KL phase, the 2026-10-28 one with float32 buffers and four GPUs; its requested final
-phase was skipped because the 27B teacher does not fit four V620s, `qad.md`). The verdict is in
+(the two 2026-10-27/28 QAD rows are the two `fast` runs: the 2026-10-27 one with bf16 buffers
+and no final logit-KL phase, the 2026-10-28 one with float32 buffers and four GPUs; its
+requested final phase was skipped because the 27B teacher does not fit four V620s, `qad.md`.
+The 2026-10-29 row is the `default` checkpoint with the 200-step final phase that did run, and
+it is the best HI2 row on both texts. The `fast` verdict is in
 [qad.md](qad.md#the-verdict-2026-10-28-the-fast-recipe-does-not-beat-ptq-at-27b).)
 
-1. **The GGUF buys its quality with bits.** Q4_K_M has a KLD of 0.0142 on the docs text, six
-   times lower than HI2 at 3.0 bpw (0.0901 with QAD), and it pays 1.57 bpw more for it:
-   13 963 MiB of decoder linears against 8 745. The file sizes are much closer (15 702 against
-   15 290 MiB) because the GGUF also quantizes the embedding, the head and the MTP layer.
+1. **The GGUF buys its quality with bits.** Q4_K_M has a KLD of 0.0142 on the docs text: 4.2x
+   lower than the HI2 `default` (0.0593) and 6.3x lower than the `fast` checkpoint (0.0901).
+   It pays 1.57 bpw more for it: 13 963 MiB of decoder linears against 8 745. The file sizes
+   are much closer (15 702 against 15 290 MiB) because the GGUF also quantizes the embedding,
+   the head and the MTP layer.
 2. **The mix text is where the formats separate.** Every format is worse on it than on the docs
-   text: the GGUF's KLD goes from 0.0142 to 0.0776, HI2 PTQ from 0.0975 to 0.2171 and HI2 QAD
-   from 0.0901 to 0.2947. The GGUF's mix-text KLD is still lower than HI2's *docs*-text KLD, and
-   QAD helps on the docs text while hurting on the mix text, the same split the 27B section
-   above reports.
+   text: the GGUF's KLD goes from 0.0142 to 0.0776, HI2 PTQ from 0.0975 to 0.2171, HI2 QAD
+   `fast` from 0.0901 to 0.2947 and the `default` from 0.0593 to 0.1837. The GGUF's mix-text
+   KLD is still lower than HI2's *docs*-text KLD, and QAD helps on the docs text while the
+   `fast` checkpoint hurts on the mix text, the same split the 27B section above reports.
 3. **At equal file size HI2 is ahead**, and it is the only one of the three that is under
    16 GiB. The AWQ INT4 checkpoint is the largest file of the three, 28 % above the GGUF and
    31 % above HI2, and it has no KLD yet: it is a compressed-tensors pack-quantized

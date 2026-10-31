@@ -1,0 +1,24 @@
+{
+  "method": "tfkld.py compare: mean over completion tokens of log p_ref - log p_cand, nats/token; BF16 reference lp.json, candidates scored teacher-forced on the reference's own greedy completions",
+  "reference": "Qwen3.8-27B BF16 served at TP=4 (serve-bf16)",
+  "tasks": ["gsm8k", "humaneval", "mbpp", "ifeval", "toolcall", "decision"],
+  "candidates": {
+    "hi2_qad_default_3.0bpw": {
+      "gsm8k": 0.0404,
+      "humaneval": 0.02121,
+      "mbpp": 0.05214,
+      "ifeval": 0.17396,
+      "toolcall": 0.03251,
+      "decision": 0.07701
+    },
+    "awq_int4_4.625bpw": {
+      "gsm8k": 0.00346,
+      "humaneval": 0.00191,
+      "mbpp": 0.00731,
+      "ifeval": 0.01977,
+      "toolcall": 0.00983,
+      "decision": 0.02333
+    }
+  },
+  "note": "The AWQ row reproduces the 2026-10-28 measurement within 2 % on every family; the differences are run-to-run noise, not a different checkpoint."
+}

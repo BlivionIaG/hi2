@@ -239,11 +239,15 @@ to 0.2427 (−41.1 %) in 200 steps (7.85 h, teacher pass 0 s), and both `fast` r
    helped the docs text and hurt the mix text because its phase 3k was skipped, not because
    the two texts disagree.
 
-**What the new checkpoint does not have** is its own row in the teacher-forced domain KLD
-table and its own column in the task-suite table; its docs KLD, mix KLD, top-1, EAR and
-perplexities are measured and in `experiments/results/kld_27b_2026-10-29/`. The `fast` run's
-domain numbers (tool-calling 63 % worse than PTQ) are the only domain evidence at this size
-and belong to the checkpoint without the final phase, so they are not a verdict on this one.
+**What the new checkpoint now has** (measured 2026-10-31): its own row in the teacher-forced
+domain KLD table and its own column in the task-suite table. Domain KLD gsm8k 0.0404,
+humaneval 0.0212, mbpp 0.0521, ifeval 0.1740, toolcall 0.0325, decision 0.0770 — lower than
+PTQ on every family except tool calls, 9 % higher there. Suite macro 82.5 %, pooled -3.4
+[-5.6, -1.2] against BF16, with tool calls back to 55.7 % (PTQ 37.1 %) and decisions still at
+74.2 %. So the final phase does fix the `fast` checkpoint's tool-call damage; the decision
+format remains the one thing 3 bpw does not recover. Its docs KLD, mix KLD, top-1, EAR and
+perplexities are in `experiments/results/kld_27b_2026-10-29/`, the suite and domain numbers in
+`experiments/results/suite_27b_2026-10-30/`.
 
 ### What to pick
 

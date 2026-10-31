@@ -179,9 +179,11 @@ checkpoints, so the result is a clean comparison at fixed size.
 
 ## After this run, in order
 
-1. Score it on the teacher-forced tool-call/math KLD and the reduced suite. Its docs and mix
-   KLD are measured and better than PTQ's; the domain texts are where the `fast` checkpoint
-   lost, and the default's are not measured.
+1. Score it on the teacher-forced tool-call/math KLD and the reduced suite — **done 2026-10-31**.
+   Domain KLD: gsm8k 0.0404, humaneval 0.0212, mbpp 0.0521, ifeval 0.1740, toolcall 0.0325,
+   decision 0.0770 (lower than PTQ on every family except tool calls, 9 % higher there). Suite
+   macro 82.5 %, pooled -3.4 [-5.6, -1.2]; tool calls recovered to 55.7 % (PTQ 37.1 %), the
+   decisions did not (74.2 %, level with PTQ). Numbers in `results.md`.
 2. If a domain still loses to PTQ: the answer is a larger size (ratio 6 is about 3.5 bpw on
    the 27B; the tool-call budget on the 4B needed 4.2 bpw) or a domain-calibrated run.
 3. A calibration-domain run: a mix-heavy or tool-heavy calibration (the largest evidenced
