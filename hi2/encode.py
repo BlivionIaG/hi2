@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import torch
 
+from . import ladder_kernel as _ladder
 from .format import decode_params, ladder_dequantize
 
 EFFORT = {
@@ -57,22 +58,28 @@ def fit_ladder(wb: torch.Tensor, db: torch.Tensor, n: int, effort: str = "normal
     squares given the current codes, keeping a refit only where it lowers the error.
     """
     cfg = EFFORT[effort]
-    mn, mx = wb.amin(-1), wb.amax(-1)
-    span = mx - mn
-    best_lo = best_step = best_err = None
-    for a in cfg["grid"]:
-        for b in cfg["grid"]:
-            lo = mn + a * span
-            step = (mx - b * span - lo) / (n - 1)
-            rec, _ = _recon(wb, lo, step, n)
-            err = (db * (rec - wb) ** 2).sum(-1)
-            if best_err is None:
-                best_lo, best_step, best_err = lo, step, err
-            else:
-                m = err < best_err
-                best_lo = torch.where(m, lo, best_lo)
-                best_step = torch.where(m, step, best_step)
-                best_err = torch.where(m, err, best_err)
+    if _ladder.available(wb.device):
+        nb, b = db.shape[-2], db.shape[-1]
+        best_lo, best_step, best_err = _ladder.ladder_grid(
+            wb, db.reshape(nb, b), cfg["grid"], n
+        )
+    else:
+        mn, mx = wb.amin(-1), wb.amax(-1)
+        span = mx - mn
+        best_lo = best_step = best_err = None
+        for a in cfg["grid"]:
+            for b in cfg["grid"]:
+                lo = mn + a * span
+                step = (mx - b * span - lo) / (n - 1)
+                rec, _ = _recon(wb, lo, step, n)
+                err = (db * (rec - wb) ** 2).sum(-1)
+                if best_err is None:
+                    best_lo, best_step, best_err = lo, step, err
+                else:
+                    m = err < best_err
+                    best_lo = torch.where(m, lo, best_lo)
+                    best_step = torch.where(m, step, best_step)
+                    best_err = torch.where(m, err, best_err)
     for _ in range(cfg["ls"]):
         _, c = _recon(wb, best_lo, best_step, n)
         lo, step = _lsq(c, wb, db.expand_as(wb))

@@ -13,6 +13,7 @@ configuration is not known until the global allocation.
 import contextlib
 import copy
 import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -157,12 +158,27 @@ def _run(
     )  # buffers may be bf16 for an fp32 layer
     stager = PinnedWindow()
     with torch.no_grad():
-        for i in items:
-            out = layer(stager.to_device(hidden[i], dev, dtype), **kw)
+        if len(items) > 1 and os.environ.get("HI2_LAYER_BATCH", "1") != "0":
+            # One batched forward per device instead of one per sequence: a routed expert
+            # runs once on every sequence's tokens rather than 16 times, which is where
+            # the Python dispatch of a 512-expert layer spends its time. The statistics
+            # are the same sums; the sharing groups are decided on the batch's inputs.
+            xs = torch.cat([hidden[i] for i in items], dim=0)
+            out = layer(stager.to_device(xs, dev, dtype), **kw)
             o = (out[0] if isinstance(out, tuple) else out).detach()
-            outs[i] = o if resident else stager.to_host(o)
+            del xs
+            for k, i in enumerate(items):
+                part = o[k : k + 1]
+                outs[i] = part if resident else stager.to_host(part)
             groups.clear()
             keep_alive.clear()
+        else:
+            for i in items:
+                out = layer(stager.to_device(hidden[i], dev, dtype), **kw)
+                o = (out[0] if isinstance(out, tuple) else out).detach()
+                outs[i] = o if resident else stager.to_host(o)
+                groups.clear()
+                keep_alive.clear()
     for h in hooks:
         h.remove()
     return outs, stats, hess, leader_of
@@ -554,9 +570,11 @@ def calibrate_layerwise(
         members: dict[str, list[str]] = {}
         for n in linears:
             members.setdefault(lead[n], []).append(n)
-        items = []
+        t4 = time.perf_counter()
         for ld, names in members.items():
             st = merged[ld] if merged[ld].n > 0 else None
+            # One group at a time: a layer of 512 experts is 163 GB of fp32 weights, which
+            # on top of a 331 GB model pushes the host into swap.
             ws = {
                 n: layer.get_submodule(n).weight.detach().float().cpu() for n in names
             }
@@ -566,21 +584,24 @@ def calibrate_layerwise(
                 full = linears[n]
                 if st is None:
                     log(f"warning: {full} saw no calibration tokens; data-free weights")
-                items.append((full, ws[n], st, transform, counts[n]))
+                tables[full] = build_table(full, ws[n], st, cfg, ex, transform, counts[n])
                 if expert_parts(n) is not None:
                     expert_counts[full] = counts[n]
                     if n in fallback:
                         expert_fallback.add(full)
-        for name, w, st, transform, count in items:
-            tables[name] = build_table(name, w, st, cfg, ex, transform, count)
-        tm["tables"] += time.perf_counter() - t3
+            del ws
+        tm["tables"] += time.perf_counter() - t4
         sink.layer(
             li,
             [[linears[n] for n in names] for names in members.values()],
             {linears[n]: counts[n] for n in linears},
             {linears[n] for n in fallback},
         )
-        log(f"layer {li}: {len(linears)} linears tabulated")
+        log(
+            f"layer {li}: {len(linears)} linears tabulated "
+            f"(forward {t1 - t0:.0f}s, merge {t2 - t1:.0f}s, write {t3 - t2:.0f}s, "
+            f"tables {time.perf_counter() - t4:.0f}s)"
+        )
     log(
         "phase 1 breakdown (s): "
         + ", ".join(f"{k} {v:.1f}" for k, v in tm.items())
