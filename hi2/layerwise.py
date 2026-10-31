@@ -11,6 +11,7 @@ configuration is not known until the global allocation.
 """
 
 import contextlib
+import gc
 import copy
 import json
 import os
@@ -251,6 +252,32 @@ def _merge(results, linears, k_of, primary, want_h, min_tokens, log=print):
                 f"topped up with the layer average (expert:tokens {' '.join(short)})"
             )
     return lead, stats, hess, counts, fallback
+
+
+def _trim_host() -> None:
+    """Return freed host arenas to the OS after a layer pass.
+
+    Eight threads each deep-copy a 4.8 GiB layer and move it to their device; glibc keeps
+    the freed arenas, so RSS grew by a layer's worth per layer and the 331 GB model plus the
+    n-gram pages hit the OOM killer at layer 5. ``malloc_trim`` releases them."""
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
+
+
+def _rss_gib() -> int:
+    """This process's resident size in GiB (0 where /proc is absent)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) >> 20
+    except OSError:
+        pass
+    return 0
 
 
 def _expand_batch(kwargs, n: int):
@@ -576,7 +603,10 @@ def calibrate_layerwise(
             results, linears, k_of, ex.primary, want_h, cfg.expert_min_tokens, log
         )
         del results
+        gc.collect()
+        _trim_host()
         t2 = time.perf_counter()
+        log(f"  rss after pass: {_rss_gib()} GiB")
         if want_h:
             sink.hessians(lead, hess, linears)
         del hess
@@ -605,17 +635,29 @@ def calibrate_layerwise(
                     if n in fallback:
                         expert_fallback.add(full)
             del ws
+        gc.collect()
+        _trim_host()
         tm["tables"] += time.perf_counter() - t4
+        log(f"  rss after tables: {_rss_gib()} GiB")
         sink.layer(
             li,
             [[linears[n] for n in names] for names in members.values()],
             {linears[n]: counts[n] for n in linears},
             {linears[n] for n in fallback},
         )
+        rss = 0
+        try:
+            with open("/proc/self/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        rss = int(line.split()[1]) >> 20
+                        break
+        except OSError:
+            pass
         log(
             f"layer {li}: {len(linears)} linears tabulated "
             f"(forward {t1 - t0:.0f}s, merge {t2 - t1:.0f}s, write {t3 - t2:.0f}s, "
-            f"tables {time.perf_counter() - t4:.0f}s)"
+            f"tables {time.perf_counter() - t4:.0f}s, rss {rss} GiB)"
         )
     log(
         "phase 1 breakdown (s): "
