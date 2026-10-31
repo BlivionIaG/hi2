@@ -164,7 +164,11 @@ def _run(
             # the Python dispatch of a 512-expert layer spends its time. The statistics
             # are the same sums; the sharing groups are decided on the batch's inputs.
             xs = torch.cat([hidden[i] for i in items], dim=0)
-            out = layer(stager.to_device(xs, dev, dtype), **kw)
+            # capture_inputs ran one sequence at a time, so the mask and the rotary
+            # embeddings it kept carry a batch of 1. Every sequence is its own causal
+            # window of the same length, so they expand along the batch dim unchanged;
+            # without this a QSA layer indexes visible_token_indices[1] on a size-1 batch.
+            out = layer(stager.to_device(xs, dev, dtype), **_expand_batch(kw, len(items)))
             o = (out[0] if isinstance(out, tuple) else out).detach()
             del xs
             for k, i in enumerate(items):
@@ -247,6 +251,19 @@ def _merge(results, linears, k_of, primary, want_h, min_tokens, log=print):
                 f"topped up with the layer average (expert:tokens {' '.join(short)})"
             )
     return lead, stats, hess, counts, fallback
+
+
+def _expand_batch(kwargs, n: int):
+    """Broadcast the batch-1 tensors of ``capture_inputs``' kwargs to ``n`` sequences."""
+
+    def one(v):
+        if torch.is_tensor(v) and v.dim() >= 2 and v.shape[0] == 1:
+            return v.expand(n, *v.shape[1:])
+        if isinstance(v, (tuple, list)):
+            return type(v)(one(x) for x in v)
+        return v
+
+    return {k: one(v) for k, v in kwargs.items()}
 
 
 def _device_pass(
