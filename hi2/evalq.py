@@ -7,6 +7,7 @@ The quantised weights are dequantised back to dense tensors and run through the
 original architecture (a numerical check of the format, not a kernel test).
 """
 
+import os
 import shutil
 from pathlib import Path
 
@@ -51,7 +52,8 @@ def evaluate(
     devices = [d for d in device.split(",") if d]
     tok = AutoTokenizer.from_pretrained(src)
     ids = load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens)
-    _shrink_ngram_embedding(log)
+    if os.environ.get("HI2_NGRAM_MMAP"):
+        _shrink_ngram_embedding(log)
     model, first = _place(
         AutoModelForCausalLM.from_pretrained(src, dtype=getattr(torch, dtype)).eval(),
         devices,
