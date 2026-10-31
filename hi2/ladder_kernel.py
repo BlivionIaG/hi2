@@ -43,12 +43,11 @@ _HIP = r"""
 // One thread per (row, block): the block is [B] consecutive floats.
 __global__ void ladder_grid_k(const float* __restrict__ wb, const float* __restrict__ db,
                               const float* __restrict__ grid, int G, int n, int nb, int B,
-                              float* __restrict__ out_lo, float* __restrict__ out_st,
-                              float* __restrict__ out_err) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  int total = gridDim.x * blockDim.x;
+                              long total, float* __restrict__ out_lo,
+                              float* __restrict__ out_st, float* __restrict__ out_err) {
+  long i = (long)blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= total) return;
-  int blk = i % nb;
+  int blk = (int)(i % nb);
   const float* w = wb + (long)i * B;
   const float* d = db + (long)blk * B;
 
@@ -97,7 +96,7 @@ void ladder_grid(torch::Tensor wb, torch::Tensor db, torch::Tensor grid, int64_t
   long blocks = (total + threads - 1) / threads;
   ladder_grid_k<<<(int)blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
       wb.data_ptr<float>(), db.data_ptr<float>(), grid.data_ptr<float>(), G, (int)n,
-      nb, B, lo.data_ptr<float>(), st.data_ptr<float>(), err.data_ptr<float>());
+      nb, B, total, lo.data_ptr<float>(), st.data_ptr<float>(), err.data_ptr<float>());
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 """

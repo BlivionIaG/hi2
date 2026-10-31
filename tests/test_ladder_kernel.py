@@ -47,7 +47,9 @@ def _reference_grid(wb, db, n, grid):
 def test_grid_matches_the_reference():
     dev = _device()
     torch.manual_seed(0)
-    wb = torch.randn(256, 640, 16, dtype=torch.float32, device=dev)
+    # 101 rows x 640 blocks is not a multiple of the 256-thread block, so the tail
+    # threads must return instead of reading past the tile.
+    wb = torch.randn(101, 640, 16, dtype=torch.float32, device=dev)
     db = torch.rand(640, 16, dtype=torch.float32, device=dev) + 0.5
     grid = EFFORT["normal"]["grid"]
 
