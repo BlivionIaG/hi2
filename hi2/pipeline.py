@@ -3,6 +3,7 @@
 """The three phases: tabulate (calibration), allocate (global), encode (write)."""
 
 import json
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -173,18 +174,95 @@ def _phase1_key(rc: RunConfig) -> dict:
     }
 
 
+def _shrink_ngram_embedding(log=print) -> None:
+    """Build the PLE n-gram embedding as a 1x1 placeholder while loading.
+
+    A 320M-row table would be allocated and randomly initialized by
+    ``_initialize_missing_keys`` (95 GiB, tens of minutes) when the checkpoint omits it.
+    The id computation (head sizes, offsets) still comes from the real config; only the
+    embedding itself is replaced, and :func:`_attach_mmap_ngram` swaps in the mmap table
+    afterwards."""
+    from transformers.models.qwen4_exp import modeling_qwen4_exp as M
+
+    orig = M.Qwen4ExpTextNGramEmbedding.__init__
+    if getattr(orig, "_hi2_shrunk", False):
+        return
+
+    def init(self, *args, **kwargs):
+        orig(self, *args, **kwargs)
+        self.ngram_embedding = torch.nn.Embedding(1, 1)
+
+    init._hi2_shrunk = True  # type: ignore[attr-defined]
+    M.Qwen4ExpTextNGramEmbedding.__init__ = init
+    log("ngram: embedding placeholder installed before load")
+
+
+_NGRAM_MMAP: dict[str, tuple[torch.Tensor, object, torch.dtype]] = {}
+
+
+class _MmapEmbedding(torch.nn.Module):
+    """Gather from a disk-backed table kept outside the module tree.
+
+    The table lives in ``_NGRAM_MMAP`` rather than on the module: the layer-wise pass
+    deep-copies every layer once per device, and a 95 GiB tensor attribute would be
+    copied with it."""
+
+    def __init__(self, key: str):
+        super().__init__()
+        self.key = key
+
+    @property
+    def weight(self):
+        return _NGRAM_MMAP[self.key][0]
+
+    def forward(self, ids):
+        table, _, dtype = _NGRAM_MMAP[self.key]
+        return torch.nn.functional.embedding(ids, table).to(dtype)
+
+
+def _attach_mmap_ngram(model, log=print) -> None:
+    """Attach the PLE n-gram table from ``$HI2_NGRAM_MMAP`` instead of RAM.
+
+    The table comes from a safetensors file as a zero-copy tensor, so 95 GiB costs page
+    cache, not resident memory. The gather casts to the model dtype, which keeps an fp16
+    run reading a bf16 file."""
+    path = os.environ.get("HI2_NGRAM_MMAP")
+    if not path:
+        return
+    from safetensors import safe_open
+
+    parents = [m for m in model.modules() if hasattr(m, "ngram_embedding")]
+    if not parents:
+        log("ngram mmap: no module holds an ngram_embedding")
+        return
+    handle = safe_open(path, "pt")
+    key = next(iter(handle.keys()))
+    table = handle.get_tensor(key)
+    dtype = next(model.parameters()).dtype
+    _NGRAM_MMAP[path] = (table, handle, dtype)
+    for parent in parents:
+        parent.ngram_embedding = _MmapEmbedding(path)
+    log(
+        f"ngram mmap: {key} {tuple(table.shape)} {table.dtype} from {path} "
+        f"(cast to {dtype} per gather)"
+    )
+
+
 def _load_model(rc: RunConfig, log=print):
     """The HF model in RAM, with fused 3-D experts replaced by per-expert Linears."""
     from transformers import AutoModelForCausalLM
 
     from .moe import check_unfused, unfuse_experts
 
+    if os.environ.get("HI2_NGRAM_MMAP"):
+        _shrink_ngram_embedding(log)
     model = AutoModelForCausalLM.from_pretrained(
         rc.src,
         dtype=getattr(torch, rc.compute_dtype),
         low_cpu_mem_usage=True,
         ignore_mismatched_sizes=True,  # the source may omit the excluded n-gram table
     ).eval()
+    _attach_mmap_ngram(model, log)
     if unfuse_experts(model):
         check_unfused(model, rc.src, make_resolver(weight_map(rc.src)), log)
     return model
