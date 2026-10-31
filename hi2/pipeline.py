@@ -182,7 +182,10 @@ def _shrink_ngram_embedding(log=print) -> None:
     The id computation (head sizes, offsets) still comes from the real config; only the
     embedding itself is replaced, and :func:`_attach_mmap_ngram` swaps in the mmap table
     afterwards."""
-    from transformers.models.qwen4_exp import modeling_qwen4_exp as M
+    try:
+        from transformers.models.qwen4_exp import modeling_qwen4_exp as M
+    except ImportError:
+        return  # not a Qwen4Exp checkpoint
 
     orig = M.Qwen4ExpTextNGramEmbedding.__init__
     if getattr(orig, "_hi2_shrunk", False):

@@ -46,13 +46,17 @@ def evaluate(
 ) -> dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    from .pipeline import _attach_mmap_ngram, _shrink_ngram_embedding
+
     devices = [d for d in device.split(",") if d]
     tok = AutoTokenizer.from_pretrained(src)
     ids = load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens)
+    _shrink_ngram_embedding(log)
     model, first = _place(
         AutoModelForCausalLM.from_pretrained(src, dtype=getattr(torch, dtype)).eval(),
         devices,
     )
+    _attach_mmap_ngram(model, log)
     ref_logp = []
     for i in range(ids.shape[0]):
         lg = model(ids[i : i + 1].to(first)).logits[0].float()
@@ -72,6 +76,7 @@ def evaluate(
             ).eval(),
             devices,
         )
+        _attach_mmap_ngram(model, log)
     finally:
         shutil.rmtree(dense, ignore_errors=True)
     nll_ref = nll_q = kl = agree = acc = 0.0
