@@ -58,15 +58,23 @@ def find_layers(model: nn.Module) -> tuple[str, nn.ModuleList]:
     raise ValueError(f"cannot find the decoder layers (tried {LAYER_PATHS})")
 
 
-def to_device(obj, dev):
+def to_device(obj, dev, stager=None):
+    """Move ``obj`` to ``dev``, staging host tensors through ``stager`` when given.
+
+    A plain ``.to(dev)`` copies from pageable host memory. The driver on the build
+    server intermittently faults on a host page a GPU is reading that way ("page not
+    present or supervisor privilege") after a couple of hours, which is why every
+    host->device copy in this module goes through the pinned window."""
     if isinstance(obj, torch.Tensor):
+        if stager is not None and obj.device.type == "cpu":
+            return stager.to_device(obj, dev)
         return obj.to(dev)
     if isinstance(obj, tuple):
-        return tuple(to_device(o, dev) for o in obj)
+        return tuple(to_device(o, dev, stager) for o in obj)
     if isinstance(obj, list):
-        return [to_device(o, dev) for o in obj]
+        return [to_device(o, dev, stager) for o in obj]
     if isinstance(obj, dict):
-        return {k: to_device(v, dev) for k, v in obj.items()}
+        return {k: to_device(v, dev, stager) for k, v in obj.items()}
     return obj
 
 
@@ -151,13 +159,13 @@ def _run(
     for n, mod in layer.named_modules():
         if n in linears:
             hooks.append(mod.register_forward_pre_hook(make_hook(n)))
-    kw = to_device(kwargs, dev)
-    outs = {}
     first = next(layer.parameters(), None)
     dtype = (
         None if first is None else first.dtype
     )  # buffers may be bf16 for an fp32 layer
     stager = PinnedWindow()
+    kw = to_device(kwargs, dev, stager)
+    outs = {}
     with torch.no_grad():
         if len(items) > 1 and os.environ.get("HI2_LAYER_BATCH", "1") != "0":
             # One batched forward per device instead of one per sequence: a routed expert
