@@ -40,8 +40,8 @@ root, operation, request, key = json.loads(sys.argv[1])
 print(json.dumps(JobStore(Path(root)).submit(operation, request, key)), flush=True)
 """
 
-# Launch the production supervisor and worker with timing faults only; numerical
-# execution, validation, atomic publication, signals and ownership stay real.
+# Launch the production supervisor and worker with timing/signal faults only;
+# numerical execution, validation, atomic publication and ownership stay real.
 FAULT_SUPERVISOR = """
 import sys
 from hi2 import job_worker
@@ -56,6 +56,7 @@ job_worker._command = faulted_command
 raise SystemExit(job_worker.main())
 """
 FAULT_WORKER = """
+import signal
 import sys
 from pathlib import Path
 from hi2 import job_worker, runtime
@@ -68,7 +69,8 @@ if boundary == "log_rollover":
 
 def pause():
     with Path(fifo).open("rb", buffering=0) as stream:
-        stream.read(1)
+        if stream.read(1) == b"I":
+            signal.raise_signal(signal.SIGINT)
 
 read_run = runtime.read_run
 def read_after_dispatch(workdir):
@@ -370,9 +372,12 @@ def test_committed_quantization_wins_dispatch_interruption(
         assert store.status(job_id)["ownership"]["worker"]
         assert _sql(store, "SELECT resource FROM leases WHERE job_id = ?", (job_id,))
         if interruption == "sigint":
-            # Isolate SIGINT receipt handling from cancellation escalation.
-            # The separate cancel case may terminate before a receipt is written.
-            os.kill(row["worker_pid"], signal.SIGINT)
+            # Wake the FIFO read and raise SIGINT on the worker's main thread.
+            # Process-directed SIGINT need not interrupt that thread's read.
+            # The separate cancel case exercises external signal escalation.
+            fifo = tmp_path / "commit-boundary-barrier" / "config.json"
+            with fifo.open("wb", buffering=0) as stream:
+                stream.write(b"I")
         else:
             ack = store.cancel(job_id)
             assert ack["state"] == "cancelling" and ack["ownership"]["worker"]
