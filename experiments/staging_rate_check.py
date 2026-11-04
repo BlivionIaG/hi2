@@ -92,9 +92,15 @@ def main() -> None:
     d = _median_time(lambda: w.to(dev))
     s = _median_time(lambda: PinnedWindow().to_device(w, dev))
     sl = _median_time(lambda: _staged_direct_into_slice(w, dev))
-    print(f"  {'direct .to(device)':22s} {d * 1000:8.1f} ms ({nb / 2**30 / d:5.2f} GiB/s)")
-    print(f"  {'pinned staging':22s} {s * 1000:8.1f} ms ({nb / 2**30 / s:5.2f} GiB/s)   {s / d:4.2f}x")
-    print(f"  {'staged, no temp':22s} {sl * 1000:8.1f} ms ({nb / 2**30 / sl:5.2f} GiB/s)   {sl / d:4.2f}x")
+    print(
+        f"  {'direct .to(device)':22s} {d * 1000:8.1f} ms ({nb / 2**30 / d:5.2f} GiB/s)"
+    )
+    print(
+        f"  {'pinned staging':22s} {s * 1000:8.1f} ms ({nb / 2**30 / s:5.2f} GiB/s)   {s / d:4.2f}x"
+    )
+    print(
+        f"  {'staged, no temp':22s} {sl * 1000:8.1f} ms ({nb / 2**30 / sl:5.2f} GiB/s)   {sl / d:4.2f}x"
+    )
 
     layer = _layer()
     nb = _bytes(layer)
@@ -108,9 +114,15 @@ def main() -> None:
         return time.time() - t0
 
     d = statistics.median([timed(lambda m: m.to(dev)) for _ in range(REPEATS)])
-    s = statistics.median([timed(lambda m: module_to_device(m, dev)) for _ in range(REPEATS)])
-    print(f"  {'direct .to(device)':22s} {d * 1000:8.1f} ms ({nb / 2**30 / d:5.2f} GiB/s)")
-    print(f"  {'pinned staging':22s} {s * 1000:8.1f} ms ({nb / 2**30 / s:5.2f} GiB/s)   {s / d:4.2f}x")
+    s = statistics.median(
+        [timed(lambda m: module_to_device(m, dev)) for _ in range(REPEATS)]
+    )
+    print(
+        f"  {'direct .to(device)':22s} {d * 1000:8.1f} ms ({nb / 2**30 / d:5.2f} GiB/s)"
+    )
+    print(
+        f"  {'pinned staging':22s} {s * 1000:8.1f} ms ({nb / 2**30 / s:5.2f} GiB/s)   {s / d:4.2f}x"
+    )
 
 
 if __name__ == "__main__":

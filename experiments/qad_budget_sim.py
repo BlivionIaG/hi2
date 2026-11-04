@@ -183,7 +183,9 @@ def main(argv=None):
     ap.add_argument("--min-steps", type=int, default=None)
     ap.add_argument("--eval-every", type=int, default=None)
     ap.add_argument("--steps", type=int, default=None)
-    ap.add_argument("--layers", type=int, default=0, help="only replay the first N layers")
+    ap.add_argument(
+        "--layers", type=int, default=0, help="only replay the first N layers"
+    )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -258,7 +260,7 @@ def main(argv=None):
     print()
     print("| layer | allotment | spent | early stop | gain | nMSE given up |")
     print("| --- | --- | --- | --- | --- | --- |")
-    for r, d in zip(rows, layers):
+    for r, _d in zip(rows, layers):
         up = r["val_final"] - r["val_full"]
         print(
             f"| {r['index']} | {r['allot']} | {r['spent']} | "

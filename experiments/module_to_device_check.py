@@ -55,11 +55,11 @@ def main() -> int:
     module_to_device(b, dev)
 
     ok = True
-    for (na, pa), (nb, pb) in zip(a.named_parameters(), b.named_parameters()):
+    for (na, pa), (_nb, pb) in zip(a.named_parameters(), b.named_parameters()):
         good = pa.shape == pb.shape and pa.dtype == pb.dtype and bool((pa == pb).all())
         ok &= good
         print(f"param {na:<14} identical: {good}  ({tuple(pa.shape)} {pa.dtype})")
-    for (na, ba), (nb, bb) in zip(a.named_buffers(), b.named_buffers()):
+    for (na, ba), (_nb, bb) in zip(a.named_buffers(), b.named_buffers()):
         good = ba.shape == bb.shape and ba.dtype == bb.dtype and bool((ba == bb).all())
         ok &= good
         print(f"buffer {na:<14} identical: {good}  ({tuple(ba.shape)} {ba.dtype})")

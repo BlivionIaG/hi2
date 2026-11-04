@@ -16,13 +16,13 @@ import torch
 
 from .encode import encode_rows
 from .executor import Executor, activate
-from .pinned import PinnedWindow
 from .format import (
     GROUP,
     HI2Tensor,
     assemble,
     fwht_groups,
 )
+from .pinned import PinnedWindow
 from .stats import ColumnStats
 
 ALL_CANDIDATES = [(nb, b) for nb in (2, 4) for b in (16, 32, 64)]
@@ -362,7 +362,9 @@ def encode_many(
                     enc = encode_rows(wt[rows.to(dev)], d, nb, b, cfg.effort)
                     out.append((rows + lo, enc.codes, enc.params, enc.consts))
                     if r.comp_out is not None:
-                        comps.append((ri, rows + lo, stager.to_host(wt[rows.to(dev)].float())))
+                        comps.append(
+                            (ri, rows + lo, stager.to_host(wt[rows.to(dev)].float()))
+                        )
         want = any(reqs[ri].comp_out is not None for ri, _ in where)
         encs = encode_jobs_gptq(jobs, cfg.effort, comp=want) if jobs else []
         slot = {
@@ -414,7 +416,11 @@ def encode_many(
         t = r.table
         nbits = torch.tensor([t.candidates[i][0] for i in r.picks.tolist()])
         block = torch.tensor([t.candidates[i][1] for i in r.picks.tolist()])
-        out.append(assemble(pieces, nbits, block, t.had, t.shape[1], t.col_scale, stager=stager))
+        out.append(
+            assemble(
+                pieces, nbits, block, t.had, t.shape[1], t.col_scale, stager=stager
+            )
+        )
     return out
 
 
@@ -492,7 +498,12 @@ def encode_with_picks_reference(
             else:
                 enc = encode_rows(wt[rows.to(dev)], d, nb, b, cfg.effort)
             pieces.append(
-                (rows + lo, stager.to_host(enc.codes), stager.to_host(enc.params), stager.to_host(enc.consts))
+                (
+                    rows + lo,
+                    stager.to_host(enc.codes),
+                    stager.to_host(enc.params),
+                    stager.to_host(enc.consts),
+                )
             )
             if comp_out is not None:
                 c = enc.comp if enc.comp is not None else wt[rows.to(dev)]

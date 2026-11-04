@@ -11,8 +11,8 @@ configuration is not known until the global allocation.
 """
 
 import contextlib
-import gc
 import copy
+import gc
 import json
 import os
 import time
@@ -25,9 +25,9 @@ from torch import nn
 from .calibrate import Config, build_table, shared_transform
 from .checkpoint import is_eligible, table_hessian_path, table_stats_path
 from .executor import Executor, activate
-from .pinned import PinnedWindow, module_to_device
 from .hessian import HessianStats
 from .moe import blend, coverage, expert_parts, group_key, sibling_leader
+from .pinned import PinnedWindow, module_to_device
 from .stats import ColumnStats
 
 LAYER_PATHS = (
@@ -177,7 +177,9 @@ def _run(
             # embeddings it kept carry a batch of 1. Every sequence is its own causal
             # window of the same length, so they expand along the batch dim unchanged;
             # without this a QSA layer indexes visible_token_indices[1] on a size-1 batch.
-            out = layer(stager.to_device(xs, dev, dtype), **_expand_batch(kw, len(items)))
+            out = layer(
+                stager.to_device(xs, dev, dtype), **_expand_batch(kw, len(items))
+            )
             o = (out[0] if isinstance(out, tuple) else out).detach()
             del xs
             for k, i in enumerate(items):
@@ -637,7 +639,9 @@ def calibrate_layerwise(
                 full = linears[n]
                 if st is None:
                     log(f"warning: {full} saw no calibration tokens; data-free weights")
-                tables[full] = build_table(full, ws[n], st, cfg, ex, transform, counts[n])
+                tables[full] = build_table(
+                    full, ws[n], st, cfg, ex, transform, counts[n]
+                )
                 if expert_parts(n) is not None:
                     expert_counts[full] = counts[n]
                     if n in fallback:

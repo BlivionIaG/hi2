@@ -51,7 +51,9 @@ class PinnedWindow:
 
     def _rows(self, src: torch.Tensor) -> int:
         """How many leading rows fit in the window."""
-        per_row = src[0].numel() * src.element_size() if src.dim() else src.element_size()
+        per_row = (
+            src[0].numel() * src.element_size() if src.dim() else src.element_size()
+        )
         if per_row <= 0:
             return 1
         return max(1, self.nbytes // per_row)

@@ -83,7 +83,9 @@ def test_budget_spreads_the_steps_it_has_and_weights_by_the_previous_gain():
 
 def test_early_stop_halts_a_layer_that_stops_improving(tmp_path):
     layers = parse(_log(tmp_path))[2]
-    cfg = dict(steps=300, budget=1.0, min_gain=0.01, min_steps=75, eval_every=50, evals=4)
+    cfg = dict(
+        steps=300, budget=1.0, min_gain=0.01, min_steps=75, eval_every=50, evals=4
+    )
     _, rows = simulate(layers, cfg)
     # layer 0 gains 5 % a step at first and less than 1 % after 150 steps: it stops at 200
     assert rows[0]["spent"] == 200
@@ -123,4 +125,6 @@ def test_the_budget_mirrors_the_one_of_hi2():
             a, b = mine.allot(), theirs.allot()
             assert a == b, f"layer {i}: {a} != {b}"
             mine.record(a, 0.1 + 0.01 * i)
-            theirs.record({"steps": a, "val_before": 1.0, "val_after": 1.0 - 0.1 - 0.01 * i})
+            theirs.record(
+                {"steps": a, "val_before": 1.0, "val_after": 1.0 - 0.1 - 0.01 * i}
+            )

@@ -8,6 +8,17 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e ".[test]" ruff
+      - run: pip install -e ".[test,mcp]" ruff
       - run: ruff check . && ruff format --check .
-      - run: python -m pytest -q
+      - name: Run offline CPU and MCP regressions
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          TOKENIZERS_PARALLELISM: "false"
+          CUDA_VISIBLE_DEVICES: ""
+          HIP_VISIBLE_DEVICES: ""
+          ROCR_VISIBLE_DEVICES: ""
+        run: python -m pytest -q -rs

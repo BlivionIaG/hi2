@@ -83,7 +83,9 @@ def main() -> int:
     staged = stager.to_device(big, dev)
     good = same(direct, staged)
     ok &= good
-    print(f"host->device  {big.numel() * 4 / 2**20:.0f} MiB (chunked)  identical: {good}")
+    print(
+        f"host->device  {big.numel() * 4 / 2**20:.0f} MiB (chunked)  identical: {good}"
+    )
 
     # a whole module, the way the pipeline moves a decoder layer onto a card
     mod = torch.nn.Sequential(
@@ -93,9 +95,7 @@ def main() -> int:
     ref = [p.detach().clone() for p in mod.parameters()]
     stager2 = PinnedWindow(args.window)
     module_to_device(mod, dev, dtype=torch.float32, stager=stager2)
-    good = all(
-        same(a, b.detach()) for a, b in zip(ref, mod.parameters())
-    )
+    good = all(same(a, b.detach()) for a, b in zip(ref, mod.parameters()))
     ok &= good
     print(f"module->device (staged)      identical: {good}")
 
@@ -110,10 +110,14 @@ def main() -> int:
     # the cost
     t_direct = timeit(lambda: src.to(dev), args.repeat)
     t_staged = timeit(lambda: stager.to_device(src, dev), args.repeat)
-    print(f"\nhost->device  direct {t_direct * 1e3:7.2f} ms   staged {t_staged * 1e3:7.2f} ms")
+    print(
+        f"\nhost->device  direct {t_direct * 1e3:7.2f} ms   staged {t_staged * 1e3:7.2f} ms"
+    )
     t_direct = timeit(lambda: dev_src.cpu(), args.repeat)
     t_staged = timeit(lambda: stager.to_host(dev_src), args.repeat)
-    print(f"device->host  direct {t_direct * 1e3:7.2f} ms   staged {t_staged * 1e3:7.2f} ms")
+    print(
+        f"device->host  direct {t_direct * 1e3:7.2f} ms   staged {t_staged * 1e3:7.2f} ms"
+    )
 
     print("\nOK" if ok else "\nMISMATCH")
     return 0 if ok else 1

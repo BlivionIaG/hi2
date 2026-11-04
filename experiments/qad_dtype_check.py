@@ -90,12 +90,11 @@ def latent_grads(layer, fq, xs, kw, dev, dtype):
     torch.autograd.backward(
         list(w.values()), [wd[k].grad.float() for k in w if wd[k].grad is not None]
     )
-    grads = {
+    return {
         f"{n}.{i}": (p.grad.detach().clone() if p.grad is not None else None)
         for n, m in fq.items()
         for i, p in enumerate(m.param_groups()[0])
     }
-    return grads
 
 
 def rel_diff(a, b):
@@ -163,7 +162,9 @@ def main() -> None:
         for x in xs:
             out = layer(x, **kw)
             ys.append((out[0] if isinstance(out, tuple) else out).detach().clone())
-    layer = layer.cpu()  # the fake-quantised modules are built on the CPU, like the pipeline
+    layer = (
+        layer.cpu()
+    )  # the fake-quantised modules are built on the CPU, like the pipeline
 
     fq, names = build_fq(a.model, a.ckpt, layer, path, a.layer, dev)
     if not fq:
