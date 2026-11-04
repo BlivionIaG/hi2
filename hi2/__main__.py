@@ -8,19 +8,74 @@ calibration text is given (``--no-qad`` for PTQ only).
 
 import argparse
 import json
+import os
 import sys
+from contextlib import contextmanager, redirect_stdout
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-
-from .calibrate import SELECTABLE, Config
-from .checkpoint import DEFAULT_EXCLUDE, export_dense, verify_checkpoint
-from .encode import EFFORT
-from .evalq import evaluate
-from .pipeline import RunConfig, plan, run
-from .qad import PRESETS as QAD_PRESETS
-from .qad import make_config
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 # candidate presets: the (nbits, block) pairs each one removes
 CANDIDATE_PRESETS = {"all": set(), "lean": {(4, 16)}}
+
+# Names only: compute configuration and preset values stay in their owning modules.
+EFFORT_NAMES = ("fast", "normal", "max")
+QAD_PRESET_NAMES = ("fast", "default", "thorough")
+RESULT_SCHEMA_VERSION = 1
+
+
+class _UsageError(ValueError):
+    def __init__(self, message, command=None):
+        super().__init__(message)
+        self.command = command
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise _UsageError(message, self.prog.partition(" ")[2] or None)
+
+
+class _HelpFormatter(
+    argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter
+):
+    pass
+
+
+def _version() -> str:
+    try:
+        return f"hi2 {version('hi2')}"
+    except PackageNotFoundError:
+        return f"hi2 (uninstalled source checkout: {Path(__file__).parent.parent})"
+
+
+@contextmanager
+def _stderr_logs():
+    """Keep Python, subprocess and native stdout chatter off the result channel.
+
+    This is a process-wide CLI boundary, not a redirection for concurrent service
+    requests. Services should pass their own log callbacks to the core APIs.
+    """
+    import ctypes
+
+    # Native libraries may buffer C stdout even after their Python call returns.
+    fflush = ctypes.CDLL("msvcrt" if os.name == "nt" else None).fflush
+    fflush.argtypes = [ctypes.c_void_p]
+    fflush.restype = ctypes.c_int
+    sys.stdout.flush()
+    sys.stderr.flush()
+    fflush(None)
+    saved = os.dup(1)
+    try:
+        os.dup2(2, 1)
+        with redirect_stdout(sys.stderr):
+            try:
+                yield
+            finally:
+                sys.stdout.flush()
+                fflush(None)
+    finally:
+        os.dup2(saved, 1)
+        os.close(saved)
 
 
 def _ints(s: str) -> list[int]:
@@ -118,53 +173,120 @@ def _refine_passes(a, qc) -> int:
 
 
 def _tune_rc(a, rc):
-    """``--target-kld``: measure PTQ checkpoints at a few error ratios (one shared phase 1,
-    probe and encode pass per round), evaluate each, and return ``rc`` with the ratio
-    that meets the target (hi2.tune)."""
+    """Measure PTQ trials in an exclusively owned, disposable workspace."""
     import dataclasses
-    import shutil
 
     from .evalq import evaluate
+    from .paths import check_output_paths
+    from .pipeline import calib_paths, run
+    from .runtime import atomic_json
+    from .service import plan_tuning
     from .tune import START_RATIOS, tune
 
-    if a.eval_text is None or rc.calib is None:
-        raise SystemExit("--target-kld needs --calib and --eval-text")
-    if a.target_bpw is not None or a.max_error_ratio is not None:
-        raise SystemExit("--target-kld replaces --target-bpw and --max-error-ratio")
+    tuning_plan = plan_tuning(
+        rc,
+        target_kld=a.target_kld,
+        text=a.eval_text,
+        ratios=a.tune_ratios or START_RATIOS,
+        device=a.eval_device,
+        dtype=a.eval_dtype,
+        skip_tokens=a.eval_skip_tokens,
+    )
     if a.dry_run:
-        return dataclasses.replace(rc, max_error_ratio=START_RATIOS[0])
+        return tuning_plan
 
-    def measure(ratios):
-        ratios = list(ratios)
-        if len(ratios) == 1:  # a single ratio would use the final run's markers
-            ratios.append(ratios[0] * 1.5)
-        probe = dataclasses.replace(
-            rc,
-            dst=Path(str(rc.dst) + "-tune"),
-            qad=None,
-            target_bpw=None,
-            max_error_ratio=None,
-            max_error_ratios=ratios,
-        )
-        out = run(probe)["outputs"]
-        pts = []
-        for r in ratios:
-            d = Path(f"{probe.dst}-r{r:g}")
-            res = evaluate(
-                rc.src,
-                d,
-                a.eval_text,
-                device=a.eval_device,
-                skip_tokens=a.eval_skip_tokens,
-                dtype=a.eval_dtype,
-                log=lambda *_: None,
-            )
-            pts.append((r, res["kld_nats_per_token"], out[str(d)]["allocation_bpw"]))
-            shutil.rmtree(d, ignore_errors=True)
-        return pts
+    report_path = rc.dst.parent / (rc.dst.name + ".tune.json")
+    check_output_paths(
+        inputs=[rc.src, *calib_paths(rc.calib), a.eval_text],
+        outputs=[rc.dst, report_path],
+    )
+    rc.dst.parent.mkdir(parents=True, exist_ok=True)
+    trials = []
+    points = []
+    # Neither the final workdir nor a predictable <dst>-tune-r* path is disposable.
+    # Each round has its own markers; the persistent cache can still share phase 1.
+    with TemporaryDirectory(prefix=f".{rc.dst.name}-tune-", dir=rc.dst.parent) as tmp:
+        workspace = Path(tmp).resolve()
+        print(f"tuning workspace: {workspace}", file=sys.stderr)
 
-    fit = tune(measure, a.target_kld, a.tune_ratios or START_RATIOS)
-    (rc.dst.parent / (rc.dst.name + ".tune.json")).write_text(json.dumps(fit, indent=2))
+        def measure(ratios):
+            ratios = list(ratios)
+            if len(ratios) == 1:
+                ratios.append(ratios[0] * 1.5)
+            with TemporaryDirectory(prefix="round-", dir=workspace) as trial_tmp:
+                trial = Path(trial_tmp)
+                probe = dataclasses.replace(
+                    rc,
+                    dst=trial / "checkpoint",
+                    workdir=trial / "work",
+                    qad=None,
+                    target_bpw=None,
+                    max_error_ratio=None,
+                    max_error_ratios=ratios,
+                )
+                record = {"ratios": ratios, "path": str(trial), "status": "running"}
+                trials.append(record)
+                out = run(probe)["outputs"]
+                pts = []
+                for ratio in ratios:
+                    dst = Path(f"{probe.dst}-r{ratio:g}")
+                    res = evaluate(
+                        rc.src,
+                        dst,
+                        a.eval_text,
+                        device=a.eval_device,
+                        skip_tokens=a.eval_skip_tokens,
+                        dtype=a.eval_dtype,
+                        log=lambda *_: None,
+                    )
+                    point = (
+                        ratio,
+                        res["kld_nats_per_token"],
+                        out[str(dst)]["allocation_bpw"],
+                    )
+                    pts.append(point)
+                    points.append(point)
+                record["status"] = "completed"
+                return pts
+
+        try:
+            fit = tune(measure, a.target_kld, a.tune_ratios or START_RATIOS)
+            atomic_json(report_path, fit)
+            a.tune_report = str(report_path)
+        except BaseException as exc:
+            # Preserve small, unique diagnostics outside the disposable workspace,
+            # including partial measurements. Cleanup still belongs to TemporaryDirectory.
+            status = "interrupted" if isinstance(exc, KeyboardInterrupt) else "error"
+            if trials and trials[-1]["status"] == "running":
+                trials[-1]["status"] = status
+            diagnostics = {
+                "schema_version": RESULT_SCHEMA_VERSION,
+                "status": status,
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+                "workspace": str(workspace),
+                "target_kld": a.target_kld,
+                "trials": trials,
+                "points": points,
+            }
+            try:
+                with NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    prefix=f"{rc.dst.name}.tune-error-",
+                    suffix=".json",
+                    dir=rc.dst.parent,
+                    delete=False,
+                ) as diagnostic_file:
+                    json.dump(diagnostics, diagnostic_file, indent=2)
+                    a.tune_diagnostics = diagnostic_file.name
+                print(f"tuning diagnostics: {a.tune_diagnostics}", file=sys.stderr)
+            except OSError as diagnostic_error:
+                print(
+                    f"could not save tuning diagnostics: {diagnostic_error}",
+                    file=sys.stderr,
+                )
+            raise
+
     if fit["status"] != "ok":
         print(
             f"warning: target KLD {a.target_kld} is {fit['status']} the measured range; "
@@ -173,259 +295,336 @@ def _tune_rc(a, rc):
         )
     print(
         f"target KLD {a.target_kld}: error ratio {fit['ratio']:.2f}, about "
-        f"{fit['bpw']:.2f} bpw (PTQ-measured; QAD lowers the KLD further)",
+        f"{fit['bpw']:.2f} bpw (PTQ-measured; independently validate final QAD quality)",
         file=sys.stderr,
     )
     return dataclasses.replace(rc, max_error_ratio=fit["ratio"], max_error_ratios=None)
 
 
-def main(argv=None):
-    if hasattr(
-        sys.stdout, "reconfigure"
-    ):  # progress lines show up promptly in log files
-        sys.stdout.reconfigure(line_buffering=True)
-    ap = argparse.ArgumentParser(prog="hi2")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    q = sub.add_parser("quantize", help="HF checkpoint -> HI2 flex checkpoint")
-    q.add_argument("src", type=Path)
-    q.add_argument("dst", type=Path)
-    q.add_argument(
+def build_parser() -> argparse.ArgumentParser:
+    """Build help and parse arguments without importing any compute modules."""
+    ap = _Parser(
+        prog="hi2",
+        formatter_class=_HelpFormatter,
+        description="Prepare calibration data, plan and quantize HF checkpoints, then verify or evaluate.",
+        epilog=(
+            "Start here:\n"
+            "  hi2 calib calib.txt corpus.jsonl --holdout heldout.txt\n"
+            "  hi2 quantize MODEL OUT --calib calib.txt --dry-run\n"
+            "  hi2 quantize MODEL OUT --calib calib.txt --no-qad --devices cuda:0\n"
+            "  hi2 quantize MODEL OUT --devices cpu  # data-free PTQ\n\n"
+            "Calibrated quantization enables QAD and preset-dependent final-KL training;\n"
+            "--no-qad selects PTQ only. Auto devices means every visible GPU, else CPU.\n"
+            "Recovery: rerun the same command with the same workdir; do not change the\n"
+            "recipe when reusing resume state. See docs/usage.md and COMMAND --help.\n"
+            "--json emits one versioned result/error object; logs always go to stderr.\n"
+            "Help and version remain plain text, including with --json."
+        ),
+    )
+    ap.add_argument("--version", action="version", version=_version())
+    ap.add_argument(
+        "--json", action="store_true", help="versioned JSON result or error"
+    )
+    ap.add_argument(
+        "--quiet", action="store_true", help="suppress progress diagnostics"
+    )
+    ap.add_argument(
+        "--debug", action="store_true", help="include failure tracebacks on stderr"
+    )
+    ap.add_argument("--log-format", choices=("text", "jsonl"), default="text")
+    sub = ap.add_subparsers(dest="cmd", required=True, title="workflows")
+
+    def command(name, help):
+        parser = sub.add_parser(
+            name,
+            help=help,
+            description=help,
+            formatter_class=_HelpFormatter,
+            epilog=f"Examples and input formats: docs/usage.md ({name}).",
+        )
+        parser.add_argument(
+            "--json",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="versioned JSON result or error; diagnostics go to stderr",
+        )
+        parser.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS)
+        parser.add_argument("--debug", action="store_true", default=argparse.SUPPRESS)
+        parser.add_argument(
+            "--log-format", choices=("text", "jsonl"), default=argparse.SUPPRESS
+        )
+        return parser
+
+    q = command("quantize", "HF checkpoint -> HI2 flex checkpoint")
+    q.add_argument("src", type=Path, help="source HF model directory")
+    q.add_argument("dst", type=Path, help="output checkpoint directory")
+    common = q.add_argument_group("common workflow and resource controls")
+    common.add_argument(
+        "--calib",
+        default=None,
+        help=".txt or .jsonl with text fields; several paths may be comma-separated. "
+        "Omit for data-free PTQ. Prepare chat records with `hi2 calib` first",
+    )
+    common.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="check inputs and print the plan without quantizing",
+    )
+    common.add_argument(
+        "--devices",
+        default="auto",
+        help="auto uses every visible GPU, else CPU; cpu, cuda:0, or cuda:0,cuda:1 "
+        "(HIP on ROCm). Narrow auto with HIP_VISIBLE_DEVICES / CUDA_VISIBLE_DEVICES. "
+        "Several devices split calibration sequences and shard tensor rows",
+    )
+    common.add_argument(
         "--workdir",
         type=Path,
         default=None,
-        help="tables, statistics and resume state (default: <dst>.work)",
+        help="tables, statistics and resume state (when omitted: <dst>.work). "
+        "Resume by rerunning the same command",
     )
-    q.add_argument(
-        "--devices",
-        default="auto",
-        help="auto (default: every visible GPU, else CPU), cpu, cuda:0, or a list such as "
-        "cuda:0,cuda:1 (HIP on ROCm). Several devices split calibration sequences and "
-        "shard each tensor's rows",
+    common.add_argument(
+        "--qad",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="distill every layer after PTQ when calibrated; --no-qad = PTQ only. "
+        "Data-free runs fall back to PTQ. Adds training time and memory; docs/qad.md",
     )
-    q.add_argument(
-        "--cache-devices",
-        type=int,
-        default=0,
-        help="reuse cached statistics and probe made on this many devices, on fewer devices "
-        "(0 = the real count); the results of the cached phases are those of N devices",
+    common.add_argument(
+        "--qad-preset",
+        choices=QAD_PRESET_NAMES,
+        default="default",
+        help="layer-training budget; default/thorough also request whole-network "
+        "final-KL training, fast disables that phase",
     )
-    q.add_argument(
-        "--calib",
-        default=None,
-        help=".txt or .jsonl calibration text (several: comma-separated, concatenated "
-        "in order); omit for data-free",
-    )
-    q.add_argument(
-        "--calib-samples",
-        type=int,
-        default=128,
-        help="sequences of --seq-len tokens; 128 x 2048 = 262k tokens",
-    )
-    q.add_argument("--seq-len", type=int, default=2048)
-    q.add_argument(
+    common.add_argument(
         "--target-bpw",
         type=float,
         default=None,
-        help="model-wide bits per weight (global allocation); default is the "
-        "quality mode below",
+        help="model-wide bits per weight; replaces the automatic quality target",
     )
-    q.add_argument(
+    common.add_argument(
+        "--max-error-ratio",
+        type=_floats,
+        default=None,
+        help="quality target: fewest bits within this multiple of the best weighted "
+        "error; bpw is a result. Omit for the core recipe's automatic target "
+        "(shown by --dry-run). Several values a,b,c write <dst>-r<ratio> from one "
+        "phase 1/probe/encode pass, but repeat QAD for each output",
+    )
+
+    data = q.add_argument_group("calibration and persistent storage")
+    data.add_argument(
+        "--calib-samples",
+        type=int,
+        default=128,
+        help="calibration sequences of --seq-len tokens",
+    )
+    data.add_argument("--seq-len", type=int, default=2048, help="tokens per sequence")
+    data.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="persistent statistics/Hessians, tables and probe cache "
+        "(when omitted: $HI2_CACHE_DIR or ~/.cache/hi2); see `hi2 cache`",
+    )
+    data.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="keep statistics and Hessians in the workdir only",
+    )
+    data.add_argument(
+        "--moe-layout",
+        choices=("per-expert", "stacked"),
+        default="stacked",
+        help="expert layout on disk: one stack per layer/group or one tensor per "
+        "expert projection; identical weights, different loader costs (docs/moe.md)",
+    )
+
+    tuning = q.add_argument_group(
+        "expert: measured KLD target (additional PTQ/evaluation passes)"
+    )
+    tuning.add_argument(
         "--target-kld",
         type=float,
         default=None,
         metavar="KLD",
-        help="choose the quality target from a measured fidelity target: quantize (PTQ) at "
-        "a few error ratios, measure KL(original||quantized) per token on --eval-text, and "
-        "run with the largest ratio within KLD (0.01 is the distribution-lossless "
-        "threshold). Replaces --max-error-ratio / --target-bpw; needs --calib and "
-        "--eval-text (docs/usage.md)",
+        help="measure KL(original||quantized) on --eval-text for several PTQ ratios, "
+        "then run with the largest ratio within KLD. Replaces --target-bpw and "
+        "--max-error-ratio; needs --calib and --eval-text (docs/usage.md)",
     )
-    q.add_argument(
-        "--eval-text", type=Path, default=None, help="held-out text for --target-kld"
+    tuning.add_argument(
+        "--eval-text", type=Path, default=None, help="held-out text for tuning"
     )
-    q.add_argument("--eval-skip-tokens", type=int, default=0)
-    q.add_argument(
-        "--eval-device", default="cuda:0", help="device of the --target-kld evals"
+    tuning.add_argument(
+        "--eval-skip-tokens", type=int, default=0, help="leading eval tokens to skip"
     )
-    q.add_argument(
-        "--eval-dtype", choices=("float32", "float16", "bfloat16"), default="float32"
+    tuning.add_argument(
+        "--eval-device",
+        default="cuda:0",
+        help="tuning evaluation device; independent of --devices",
     )
-    q.add_argument(
+    tuning.add_argument(
+        "--eval-dtype",
+        choices=("float32", "float16", "bfloat16"),
+        default="float32",
+        help="tuning evaluation math dtype",
+    )
+    tuning.add_argument(
         "--tune-ratios",
         type=_floats,
         default=None,
-        help="first error ratios measured by --target-kld (default 2,4,8,16)",
+        help="first ratios a,b,c measured by --target-kld; omitted uses hi2.tune.START_RATIOS",
     )
-    q.add_argument(
-        "--max-error-ratio",
-        type=_floats,
-        default=None,
-        help="quality target: the fewest bits whose weighted error is at most this "
-        "multiple of the best achievable (rows that matter less get INT2, the rest "
-        "INT4); the bpw is a result. Default 6 with QAD, 4 for PTQ only. Several "
-        "values (a,b,c) write one checkpoint per ratio to <dst>-r<ratio> from one "
-        "phase 1, probe and encode pass",
-    )
-    q.add_argument(
+
+    encoding = q.add_argument_group("expert: encoding and candidate search")
+    encoding.add_argument(
         "--rotation",
         choices=("on", "auto", "off"),
         default="on",
-        help="Hadamard flags (default on; pairs with --smooth when calibrated)",
+        help="Hadamard flags; pairs with --smooth when calibrated",
     )
-    q.add_argument(
+    encoding.add_argument(
         "--smooth",
         type=float,
         default=0.5,
         help="smoothing exponent alpha (0 = off); needs --calib",
     )
-    q.add_argument(
+    encoding.add_argument(
         "--refine-passes",
         type=int,
         default=None,
-        help="sweeps of local code refinement after GPTQ (spec 8.9). Two sweeps lower the "
-        "KLD of a PTQ model by 3-13 percent for about 10 percent more encode time. Default 2 "
-        "without QAD, off with QAD (it does not combine with it); 0 = off",
+        help="local code refinement sweeps after GPTQ (spec 8.9); omitted uses two "
+        "for calibrated GPTQ without QAD or act-order, otherwise zero",
     )
-    q.add_argument(
+    encoding.add_argument(
         "--smooth-search",
         type=_floats,
         default=None,
-        help="per-tensor smoothing exponent (spec 8.5): try these values (a,b,c) and "
-        "--smooth for every tensor or shared input and keep the lowest-error one",
+        help="try these per-tensor smoothing exponents a,b,c plus --smooth (spec 8.5)",
     )
-    q.add_argument(
+    encoding.add_argument(
         "--rounding",
         choices=("gptq", "nearest"),
         default="gptq",
-        help="gptq (default) = Hessian-aware error-compensated rounding (spec 8.3), "
-        "falls back to nearest without --calib",
+        help="Hessian-aware error-compensated rounding (spec 8.3); data-free falls back to nearest",
     )
-    q.add_argument("--damp", type=float, default=0.01, help="Hessian damping for gptq")
-    q.add_argument(
+    encoding.add_argument(
+        "--damp", type=float, default=0.01, help="Hessian damping for GPTQ"
+    )
+    encoding.add_argument(
+        "--sequential",
+        action="store_true",
+        help="GPTQ on the quantized prefix: a second layerwise pass (spec 8.4); not with QAD",
+    )
+    encoding.add_argument(
+        "--act-order",
+        action="store_true",
+        help="round columns in descending Hessian-diagonal order; storage unchanged",
+    )
+    encoding.add_argument(
+        "--effort", choices=EFFORT_NAMES, default="normal", help="ladder search effort"
+    )
+    encoding.add_argument(
+        "--bits",
+        type=_ints,
+        default=[2, 4],
+        help="allowed code widths; 8 opts into INT8 rows",
+    )
+    encoding.add_argument(
+        "--blocks", type=_ints, default=[16, 32, 64], help="allowed block sizes"
+    )
+    encoding.add_argument(
+        "--candidates",
+        choices=sorted(CANDIDATE_PRESETS),
+        default="all",
+        help="preset on top of --bits/--blocks: lean drops INT4/B16 (docs/speed.md)",
+    )
+    encoding.add_argument("--include", default=None, help="regex: only these weights")
+    encoding.add_argument(
+        "--exclude",
+        default=None,
+        help="regex: keep dense; omitted uses the core exclusions for embeddings, "
+        "output head, norms, routers, indexers, convolutions and biases",
+    )
+    encoding.add_argument(
+        "--limit-layers", type=int, default=None, help="limit decoder layers"
+    )
+    encoding.add_argument(
+        "--compute-dtype",
+        choices=("float32", "float16", "bfloat16"),
+        default="float32",
+        help="calibration compute dtype",
+    )
+    encoding.add_argument("--int8-force", type=int, default=0, help=argparse.SUPPRESS)
+
+    probe = q.add_argument_group(
+        "expert: sensitivity, MoE statistics and cache precision"
+    )
+    probe.add_argument(
         "--sensitivity",
         choices=("none", "probe"),
         default=None,
-        help="probe = weight the allocation by each tensor's measured KL cost (spec 8.6); "
-        "default probe when calibrated with QAD on, else none",
+        help="weight allocation by measured per-tensor KL cost (spec 8.6); "
+        "omitted uses probe when calibrated with QAD, else none",
     )
-    q.add_argument("--sens-seqs", type=int, default=8)
-    q.add_argument("--sens-len", type=int, default=512)
-    q.add_argument(
+    probe.add_argument("--sens-seqs", type=int, default=8, help="probe sequences")
+    probe.add_argument(
+        "--sens-len", type=int, default=512, help="probe sequence length"
+    )
+    probe.add_argument(
         "--sens-batch",
         type=int,
         default=1,
-        help="probe sequences per forward pass (1 = exact original probe; more is "
-        "faster, logits round differently)",
+        help="sequences per probe forward pass; larger batches are faster but round differently",
     )
-    q.add_argument(
+    probe.add_argument(
         "--sens-floor",
         type=float,
         default=0.05,
         help="lower bound of a tensor weight relative to the median",
     )
-    q.add_argument(
+    probe.add_argument(
         "--sens-dtype",
         choices=("auto", "float32", "float16", "bfloat16"),
         default="auto",
-        help="dtype of the whole-model sensitivity probe: auto (default) uses float32 "
-        "when the model fits the probe placement, else float16; bfloat16 is emulated, "
-        "very slowly, on gfx1030",
+        help="whole-model probe dtype; auto uses float32 when it fits, otherwise float16. "
+        "bfloat16 is emulated very slowly on gfx1030",
     )
-    q.add_argument(
+    probe.add_argument(
         "--expert-min-tokens",
         type=float,
         default=2.0,
-        help="MoE: an expert routed fewer than this x its input width tokens tops its "
-        "statistics up with the layer average (0 = never)",
+        help="experts routed fewer than this x input-width tokens use layer-average "
+        "statistics to top up (0 = never)",
     )
-    q.add_argument(
+    probe.add_argument(
         "--expert-share-floor",
         type=float,
         default=0.05,
-        help="MoE: lower bound of an expert's routed-token share in its allocation weight",
+        help="lower bound of an expert's routed-token share in its allocation weight",
     )
-    q.add_argument(
-        "--sequential",
-        action="store_true",
-        help="gptq on the quantized prefix (spec 8.4): a second layerwise model pass",
+    probe.add_argument(
+        "--cache-devices",
+        type=int,
+        default=0,
+        help="reuse statistics/probe made with this many devices on fewer devices "
+        "(0 = real count); cached phases retain the original device count's results",
     )
-    q.add_argument(
-        "--act-order",
-        action="store_true",
-        help="round columns in descending Hessian-diagonal order (storage unchanged)",
-    )
-    q.add_argument("--effort", choices=list(EFFORT), default="normal")
-    q.add_argument(
-        "--bits",
-        type=_ints,
-        default=[2, 4],
-        help="allowed code widths (2,4 default; add 8 for INT8 rows)",
-    )
-    q.add_argument(
-        "--blocks", type=_ints, default=[16, 32, 64], help="allowed block sizes"
-    )
-    q.add_argument(
-        "--candidates",
-        choices=sorted(CANDIDATE_PRESETS),
-        default="all",
-        help="candidate preset on top of --bits/--blocks: lean drops INT4/B16, which "
-        "holds 0.1-0.8%% of the weights at 3-3.5 bpw (docs/speed.md)",
-    )
-    q.add_argument(
-        "--cache-dir",
-        type=Path,
-        default=None,
-        help="persistent cache of statistics/Hessians, tables and probe results "
-        "(default $HI2_CACHE_DIR or ~/.cache/hi2); see `hi2 cache`",
-    )
-    q.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="keep statistics and Hessians in the workdir only (the old layout)",
-    )
-    q.add_argument(
+    probe.add_argument(
         "--cache-fp16-above",
         type=int,
         default=0,
-        help="store cached Sigma in fp16 for inputs wider than this (halves the disk; "
-        "lossy, see docs/speed.md); 0 = fp32",
+        help="store cached Sigma in fp16 above this input width; lossy, halves disk (0 = fp32)",
     )
-    q.add_argument(
-        "--moe-layout",
-        choices=("per-expert", "stacked"),
-        default="stacked",
-        help="routed experts on disk: one stack per layer and gate_up/down group "
-        "(default; loads ~9x faster in the fork) or one HI2 tensor per expert "
-        "projection (docs/moe.md); the weights are identical",
-    )
-    q.add_argument("--int8-force", type=int, default=0, help=argparse.SUPPRESS)
-    q.add_argument("--include", default=None, help="regex: only these weights")
-    q.add_argument("--exclude", default=DEFAULT_EXCLUDE, help="regex: keep dense")
-    q.add_argument("--limit-layers", type=int, default=None)
-    q.add_argument(
-        "--compute-dtype", choices=("float32", "float16", "bfloat16"), default="float32"
-    )
-    g = q.add_argument_group("quantization-aware distillation (spec 13)")
-    g.add_argument(
-        "--qad",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="on by default: after PTQ, distill every layer against the unquantized model "
-        "(needs --calib; data-free runs fall back to PTQ). --no-qad = PTQ only. "
-        "See docs/qad.md",
-    )
-    g.add_argument(
-        "--qad-preset",
-        choices=list(QAD_PRESETS),
-        default="default",
-        help="fast | default | thorough (steps and sequences per layer)",
-    )
+
+    g = q.add_argument_group("expert: quantization-aware distillation (spec 13)")
     g.add_argument(
         "--qad-budget",
         type=float,
         default=None,
-        help="fraction of preset steps x layers to spend; layers that gain little get "
-        "fewer steps and stop early (preset default)",
+        help="fraction of preset steps x layers; low-gain layers stop early (preset default)",
     )
     g.add_argument(
         "--qad-samples",
@@ -434,167 +633,407 @@ def main(argv=None):
         help="training sequences of --seq-len tokens (preset default)",
     )
     g.add_argument(
-        "--qad-layers", default=None, help='layers to train, e.g. "0-5,9" (default all)'
+        "--qad-layers",
+        default=None,
+        help='layers to train, e.g. "0-5,9" (omitted: all)',
     )
     g.add_argument(
         "--qad-config",
         default=None,
-        help="JSON file of advanced QAD options (fields of hi2.qad.QadConfig)",
+        help="path to a JSON file of advanced hi2.qad.QadConfig options",
     )
     g.add_argument(
         "--qad-final-kl",
         type=int,
         default=None,
         metavar="STEPS",
-        help="after layer-wise QAD, STEPS optimizer steps of whole-network logit KL "
-        "training the ladder bytes and norm weights only (default 200 with the default "
-        "and thorough presets, 0 with fast; 0 turns it off; split over the devices when it does not fit one GPU; skipped if it "
-        "still does not fit; docs/lowbit.md)",
+        help="whole-network logit-KL optimizer steps after layer-wise QAD; omitted "
+        "uses the preset, 0 disables. Splits over devices if needed; may be skipped "
+        "if it still does not fit (docs/lowbit.md)",
     )
     g.add_argument(
         "--qad-dtype",
         choices=("float32", "float16", "bfloat16"),
         default=None,
-        help="math dtype of the QAD layer forward and backward (preset default: float32). "
-        "The latents, the ladder bytes and the loss stay float32; only the matrix products "
-        "of the layer change, so the matrix units of the GPU are used. The QAD is then not "
-        "bit-comparable with a float32 run; docs/qad.md",
+        help="layer forward/backward math dtype (preset default); latents, ladder "
+        "bytes and loss stay float32. Not bit-comparable across dtypes (docs/qad.md)",
     )
-    for flag, typ in (
-        ("--qad-kl-layers", int),
-        ("--qad-train-norms", str),
-        ("--qad-steps", int),
-        ("--qad-lr", float),
-        ("--qad-lr-params", float),
-        ("--qad-batch", int),
-        ("--qad-init", str),
+    for flag, typ, description in (
+        ("--qad-kl-layers", int, "last layers trained with logit KL"),
+        ("--qad-train-norms", str, "train norm weights (QadConfig boolean)"),
+        ("--qad-steps", int, "optimizer steps per layer"),
+        ("--qad-lr", float, "weight learning rate"),
+        ("--qad-lr-params", float, "ladder-parameter learning rate"),
+        ("--qad-batch", int, "training sequences per batch"),
+        ("--qad-init", str, "latent initialization (QadConfig init)"),
     ):
-        g.add_argument(flag, type=typ, default=None, help=argparse.SUPPRESS)
-    q.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="check the inputs (model, calibration tokens, devices, RAM) and print the "
-        "plan without quantizing",
+        g.add_argument(
+            flag, type=typ, default=None, help=f"{description} (preset default)"
+        )
+    samples, length = q.get_default("calib_samples"), q.get_default("seq_len")
+    q.epilog = (
+        f"Default cost: --devices {q.get_default('devices')} selects every visible GPU,\n"
+        f"else CPU. Calibrated runs request QAD={q.get_default('qad')} with preset\n"
+        f"{q.get_default('qad_preset')!r}, including layer-wise and final-KL training;\n"
+        f"PTQ calibration alone uses {samples} x {length} = {samples * length:,} tokens.\n"
+        "QAD needs additional training/held-out tokens and memory (see --dry-run).\n"
+        "Data-free runs use nearest-rounding PTQ; --no-qad keeps calibrated runs PTQ-only.\n\n"
+        "Plan:      hi2 quantize MODEL OUT --calib calib.txt --dry-run\n"
+        "PTQ only:  hi2 quantize MODEL OUT --calib calib.txt --no-qad --devices cuda:0\n"
+        "Data-free: hi2 quantize MODEL OUT --devices cpu\n"
+        "Recovery: rerun the same command and workdir; cached/completed work is reused.\n"
+        "Examples: docs/usage.md. Training cost and recovery boundaries: docs/qad.md."
     )
-    v = sub.add_parser("verify", help="reload an HI2 checkpoint and compare")
+
+    v = command(
+        "verify",
+        "reload an HI2 checkpoint and compare (sampled numerical verification)",
+    )
     v.add_argument("src", type=Path)
     v.add_argument("dst", type=Path)
-    v.add_argument("--max-tensors", type=int, default=8)
-    x = sub.add_parser(
-        "export-dense", help="write the dequantised model as a plain fp16 HF dir"
+    v.add_argument(
+        "--max-tensors",
+        type=int,
+        default=8,
+        help="maximum tensors to compare numerically",
+    )
+    x = command(
+        "export-dense", "write the dequantised model as a plain fp16 HF directory"
     )
     x.add_argument("src", type=Path)
     x.add_argument("dst", type=Path)
     x.add_argument("out", type=Path)
-    e = sub.add_parser(
-        "eval", help="perplexity / KLD of an HI2 checkpoint vs the original"
+    e = command(
+        "eval",
+        "perplexity / KLD vs the original (dense numerical check, not native kernels)",
     )
     e.add_argument("src", type=Path)
     e.add_argument("dst", type=Path)
-    e.add_argument("--text", type=Path, required=True)
-    e.add_argument("--samples", type=int, default=8)
-    e.add_argument("--seq-len", type=int, default=2048)
+    e.add_argument(
+        "--text", type=Path, required=True, help="held-out .txt or text-field .jsonl"
+    )
+    e.add_argument("--samples", type=int, default=8, help="evaluation sequences")
+    e.add_argument("--seq-len", type=int, default=2048, help="tokens per sequence")
     e.add_argument(
         "--skip-tokens",
         type=int,
         default=0,
-        help="skip this many leading tokens (the calibration region)",
+        help="skip leading tokens (the calibration region)",
     )
     e.add_argument(
         "--device",
         default="cpu",
-        help="device, or a comma-separated list (cuda:0,cuda:1,...) to split the model "
-        "layer-wise over several GPUs when it does not fit one",
+        help="device or comma-separated list to split the model layer-wise across GPUs",
     )
     e.add_argument(
         "--dtype",
         choices=("float32", "float16", "bfloat16"),
         default="float32",
-        help="dtype of both models (float16 when an fp32 copy does not fit the device)",
+        help="math dtype of both models; float16 when an fp32 copy does not fit",
     )
-    r = sub.add_parser(
-        "restack",
-        help="rewrite an HI2 checkpoint's routed experts per-expert <-> stacked "
-        "(data movement only, no re-encode)",
+    r = command(
+        "restack", "rewrite MoE expert layout (data movement only, no re-encode)"
     )
     r.add_argument("dst", type=Path, help="HI2 checkpoint")
     r.add_argument("out", type=Path, help="new directory")
     r.add_argument("--layout", choices=("per-expert", "stacked"), default="stacked")
-    z = sub.add_parser(
-        "size", help="where the bytes of an HI2 checkpoint go (headers only)"
+    z = command(
+        "size", "where checkpoint bytes go (headers only; human table unless --json)"
     )
     z.add_argument("dst", type=Path, help="HI2 checkpoint")
     z.add_argument("--src", type=Path, default=None, help="source model, for the ratio")
     z.add_argument("--by", choices=("kind", "layer", "tensor"), default="kind")
-    z.add_argument("--top", type=int, default=20, help="rows of the breakdown table")
-    z.add_argument("--json", action="store_true", help="print the report as JSON")
-    k = sub.add_parser(
-        "calib", help="build a mixed-domain calibration text (and a held-out text)"
+    z.add_argument(
+        "--top", type=int, default=20, help="rows of the human breakdown table"
     )
+
+    k = command("calib", "build mixed-domain calibration and optional held-out text")
     k.add_argument("out", type=Path, help="calibration text to write")
     k.add_argument(
         "sources",
         nargs="+",
-        help="SRC or SRC:WEIGHT; .txt, or .json/.jsonl with text or chat records",
+        help="SRC or SRC:WEIGHT; .txt, or .json/.jsonl with text or chat records. "
+        "Direct quantize accepts only text-field JSONL, not chat records",
     )
     k.add_argument(
-        "--tokens",
-        type=int,
-        default=540_672,
-        help="size of the text; the default covers QAD (264 x 2048)",
+        "--tokens", type=int, default=540_672, help="target calibration tokens"
     )
     k.add_argument(
         "--tokenizer",
         type=Path,
         default=None,
-        help="model directory whose tokenizer counts tokens (default: 4 characters each)",
+        help="local model/tokenizer directory for actual token counts (omitted: characters/4 estimate)",
     )
-    k.add_argument("--holdout", type=Path, default=None, help="held-out text to write")
+    templates = k.add_mutually_exclusive_group()
+    templates.add_argument(
+        "--chat-template",
+        action="store_true",
+        help="explicitly render chat records with --tokenizer's template; plain text is unchanged",
+    )
+    templates.add_argument(
+        "--chat-template-file",
+        type=Path,
+        default=None,
+        help="explicit Jinja chat template override; requires --tokenizer",
+    )
     k.add_argument(
-        "--holdout-tokens", type=int, default=200_000, help="size of the held-out text"
+        "--holdout", type=Path, default=None, help="distinct held-out text output"
+    )
+    k.add_argument(
+        "--holdout-tokens", type=int, default=200_000, help="target held-out tokens"
+    )
+    k.add_argument(
+        "--min-holdout-tokens",
+        type=int,
+        default=1,
+        help="minimum held-out tokens; for eval use samples x seq-len + skip-tokens. "
+        "Counts are estimates unless --tokenizer is supplied",
     )
     k.add_argument(
         "--holdout-share",
         type=float,
         default=0.2,
-        help="share of each source's documents kept out of the calibration text",
+        help="share of each source's documents reserved for held-out text",
     )
-    c = sub.add_parser("cache", help="list, size or prune the persistent cache")
+    k.epilog = (
+        "Plain mixer: hi2 calib calib.txt corpus.jsonl --holdout heldout.txt\n"
+        "Chat template: hi2 calib calib.txt chats.jsonl --tokenizer MODEL --chat-template\n"
+        "Rendering is opt-in, deterministic and recorded with tokenizer/template identity.\n"
+        "Text records and .txt are not reformatted. Feed the prepared .txt to quantize.\n"
+        "Examples and split/token budgets: docs/usage.md."
+    )
+    c = command("cache", "list, size or prune the persistent cache")
     c.add_argument("action", choices=("list", "size", "prune"))
     c.add_argument("--cache-dir", type=Path, default=None)
     c.add_argument("--older-than", type=float, default=None, help="days unused")
     c.add_argument("--keep-gb", type=float, default=None, help="prune LRU down to this")
     c.add_argument("--digest", action="append", default=None, help="remove this entry")
-    c.add_argument("--dry-run", action="store_true")
-    a = ap.parse_args(argv)
+    c.add_argument(
+        "--dry-run", action="store_true", help="describe pruning without deleting"
+    )
+    command("doctor", "inspect the installed backend without running a model")
+    inspect = command(
+        "inspect", "inspect model/artifact metadata and compatibility evidence"
+    )
+    inspect.add_argument("path", type=Path)
+    status = command(
+        "status", "read run ownership, phase outcomes and safe recovery guidance"
+    )
+    status.add_argument("workdir", type=Path)
+    validate = command("validate", "fully validate every tensor in an HI2 artifact")
+    validate.add_argument("path", type=Path)
+    portable = command(
+        "export-portable",
+        "materialize a portable HI2 artifact without dense conversion",
+    )
+    portable.add_argument("src", type=Path)
+    portable.add_argument("out", type=Path)
+    portable.add_argument("--assets-from", type=Path)
+    quality = command(
+        "quality", "measure final dense numerical quality and enforce acceptance gates"
+    )
+    quality.add_argument("src", type=Path)
+    quality.add_argument("dst", type=Path)
+    quality.add_argument("--text", type=Path, required=True)
+    quality.add_argument("--exclude-data", type=Path, action="append", default=[])
+    quality.add_argument("--max-kld", type=float)
+    quality.add_argument("--max-ppl-ratio", type=float)
+    quality.add_argument("--samples", type=int, default=8)
+    quality.add_argument("--seq-len", type=int, default=2048)
+    quality.add_argument("--device", default="cpu")
+    quality.add_argument(
+        "--dtype", choices=("float32", "float16", "bfloat16"), default="float32"
+    )
+    recipe = command("recipe", "save or replay a versioned resolved run recipe")
+    recipe.add_argument("action", choices=("save", "run"))
+    recipe.add_argument("path", nargs="?", type=Path)
+    recipe.add_argument("--from-plan", type=Path)
+    recipe.add_argument("--out", type=Path)
+    recipe.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="FIELD=JSON",
+        help="explicit replay override; dotted fields such as cfg.effort are supported",
+    )
+    recipe.add_argument("--dry-run", action="store_true")
+    jobs = command("jobs", "submit, inspect or cancel a durable local job")
+    jobs.add_argument("action", choices=("submit", "status", "cancel"))
+    jobs.add_argument("target", help="request JSON file for submit, otherwise a job ID")
+    jobs.add_argument("--state-root", type=Path, required=True)
+    jobs.add_argument(
+        "--operation",
+        choices=("quantize", "validate", "quality", "portable"),
+        default="quantize",
+    )
+    jobs.add_argument("--idempotency-key")
+    jobs.add_argument("--cursor", type=int, default=0)
+    jobs.add_argument("--limit", type=int, default=100)
+    return ap
+
+
+def dispatch_command(a) -> dict:
+    """Run a parsed command; keep transport/output handling in main()."""
+    from .service import Progress
+
+    progress = Progress(
+        quiet=getattr(a, "quiet", False),
+        jsonl=getattr(a, "log_format", "text") == "jsonl",
+    )
+    if a.cmd == "doctor":
+        from .service import doctor
+
+        return doctor()
+    if a.cmd == "inspect":
+        from .service import inspect_artifact
+
+        return inspect_artifact(a.path)
+    if a.cmd == "status":
+        from .service import status
+
+        return status(a.workdir)
+    if a.cmd == "validate":
+        from .checkpoint import validate_checkpoint
+
+        return validate_checkpoint(a.path, log=progress)
+    if a.cmd == "export-portable":
+        from .checkpoint import export_portable
+
+        return export_portable(a.src, a.out, assets_from=a.assets_from)
+    if a.cmd == "quality":
+        from .quality import evaluate_quality
+
+        return evaluate_quality(
+            a.src,
+            a.dst,
+            a.text,
+            max_kld=a.max_kld,
+            max_ppl_ratio=a.max_ppl_ratio,
+            excluded=a.exclude_data,
+            samples=a.samples,
+            seq_len=a.seq_len,
+            device=a.device,
+            dtype=a.dtype,
+            log=progress,
+        )
+    if a.cmd == "recipe":
+        from .service import config_from_dict, execute_run, plan_run, save_recipe
+
+        if a.action == "save":
+            if a.from_plan is None or a.out is None or a.path is not None or a.set:
+                raise ValueError(
+                    "recipe save requires --from-plan PLAN --out RECIPE, without overrides"
+                )
+            document = json.loads(a.from_plan.read_text())
+            rc = config_from_dict(
+                {
+                    "schema_version": document.get("schema_version"),
+                    "config": document["config"],
+                }
+            )
+            save_recipe(a.out, rc)
+            return {"recipe": str(a.out.resolve())}
+        if a.path is None or a.from_plan is not None or a.out is not None:
+            raise ValueError(
+                "recipe run requires a recipe path; use --set FIELD=JSON for overrides"
+            )
+        document = json.loads(a.path.read_text())
+        for override in a.set:
+            name, separator, value = override.partition("=")
+            if not separator or not name or any(not part for part in name.split(".")):
+                raise ValueError("recipe overrides use FIELD=JSON")
+            target = document["config"]
+            parts = name.split(".")
+            for part in parts[:-1]:
+                if part not in target or not isinstance(target[part], dict):
+                    raise ValueError(f"unknown recipe object: {name}")
+                target = target[part]
+            target[parts[-1]] = json.loads(value)
+        rc = config_from_dict(document)
+        return plan_run(rc, progress) if a.dry_run else execute_run(rc, progress)
+    if a.cmd == "jobs":
+        from .jobs import JobStore
+
+        store = JobStore(a.state_root)
+        if a.action == "submit":
+            if not a.idempotency_key:
+                raise ValueError("jobs submit requires --idempotency-key")
+            return store.submit(
+                a.operation, json.loads(Path(a.target).read_text()), a.idempotency_key
+            )
+        if a.action == "cancel":
+            return store.cancel(a.target)
+        return store.status(a.target, cursor=a.cursor, limit=a.limit)
     if a.cmd == "calib":
         from .calib import build_mix, parse_source
+        from .paths import check_output_paths
 
-        count = None
+        sources = [parse_source(x) for x in a.sources]
+        inputs = [path for path, _ in sources]
+        inputs.extend(p for p in (a.tokenizer, a.chat_template_file) if p is not None)
+        outputs = [a.out] + ([a.holdout] if a.holdout is not None else [])
+        check_output_paths(inputs=inputs, outputs=outputs)
+        template_requested = a.chat_template or a.chat_template_file is not None
+        if template_requested and a.tokenizer is None:
+            raise ValueError(
+                "--chat-template / --chat-template-file requires --tokenizer"
+            )
+        if a.holdout is not None and a.holdout_share <= 0:
+            raise ValueError("--holdout requires --holdout-share greater than zero")
+        count = render_chat = tokenizer_id = template_id = None
         if a.tokenizer is not None:
             from transformers import AutoTokenizer
 
-            tok = AutoTokenizer.from_pretrained(a.tokenizer)
-            count = lambda t: len(tok(t, add_special_tokens=False)["input_ids"])  # noqa: E731
+            tok = AutoTokenizer.from_pretrained(a.tokenizer, trust_remote_code=False)
+            tokenizer_id = (
+                str(a.tokenizer.resolve()) if a.tokenizer.exists() else tok.name_or_path
+            )
+
+            def count(text):
+                return len(tok(text, add_special_tokens=False)["input_ids"])
+
+            if template_requested:
+                import hashlib
+
+                template = tok.get_chat_template(
+                    a.chat_template_file.read_text(encoding="utf-8")
+                    if a.chat_template_file is not None
+                    else None
+                )
+                if not template:
+                    raise ValueError("the selected chat template is empty")
+                template_id = (
+                    "sha256:" + hashlib.sha256(template.encode("utf-8")).hexdigest()
+                )
+
+                def render_chat(messages):
+                    return tok.apply_chat_template(
+                        messages,
+                        chat_template=template,
+                        tokenize=False,
+                        add_generation_prompt=False,
+                    )
+
         share = a.holdout_share if a.holdout is not None else 0.0
         text, held, rep = build_mix(
-            [parse_source(x) for x in a.sources],
+            sources,
             a.tokens,
             count,
             share,
             a.holdout_tokens,
+            render_chat=render_chat,
+            tokenizer_id=tokenizer_id,
+            chat_template_id=template_id,
+            min_holdout_tokens=a.min_holdout_tokens,
         )
-        a.out.write_text(text)
+        a.out.write_text(text, encoding="utf-8")
         if a.holdout is not None:
-            a.holdout.write_text(held)
-        print(json.dumps(rep, indent=2))
-        return
+            a.holdout.write_text(held, encoding="utf-8")
+        return rep
     if a.cmd == "size":
-        from .size import format_report, size_report
+        from .size import size_report
 
-        rep = size_report(a.dst, a.src, a.by)
-        print(json.dumps(rep, indent=2) if a.json else format_report(rep, a.top))
-        return
+        return size_report(a.dst, a.src, a.by)
     if a.cmd == "cache":
         out = cache_command(a)
     elif a.cmd == "restack":
@@ -604,9 +1043,15 @@ def main(argv=None):
         for k in ("before", "after"):
             out[k].pop("per_shard")
     elif a.cmd == "export-dense":
+        from .checkpoint import export_dense
+        from .paths import check_output_paths
+
+        check_output_paths(inputs=[a.src, a.dst], outputs=[a.out])
         export_dense(a.src, a.dst, a.out)
         out = {"exported": str(a.out)}
     elif a.cmd == "eval":
+        from .evalq import evaluate
+
         out = evaluate(
             a.src,
             a.dst,
@@ -619,6 +1064,10 @@ def main(argv=None):
         )
     elif a.cmd == "quantize":
         from .cache import default_root
+        from .calibrate import SELECTABLE, Config
+        from .checkpoint import DEFAULT_EXCLUDE
+        from .pipeline import RunConfig, plan, run
+        from .qad import make_config
 
         ratios = a.max_error_ratio
         cands = [
@@ -648,7 +1097,7 @@ def main(argv=None):
             sigma_fp16_above=a.cache_fp16_above,
             cache_dir=None if a.no_cache else (a.cache_dir or default_root()),
             include=a.include,
-            exclude=a.exclude,
+            exclude=DEFAULT_EXCLUDE if a.exclude is None else a.exclude,
             limit_layers=a.limit_layers,
             compute_dtype=a.compute_dtype,
             sensitivity=sens,
@@ -676,11 +1125,156 @@ def main(argv=None):
         )
         if a.target_kld is not None:
             rc = _tune_rc(a, rc)
-        out = plan(rc) if a.dry_run else run(rc)
-    else:
+            if a.dry_run:
+                return rc
+        out = plan(rc, log=progress) if a.dry_run else run(rc, log=progress)
+    elif a.cmd == "verify":
+        from .checkpoint import verify_checkpoint
+
         out = verify_checkpoint(a.src, a.dst, a.max_tensors)
-    print(json.dumps(out, indent=2))
+    else:
+        raise ValueError(f"unknown command: {a.cmd}")
+    return out
+
+
+def _artifacts(a, out=None) -> list[dict]:
+    """Reference produced artifacts, never infer successful internal compute phases."""
+    artifacts = []
+    if out is not None:
+        if a.cmd == "calib":
+            artifacts.append({"kind": "calibration", "path": str(a.out)})
+            if a.holdout is not None:
+                artifacts.append({"kind": "holdout", "path": str(a.holdout)})
+        elif a.cmd in ("export-dense", "export-portable", "restack"):
+            artifacts.append({"kind": "checkpoint", "path": str(a.out)})
+        elif a.cmd == "quantize" and not a.dry_run:
+            artifacts.extend(
+                {"kind": "checkpoint", "path": path}
+                for path in out.get("outputs", {str(a.dst): out})
+            )
+    for name in ("tune_report", "tune_diagnostics"):
+        path = getattr(a, name, None)
+        if path is not None:
+            artifacts.append({"kind": name, "path": path})
+    return artifacts
+
+
+def _success_result(a, out: dict) -> dict:
+    """Schema 1 adds metadata without moving existing result fields."""
+    return {
+        **out,
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "command": a.cmd,
+        "status": out.get("status", "ok"),
+        "phases": out.get("phases", [{"phase": a.cmd, "status": "completed"}]),
+        "artifacts": out.get("artifacts", []) + _artifacts(a, out),
+    }
+
+
+def _report_error(command, exc, *, json_mode, exit_code, args=None) -> int:
+    message = str(exc)
+    kind = "UsageError" if isinstance(exc, _UsageError) else type(exc).__name__
+    from .errors import describe_error
+
+    category, classified_code, remedy = describe_error(exc)
+    exit_code = classified_code
+    if isinstance(exc, _UsageError):
+        category, exit_code = "invalid_input", 2
+    if isinstance(exc, ModuleNotFoundError):
+        message = (
+            f"{exc}. The {command or 'requested'} command needs dependency "
+            f"{exc.name!r}. Install hi2 and its declared dependencies in the Python "
+            f"environment {sys.executable}; see docs/usage.md. Help/version do not "
+            "require compute dependencies."
+        )
+    elif isinstance(exc, KeyboardInterrupt):
+        message = "interrupted by user"
+    elif isinstance(exc, SystemExit) and not isinstance(exc.code, str):
+        message = f"command exited with status {exc.code}"
+    status = "interrupted" if isinstance(exc, KeyboardInterrupt) else "error"
+    print(f"hi2: {message}", file=sys.stderr)
+    print(f"Remedy: {remedy}", file=sys.stderr)
+    if json_mode:
+        print(
+            json.dumps(
+                {
+                    "schema_version": RESULT_SCHEMA_VERSION,
+                    "command": command,
+                    "status": status,
+                    "error": {
+                        "type": kind,
+                        "category": category,
+                        "message": message,
+                        "exit_code": exit_code,
+                        "remedy": remedy,
+                    },
+                    **({"quality": exc.report} if hasattr(exc, "report") else {}),
+                    "phases": [{"phase": command, "status": status}] if command else [],
+                    "artifacts": _artifacts(args) if args is not None else [],
+                    "workdir": str(args.workdir)
+                    if args is not None and getattr(args, "workdir", None)
+                    else None,
+                },
+                indent=2,
+                allow_nan=False,
+            )
+        )
+    return exit_code
+
+
+def main(argv=None) -> int:
+    """CLI transport: one JSON object with --json; all execution logs on stderr.
+
+    Successful JSON results keep their original top-level fields and add schema 1
+    metadata. Failures carry error.type/message/exit_code; usage errors exit 2,
+    command failures exit 1 (or the core's explicit nonzero code), interrupts 130.
+    Human mode retains command summaries and the size table. Help/version are text.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    options = argv[: argv.index("--")] if "--" in argv else argv
+    json_mode = "--json" in options
+    ap = build_parser()
+    try:
+        a = ap.parse_args(argv)
+    except _UsageError as exc:
+        print(ap.format_usage(), file=sys.stderr, end="")
+        return _report_error(exc.command, exc, json_mode=json_mode, exit_code=2)
+    json_mode = a.json
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(line_buffering=True)
+    try:
+        with _stderr_logs():
+            out = dispatch_command(a)
+            if a.cmd == "size" and not json_mode:
+                from .size import format_report
+
+                rendered = format_report(out, a.top)
+            else:
+                rendered = json.dumps(
+                    _success_result(a, out) if json_mode else out,
+                    indent=2,
+                    allow_nan=False,
+                )
+    except KeyboardInterrupt as exc:
+        return _report_error(a.cmd, exc, json_mode=json_mode, exit_code=130, args=a)
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) and exc.code != 0 else 1
+        return _report_error(a.cmd, exc, json_mode=json_mode, exit_code=code, args=a)
+    except (ValueError, OSError, ImportError, RuntimeError) as exc:
+        if a.debug:
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
+        return _report_error(a.cmd, exc, json_mode=json_mode, exit_code=1, args=a)
+    except Exception as exc:
+        if a.debug:
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
+        return _report_error(a.cmd, exc, json_mode=json_mode, exit_code=1, args=a)
+    print(rendered)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
