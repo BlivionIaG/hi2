@@ -67,8 +67,9 @@ held-out text for everything (8 x 2048 tokens at offset 800000 of the repo
 documentation). The EXL3 checkpoint is the one already on the box
 (`Qwen3.5-0.8B-exl3-3inst-good`, 3.0 bpw, 3inst codebook, 6-bit head, calibrated on
 256 x 2048). Everything below is **perplexity divided by the same model's
-unquantized perplexity** (1.00 = lossless), so evaluators with different windows can
-be compared; raw data in `experiments/results/e2e_qwen3.5-0.8b.json`.
+unquantized perplexity**. A ratio of 1.00 means equal measured perplexity, not
+identical distributions, generations or task accuracy. Cross-evaluator windows
+remain a caveat; raw data is in `experiments/results/e2e_qwen3.5-0.8b.json`.
 
 Evaluator check: vLLM (fork, fp16) scores the unquantized model 10.8736 and the HI2
 export 20.8727; my HF evaluator scores them 10.8738 and 20.8734. EXL3 and HI2 were
@@ -131,30 +132,37 @@ probably, in order of what I can say about it:
 * **Full-dimension rotation.** EXL3 rotates across 128-wide blocks over the matrix; HI2
   mixes 16 columns. Under compensated rounding, rotation matters less (the transform
   cells span 1.32-1.39), so this is probably a small part.
-* **Joint ladder and rounding optimisation.** HI2 fits the ladder before the rounding
-  and does not refit it afterwards (spec 8.3 step 5); untested.
+* **Joint ladder and rounding optimisation.** The PTQ encoder fits ladders before
+  GPTQ rounding. Later QAD can train ladder bytes and codes, and local PTQ code
+  refinement is implemented; a separate PTQ ladder refit after rounding remains
+  a distinct proposal ([format-spec.md](format-spec.md), sections 8.9 and 13).
 
-What HI2 is for, and what is not measured: a decode path that is a few fixed
-instructions on RDNA2 dot products (no codebook lookup or trellis walk), any input
-dimension that is a multiple of 64, per-row INT2/INT4 in one format, and a quantizer
-that runs in minutes for this model on one RDNA2 GPU with no CUDA. No HI2 kernel
-exists yet, so speed is unmeasured; EXL3 on this fork already has kernels and
-measured decode speed.
+HI2 targets a decode path with a few fixed RDNA2 dot-product instructions rather
+than a codebook lookup or trellis walk, input widths divisible by 64 and mixed
+INT2/INT4/opt-in INT8 rows. The original PTQ study ran in minutes on one V620;
+that is not a time estimate for default QAD plus final-KL. Native HI2 kernels
+and loader measurements now exist in the external fork ([results.md](results.md)).
+The earlier “no kernel/speed unmeasured” status is superseded, without implying
+every model/layout/runtime revision is qualified.
 
-## 5. What would improve the concept, in order
+## 5. Research directions and subsequent implementation status
 
-1. **Done: Hessian-aware rounding** (spec 8.3), the largest single gain after
-   calibration. Tried and not worth it: sequential propagation (8.4), more calibration
-   tokens (-1%), a different smoothing exponent.
-2. **A larger model.** Qwen3.5-0.8B is the only same-model EXL3 comparison, and the
-   allocation, block 16 and the smoothing exponent were tuned on small models. The
-   Hessian cost grows as `K^2` per input, so a 27B-class model needs the memory plan
-   in spec 8.3.
-3. **Sensitivity-aware allocation** (spec 8.6). Flex still does not beat a uniform
-   INT4/B64 at 4.3 bpw.
-4. **Ladder refit after rounding**, and local code refinement (spec 8.3 step 5, 8.9).
-5. **Share or fold the smoothing vector** (q/k/v, gate/up, into RMSNorm).
-6. **The kernels** (F16 and I8) and the vLLM loader, so the speed side can be measured
-   at all.
+The original priorities below motivated later work; distinguish that completed
+work from proposals rather than treating this list as current operating guidance.
+
+1. **Implemented: Hessian-aware rounding** (spec 8.3), the largest single gain
+   after calibration in the initial study. Sequential propagation, more
+   calibration tokens and a different smoothing exponent did not help there.
+2. **Larger-model measurements now exist.** [results.md](results.md) includes 4B,
+   OLMoE and 27B runs. Coverage is still finite; Hessian memory scales as `K^2`
+   per distinct input, and the [phase resource plan](operations.md) still matters.
+3. **Sensitivity-aware allocation is implemented** (spec 8.6). It did not make
+   flex beat uniform INT4/B64 at 4.3 bpw in the original study.
+4. **Local code refinement is implemented** (spec 8.9). A separate ladder refit
+   after PTQ rounding is a proposal, not an enabled encoder mode.
+5. **Shared transforms are implemented** for shared inputs; storing their
+   smoothing vector once or folding it into RMSNorm remains distinct work.
+6. **Native kernels/loader have measured results** in the external fork.
+   Reproducible runtime qualification remains a [separate handoff](getting-started.md#export-and-native-serving).
 7. **A trellis or vector code type**, if the remaining 0.75 bpw against EXL3 matters
    enough to change the format.

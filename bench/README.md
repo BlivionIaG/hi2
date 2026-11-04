@@ -2,22 +2,82 @@
 
 KLD and perplexity say how far a quantized model's next-token distribution moves. This
 suite says what that costs on real work: math, code, instruction following, tool calls,
-long-context retrieval, multiple choice and agent decisions. It talks to any
-OpenAI-compatible server (vLLM; GGUF through a server), so BF16, AWQ, GGUF and HI2
-checkpoints are measured the same way, and it stores every item so that two runs can be
-compared **paired**: the same items, the same greedy decoding, the flips counted one by one.
+long-context retrieval, multiple choice and agent decisions. It uses OpenAI-style
+HTTP endpoints, with **additional server capabilities required for some tasks**.
+BF16, AWQ, GGUF and HI2 checkpoints can be compared when their serving runtimes
+implement the required APIs. Every item is retained for a **paired** comparison:
+the same items, the same greedy decoding, the flips counted one by one.
+
+## Installation: checkout tooling, not an installed command
+
+`bench/` and `experiments/` are not included in the installed `hi2` package: package
+discovery includes only `hi2*`. There is **no `hi2 bench` command**. Keep a complete
+checkout, run the following from its root, and keep it available when using these
+entrypoints:
+
+```bash
+git clone https://github.com/BlivionIaG/hi2.git
+cd hi2
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[bench]'
+```
+
+Python 3.10 or newer is required. The `bench` extra installs `datasets` in addition
+to hi2's base dependencies; it does not install a model server or package `bench/`.
+The client, comparison statistics and generated tasks themselves use the standard
+library. A standard-library-only client can use prepared JSONL exports instead
+of `datasets` (see [Datasets](#datasets)). `decision` also imports code and reads
+prompts from this checkout's `experiments/`; `needle` reads the checkout's documents.
+Installing hi2 into an unrelated directory does not provide these resources.
+
+### Generated-code execution: read before using `code` or `all`
+
+**`humaneval`, `mbpp`, the `code` alias and `all` execute model-generated Python
+on the benchmark client's machine. `bench/sandbox.py` is not a security sandbox.**
+Its isolated interpreter, temporary directory, timeouts, resource limits and
+monkeypatched functions guard against mistakes, not malicious code. They do not
+provide filesystem isolation or enforce a network security boundary, and some
+resource limits are platform-dependent. Use a disposable, restricted container
+or VM with no credentials, sensitive mounts or unnecessary network access.
+The execution helper requires POSIX facilities (`resource`, process groups,
+signals); do not assume the code tasks work on Windows.
+
+The examples below avoid code execution. A compatible model server must already
+be running, and the Hugging Face datasets must be available or exported locally.
 
 ```bash
 python bench/run.py --url http://127.0.0.1:18731 --model bf16 --workers 16 \
-    --tasks all --out results/bf16.json
+    --tasks gsm8k,ifeval,toolcall --out results/bf16.json
 python bench/run.py --url http://127.0.0.1:18732 --model hi2-3.0 --workers 16 \
-    --tasks all --out results/hi2-3.0.json
-python bench/compare.py results/bf16.json results/bf16-rerun.json results/hi2-3.0.json \
+    --tasks gsm8k,ifeval,toolcall --out results/hi2-3.0.json
+python bench/compare.py results/bf16.json results/hi2-3.0.json \
     --groups --md results/hi2-3.0.md --json results/hi2-3.0.stats.json
 ```
 
 A second reference run (same server, restarted) gives the spread that greedy decoding has
 on the stack (TunableOp, accumulation order): differences inside that spread are noise.
+
+### Required server APIs
+
+Use the base URL, such as `http://127.0.0.1:18731`, **without** a trailing `/v1`.
+The built-in client does not add authentication headers; use an appropriately
+isolated endpoint or an authenticated proxy configured outside this client.
+
+| entrypoint / task | required capabilities |
+| --- | --- |
+| chat tasks (`gsm8k`, `humaneval`, `mbpp`, `ifeval`, `toolcall`, `decision`) | `/v1/chat/completions`, greedy generation (`temperature=0`), text `choices[].message.content` |
+| `needle` | `/v1/completions`, text `choices[].text`, sufficient context length |
+| `mc` | `/tokenize` with text and `add_special_tokens=false`; `/v1/completions` accepting token-ID prompts and returning `prompt_logprobs` for **all** prompt tokens |
+| `tfkld.py score` | all `mc` extensions, plus `/tokenize` accepting chat messages, `add_generation_prompt` and `chat_template_kwargs` |
+
+The last two rows are vLLM-style extensions, **not guaranteed by an
+OpenAI-compatible server**. A GGUF server without them cannot run those paths.
+Missing endpoints, rejected requests and truncated log-probability responses
+make the evaluation incomplete and nonzero; they are not scored as wrong answers.
+Chat generation sends `chat_template_kwargs={"enable_thinking": false}` by default.
+`--thinking` omits that override (useful when a server does not accept it), so the
+server's template default applies. Record and match this setting across runs.
 
 ## Tasks
 
@@ -44,9 +104,8 @@ Details per task:
   the first) is run with the tests in `sandbox.py`: a child `python -I -S` (standard
   library only, no `sitecustomize`) in an empty temporary directory, a minimal
   environment, CPU/memory/file-size rlimits, sockets, subprocesses and file removal
-  disabled, the process group killed after 10 s. It guards
-  against accidents, not attacks; run untrusted models in a container. All 164 canonical
-  HumanEval solutions and all 257 MBPP reference solutions pass through this path.
+  disabled, the process group killed after 10 s. These are accident guards only;
+  see the generated-code warning above before using either task.
 - **ifeval**: 17 constraint types (word counts, no commas, lower/upper case, keywords,
   forbidden word, paragraphs with `***`, exact bullet count, end phrase, quotation marks,
   JSON, `<<title>>`, postscript, highlights, placeholders, `SECTION X`) on 40 writing
@@ -74,11 +133,44 @@ Chat requests disable the template's thinking mode (`--thinking` keeps it); a
 
 ## Output and comparison
 
-`run.py` writes one JSON: `config` (model, URL, seed, and per task its version, item
-count, `max_tokens` and fingerprint), `results[task][id]` = `{id, group, completion, ok,
-details, usage, latency}` (or `error` for a failed request), and `timing` per task. The
-file is rewritten every 20 s; rerunning the same command resumes, redoing only missing
-and failed items. A changed task version, seed or fingerprint redoes that task.
+`run.py` writes schema version 1 JSON with these fields:
+
+- `status`: `running`, `complete` or `incomplete`.
+- `completion.requested_tasks`: the full requested task list. No failed task
+  disappears from this list.
+- `completion.tasks[task]`: `status` (`pending`, `running`, `complete`, `incomplete` or
+  `load_error`), `expected`, `completed`, `request_errors`, `score_errors`,
+  `missing`, and an error message for a failed load/import. Unknown item counts
+  are `null`, not zero.
+- `completion.errors`: harness failures or interruption details.
+- `config`: model, URL, decoding options, workers, seed and limits, plus each
+  loaded task's version, effective limit, item count, dataset declarations,
+  optional fingerprint and SHA256 of its selected item content (`items_sha256`).
+- `results[task][id]`: raw completion, `ok`, score details, usage and client
+  latency, or an error. Item `status` distinguishes `complete`, `request_error`
+  and `score_error`; a completed **wrong** answer is still `complete`.
+- `timing`: per-task request/scoring wall time and accumulated request latency;
+  `_wall` is cumulative across attempts, not a native-kernel timing.
+- `attempts`: command arguments when called via the CLI, start/end times and
+  attempt status. Programmatic calls without a command record `null`, not an
+  invented invocation.
+
+The file is saved before requests, periodically during execution and on final
+completion/failure. Partial results are retained. `run.py` exits **0 only when
+every requested task/item completed**, 1 for an incomplete evaluation, 2 for
+invalid CLI arguments, and 130 for a handled keyboard interrupt. Missing data,
+failed imports, an empty task, request failures and scoring/harness exceptions
+are incomplete. Zero accuracy by itself still exits 0: there is no implicit
+accuracy gate in this harness. Quality acceptance is a separate decision.
+
+Rerunning the same command resumes missing, request-failed and score-failed
+items; completed wrong answers are not retried. A changed task version, seed,
+fingerprint or selected-item content hash redoes the task. Changing model name,
+URL or chat options refuses resume: use a new `--out`. A model name/URL is not a
+verified weight identity; if a server changes weights behind the same name, use
+a fresh result path and attach the correct manifest when comparing. Older
+unrequested tasks may remain in the raw file; completion and comparison use the
+current requested list.
 
 `compare.py REF CAND...` pairs the items both runs completed and reports per task: each
 accuracy, the difference with a paired bootstrap 95% CI (10000 replicates, exact for
@@ -91,12 +183,132 @@ about 4800 items; a 1-point claim on one task of a few hundred items is not test
 pool tasks or report the CI. `--groups` adds per-group tables (constraint type, context
 length, MC set, agent stage).
 
+The comparison includes the **union** of requested tasks, including missing tasks
+and load failures. Request/scoring failures are excluded from paired accuracy,
+not counted as low-quality answers. Each task has reference/candidate expected
+and completed counts, its completion status, and the observed unpaired count.
+Version, seed and data fingerprints are checked and differences are reported.
+Statistics on a partial intersection are explicitly incomplete, not a claim
+about the full requested dataset. Legacy files without enough count information
+are `unverified`, never silently called complete. JSON uses `null` for undefined
+statistics rather than nonstandard `NaN`.
+
+`compare.py` exits 1 for an incomplete/mismatched comparison while still writing
+the report. A legacy `unverified` comparison exits 0 for report generation, but
+its explicit status is not evidence of complete execution. Low accuracy or a
+recorded unmet quality target does not change the benchmark completion status.
+
+### Reproducible comparisons using existing hi2 outputs
+
+Use `--metadata FILE.json` to attach the **actual JSON outputs** from `hi2 size`,
+`hi2 eval`/the quality service and a quantization `hi2_run.json`/`run.json`
+manifest. This consumes saved outputs; it does not reimplement evaluation,
+run models or launch recipe searches. Provide only outputs for the corresponding
+benchmark artifact. Paths inside the mapping, including its run-path keys, are
+relative to the metadata file's directory (absolute paths also work):
+
+```json
+{
+  "bf16.json": {
+    "runtime_context": {"kind": "native", "backend": "record-the-actual-server"}
+  },
+  "hi2-3.0.json": {
+    "manifest": "hi2_run.json",
+    "size": "hi2-3.0.size.json",
+    "quality": "hi2-3.0.quality.json",
+    "runtime_context": {"kind": "native", "backend": "record-the-actual-server"}
+  }
+}
+```
+
+`runtime_context` is an operator declaration, not a verified dispatch claim.
+Its `kind` is `native`, `dense_numerical` or `unknown` (the default when omitted).
+Include actual backend/hardware/version/evidence fields if known; do not label
+a dense export as native HI2. Omit unavailable source files and measurements
+rather than filling them with guesses.
+
+```bash
+python bench/compare.py results/bf16.json results/hi2-3.0.json \
+    --metadata results/metadata.json \
+    --md results/comparison.md --json results/comparison.json
+```
+
+The versioned comparison retains every input's resolved path, SHA256 and raw
+JSON, the metadata mapping and comparison command, the benchmark's command
+history, and manifest source/artifact identities, resolved recipe, calibration
+identities and environment. Supplied quality dataset/artifact identities and
+acceptance status are retained independently of task completion.
+
+| measurement | provenance / interpretation |
+| --- | --- |
+| allocation bpw | `manifest.result.allocation_bpw`, **predicted allocation**, not measured stored bytes |
+| stored quantized bpw | `size.linears.bpw`, measured quantized-linear bytes including storage metadata |
+| whole-model tensor bytes | `size.tensor_bytes`, all tensor payloads |
+| whole-model file bytes | `size.file_bytes`, weight shard files, not ancillary config/tokenizer files |
+| quality | existing eval metrics, or `quality.metrics`; dense numerical context remains explicit |
+| benchmark wall seconds | actual benchmark `timing._wall`, including client requests/scoring and resumes |
+| peak memory / native-kernel time | **missing**: these inputs do not collect them |
+
+Every measurement carries `status` (`measured`, `predicted` or `missing`), `value`,
+`unit`, `source` and `scope`. Multi-output manifests with no single
+`result.allocation_bpw` leave that measurement missing; the original outputs
+remain available in raw JSON. A target bpw is not substituted for an allocation,
+and neither is substituted for stored bpw.
+
+Dense-dequantized quality results do **not** establish native loader correctness,
+native kernel coverage, memory consumption or speed. This report computes no
+native-performance ratio from dense numerical evaluation or client wall time.
+Runtime context differences/unknowns are warnings. Compare a bounded set of
+already-measured recipe outputs by listing candidate files; repeat inputs and
+commands remain reviewable without rerunning a model.
+
+### Teacher-forced scores and shell wrappers
+
+`python bench/tfkld.py score --url URL --model NAME --ref-results REF.json
+--out LP.json` scores reference completions through the extended APIs above.
+It defaults to supported chat tasks requested by the reference; `--tasks`
+requests an explicit list. No eligible tasks, missing requested reference tasks,
+failed data loads, missing completion/token scores or request errors produce an
+incomplete report and exit 1. Completed wrong reference answers can still be
+scored. Outputs are versioned reports with `results`, `completion` and `status`;
+`tfkld.py compare REF_LP.json CAND_LP.json` consumes those reports and reports
+unpaired items. Older unversioned LP files need to be rescored for this interface.
+The reference benchmark must explicitly have `status: complete`; legacy references
+without that evidence remain incomplete even if individual token scores succeed.
+
+The comparison field is `mean_logprob_gap` (nats/token), a signed, token-weighted
+mean of `log p_ref - log p_candidate` on the scored completions. It is **not KL
+divergence**: greedy reference outputs are not samples from the reference
+distribution, and a candidate can assign them higher probability, giving a
+negative gap. Do not compare this quantity with the full-distribution KL measured
+by `hi2 quality`. Matching item IDs and lengths do not prove matching token IDs;
+use identical tokenizers and chat templates. This scorer currently forces
+`enable_thinking=false`, so reference generation must use that same setting.
+
+`bench/serve_run.sh TAG=MODEL_DIR ...` needs the external fork's
+`SERVE_VALIDATE=/path/to/serve_validate.sh`, `GPU` and a compatible server
+environment; that driver is not shipped or installed by hi2. Set `PY` to the
+client interpreter and `ROOT` to the results directory. `TASKS`, `LIMIT`,
+`WORKERS` and `EXTRA` are passed through to the task suite. The hook also runs
+teacher-forced scoring by default; `TF_LIMIT` and optional `TF_TASKS` control it.
+Set **`TF_KLD=0`** to explicitly omit that stage (for example for `needle,mc`
+without chat tasks, or a server lacking teacher-forced APIs).
+
+`hook.sh` prints `PASS`/`FAIL` **and returns the failing stage's nonzero exit
+code**. `serve_run.sh` preserves server/hook failure even if the external driver
+swallows the hook exit, using an invocation-specific completion marker. It
+attempts subsequent arms, copies available partial reports and exits nonzero if
+any arm failed. Missing completion markers are failures; a stale previous run
+cannot certify a new invocation. Do not use the existence of JSON or a low
+accuracy score as a replacement for these status fields and exit codes.
+
 ## Runtime
 
-Estimates per 1000 requests, at an aggregate decode of 150 tok/s and prefill of
-2000 tok/s with 16 workers (4x V620, a 27B W4A16 model, roughly the c=8 numbers in the
-fork's notes). They scale with the server; `timing` in a result file has the measured
-seconds.
+**Predictions, not measurements:** estimates per 1000 requests at an aggregate
+decode of 150 tok/s and prefill of 2000 tok/s with 16 workers (4x V620, a 27B W4A16
+model, based on rates in the fork's notes). They scale with the server; they are
+not populated as measured values in comparison reports. `timing` in an actual
+result file records the client-side seconds for that run.
 
 | task | prompt / output tokens per request | per 1000 requests | full task |
 | --- | --- | --- | --- |
@@ -127,11 +339,27 @@ The Hugging Face tasks load with `datasets.load_dataset` (`HI2_BENCH_CACHE` sets
 `datasets` works and set `HI2_BENCH_DATA=DIR`. The MC files are found through
 `HI2_BENCH_MC_DATA`, the directory with the llama.cpp validation JSON files
 (`ikawrakow/validation-datasets-for-llama.cpp`, converted with its `convert` tool). A
-missing dataset skips that task with a message that says how to get it; the other tasks
-still run.
+missing dataset records that task as `load_error` with instructions for obtaining
+it; other tasks still run and their partial results are saved, but the overall
+run is **incomplete and exits nonzero**. `all` therefore requires MC data and
+enables generated-code execution as well as the Hugging Face and local tasks.
 
-Dependencies: the standard library, plus `datasets` for the Hugging Face loaders. The
-statistics need nothing else.
+For offline use, prepare exports where downloading is permitted, then copy them
+to the client:
+
+```bash
+python -m bench.data export prepared-data --tasks gsm8k,toolcall
+HI2_BENCH_DATA=prepared-data HF_DATASETS_OFFLINE=1 \
+    python bench/run.py --url http://127.0.0.1:18731 --model NAME \
+    --tasks gsm8k,toolcall --out results/offline.json
+```
+
+Exports are preferred when present. If an export is absent, the loader falls
+back to `datasets`; `HF_DATASETS_OFFLINE=1` prevents that fallback from
+downloading but still requires an existing datasets cache. Record the selected
+item hash in the report when comparing runs; dataset names alone are not
+immutable revision identities. The MC JSON files are external prerequisites
+and are not generated by `bench.data export`.
 
 ## Adding a task
 

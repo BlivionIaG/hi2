@@ -1,13 +1,14 @@
 # HI2 for mixture-of-experts models
 
-`hi2` quantizes routed experts into the v3.2 flex format (`quant_method:
-rdna_hint_flex`) with the same three phases as dense models. Nothing in the format,
-the kernels or the loader changes: each expert projection is an ordinary HI2 tensor
-`model.layers.N.mlp.experts.E.{gate,up,down}_proj.hi2_*` (or, with
-`--moe-layout stacked`, one stack per layer and group, see "Stacked expert layout"), the router
-(`mlp.gate.weight`), norms, embedding and head stay dense. This note records how
-experts are calibrated and allocated, and the first end-to-end result
-(allenai/OLMoE-1B-7B-0924).
+`hi2`'s MoE PTQ path calibrates, allocates and encodes routed experts into the
+v3.2 flex format (`quant_method: rdna_hint_flex`). A per-expert projection is an
+ordinary `model.layers.N.mlp.experts.E.{gate,up,down}_proj.hi2_*` tensor; the
+current default instead groups experts into stacks per layer/projection group.
+The tensor decode semantics are unchanged, but a native loader must support the
+selected layout. Routers, norms, embeddings and heads stay dense.
+This note records the implemented paths and the measured OLMoE-1B-7B-0924 PTQ
+case, not general MoE QAD or runtime compatibility. Check the
+[support matrix](getting-started.md#supported-inputs-and-evidence) first.
 
 ## How experts are handled
 
@@ -19,21 +20,34 @@ experts are calibrated and allocated, and the first end-to-end result
 | Token floor | An expert that saw fewer than `--expert-min-tokens` (default 2) x its widest input routed tokens keeps its own tokens and fills the missing ones with the layer average of its projection: `S_e + (m - n_e) * S_layer / n_layer`, for the block moments and the Hessian. The affected experts are logged per layer; `workdir/expert_tokens.json` holds every expert's token count, the topped-up list and min / median / max per layer and projection. An expert group with no tokens at all falls back to data-free weights (logged). | A Hessian from a few hundred tokens is rank deficient; the layer average is the best prior for the missing directions. |
 | Allocation weight | The allocator minimises `sum_t w_t * rel_err_t`. A dense tensor has `w = 1`; the E experts of one layer and projection get `w_e = share_e / E` with `share_e = n_e / mean(n)` (floored at `--expert-share-floor`, 0.05). | Each token sees a router-weighted average of its experts' errors, so the whole group weighs as one dense projection and an expert counts in proportion to the tokens it serves. Without this, 3072 expert tensors would outvote 64 attention tensors. |
 | Sensitivity probe | `--sensitivity probe` quantizes a unit at the reference configuration and measures the KL: a dense tensor alone, or all experts of a layer and projection at once (112 probes for OLMoE instead of 3136). The unit's `s_u = dKL / sum_e w_e rel_err_e` is median-normalised and floored, and each member gets `s_u * w_e`. `--sens-dtype float16` puts a model that does not fit in fp32 on one GPU (bf16 has no GEMM on gfx1030 and is emulated very slowly). | Keeps the probe one forward per unit. |
-| Reuse | A workdir whose `phase1.json` matches the phase-1 settings is reused (tables, statistics, Hessians), and so is a matching sensitivity probe, so one calibration serves several allocation targets. | Phase 1 and the probe are 25 of the 100 minutes of the first OLMoE run. |
+| Reuse | Compatible persistent statistics/tables/probe entries can serve several allocation targets. Current output/workdir reuse also requires the matching run manifest; use separate output/work directories for a changed allocation rather than relying only on `phase1.json`. | Phase 1 and the probe were 25 of the 100 minutes in the first historical OLMoE run. |
 | Writer and export | The checkpoint is streamed as before; `load_dequantized`, `export-dense`, `eval` and `verify` work on the per-expert names (transformers fuses them again on load) in either layout. `eval --dtype` selects the dtype of both models. `--moe-layout stacked` writes one stack per layer and gate_up/down group instead (see "Stacked expert layout"). | |
 
-## Usage
+## Historical PTQ recipe
+
+This reproduces the sampling and PTQ intent of the 2026-10-26 OLMoE experiment,
+not a qualified MoE QAD recipe. `$OLMOE` must name a local safetensors checkpoint
+with per-expert 2-D weights. `calib_mix.txt` needs at least 364,544 tokens counted
+with that model's tokenizer; `eval_mix.txt` is a separate untouched corpus.
+The explicit per-expert layout matches the original experiment; new quantizations
+otherwise default to stacked.
 
 ```bash
-cd .
-python -m hi2 quantize $OLMOE out-r4 --workdir olmoe.work --devices cuda:0 \
-  --calib calib_mix.txt --calib-samples 178 --seq-len 2048 \
-  --sensitivity probe --sens-dtype float16 --max-error-ratio 4
-python -m hi2 quantize $OLMOE out-b3.0 --workdir olmoe.work ... --target-bpw 3.0  # reuses phase 1
-python -m hi2 eval $OLMOE out-r4 --text eval_mix.txt --skip-tokens 0
+python -m hi2 quantize "$OLMOE" out-r4 --workdir olmoe-r4.work --devices cuda:0 \
+  --calib calib_mix.txt --calib-samples 178 --seq-len 2048 --no-qad \
+  --sensitivity probe --sens-dtype float16 --max-error-ratio 4 --moe-layout per-expert
+python -m hi2 quantize "$OLMOE" out-b3.0 --workdir olmoe-b3.0.work --devices cuda:0 \
+  --calib calib_mix.txt --calib-samples 178 --seq-len 2048 --no-qad \
+  --sensitivity probe --sens-dtype float16 --target-bpw 3.0 --moe-layout per-expert
+python -m hi2 eval "$OLMOE" out-r4 --text eval_mix.txt --skip-tokens 0 \
+  --device cpu --dtype float32
 ```
 
-Run `hi2 quantize` once per allocation and `hi2 eval` on each result.
+The second allocation can reuse compatible persistent statistics and probe entries,
+while keeping separate output/work state. Both commands run PTQ only: no layer-wise
+QAD or final-KL. Without `--no-qad`, current default QAD requires 540,672 tokens,
+more than the historical corpus. See the [support matrix](getting-started.md#supported-inputs-and-evidence)
+and [recovery rules](operations.md#resume-and-invalidation) before changing a recipe.
 
 ## OLMoE-1B-7B-0924 (measured 2026-10-26)
 
@@ -96,20 +110,23 @@ floor, so the full calibration file is needed.
 | Phase 3, ratio 4 | 72 min | host 37 GiB (run with the probe) |
 | Phase 3, 3.0 bpw (phase 1 and probe reused) | 75 min | host 7.5 GiB |
 
-The per-expert Hessians (gate/up shared, fp32) take about 21 GB on disk for this model and are
-deleted after the second allocation; the remaining workdir is 0.8 GB. Evaluation on CPU
-in fp32 takes about 15 minutes per text.
+The historical run's per-expert Hessians (gate/up shared, fp32) took about 21 GB
+on disk and were deleted after its second allocation; this is not a cleanup
+recommendation. The current persistent cache retains reusable statistics; its
+measured OLMoE entry is 11.8 GB ([speed.md](speed.md#disk)). The remaining historical
+workdir was 0.8 GB. CPU fp32 evaluation took about 15 minutes per text.
 
 ## Stacked expert layout (`--moe-layout stacked`)
 
-The default layout writes every expert projection as its own HI2 tensor: nine arrays
-per tensor, 28,307 tensors and a 3.5 MB safetensors header for OLMoE-1B-7B. The fork's
-loader then concatenates 64 experts per stage and rebases their offsets, which takes
-about 95 s on a quiet host and 350-560 s under load (dense fp16: 22 s). The stacked
-layout writes the experts of one layer and projection group as one set of arrays,
-already in the layout the fork builds in memory. It changes storage only. Every
-expert's arrays are byte-identical in both layouts, so the dequantized weights are
-too (evidence below). The spec container of a single tensor (spec 2.4) is unchanged.
+The historical per-expert layout writes every expert projection as its own HI2
+tensor: nine arrays per tensor, 28,307 tensors and a 3.5 MB safetensors header for
+OLMoE-1B-7B. In that measurement the fork's loader concatenated 64 experts per
+stage and rebased their offsets, taking about 95 s on a quiet host and 350-560 s
+under load (dense fp16: 22 s). The **current default is stacked**, which writes
+the experts of one layer and projection group as one set of arrays already in
+the layout the fork builds in memory. It changes storage only. Every expert's
+arrays and dequantized weights matched in the measured round trips below.
+The spec container of a single tensor (spec 2.4) is unchanged.
 
 * `hi2 quantize` writes the stacked layout by default (`--moe-layout per-expert` for the
   old one): the fork loader reads stacks, and model load drops from 72-94 s to 9-16 s on
@@ -279,13 +296,22 @@ and the unfused forward against the fused one; a tiny OLMoE runs end to end and 
 the tensor names, the dense router, shared transforms in the written file, and the
 export round trip through transformers.
 
-## Open
+## Implementation status and remaining limits
 
-* Checkpoints that store experts fused on disk (`experts.gate_up_proj` as a 3-D
-  tensor) are not split by the writer yet; OLMoE, Qwen2-MoE and Mixtral store per-expert
-  2-D tensors.
-* Shared experts (Qwen2-MoE) are ordinary dense Linears and need no change; untested.
-* Phase 3 (error-compensated encode, about 0.75 tensors/s on one V620) dominates the
-  run time: the GPTQ column loop is a Python loop over K columns per candidate group,
-  run 3072 times. Batching the experts of a layer through one loop would cut it.
-* The vLLM serve of the checkpoint (kernel path) is the fork side's next step.
+* Fused/batched GPTQ encoding is implemented, not future work: the OLMoE
+  measurement fell from roughly 4,450 s to 192 s for 3,136 tensors on one V620,
+  with byte-identical output. See [the implemented changes](speed.md#what-changed)
+  and the OLMoE table under [speed measurements](speed.md#measurements).
+* Native OLMoE serving was measured in the external fork, including both expert
+  layouts; see [the recorded serving results](results.md#olmoe-1b-7b-unquantized-ppl-6634-docs-3924-mix-whole-file-1384-gb)
+  and the layout measurements above. That is historical evidence, not a
+  version-pinned installation recipe for arbitrary vLLM builds.
+* Checkpoints storing fused 3-D expert weights on disk are not split by the
+  writer. In-memory Transformers fusion adapted from per-expert 2-D source
+  tensors is a different, implemented case. Check the actual files rather than
+  inferring layout from a model-family name.
+* Qwen2-MoE/Mixtral naming and adaptation paths exist, but are not equivalent to
+  a measured end-to-end recipe for every revision. Shared experts are ordinary
+  dense Linears in the implementation and remain unqualified by the OLMoE study.
+* MoE QAD and MoE final-KL have no published end-to-end quality measurements here.
+  The dense-model QAD results do not establish those combinations.

@@ -60,7 +60,7 @@ kinds of entries, each `<root>/<kind>/<digest>/` with its full key in `key.json`
 
 | Kind | Holds | Key (digest of) |
 | --- | --- | --- |
-| `stats` | `sigma/<leader>.pt`: `Sigma = E[x x^T]` per distinct Linear input (q/k/v, gate/up share one), the upper triangle in fp32 when it is exactly symmetric (every Sigma computed on the GPU was), else the full matrix; `colstats/<leader>.pt`: the 16x16 block moments; `layers.json`: which Linears share an input, the token counts; `expert_tokens.json` for MoE | model fingerprint (`config.json` bytes, names and sizes of the weight files and the index), a hash of the calibration token ids (covers the text, the tokenizer, samples and sequence length), compute dtype, device kind and count, `--include` / `--exclude` / `--limit-layers`, `--expert-min-tokens`, `STATS_VERSION` |
+| `stats` | `sigma/<leader>.pt`: per-input `Sigma = E[x x^T]` (fp32 upper triangle when exactly symmetric); `colstats/<leader>.pt`: 16x16 moments; `layers.json`: shared inputs/token counts; `expert_tokens.json` for MoE | Full model-directory fingerprint (`sha256-content-v1`, relative filenames plus config/index/shard bytes), auxiliary model inputs (canonical paths and full SHA256 digests), calibration token-ID hash, compute dtype/device kind/count, include/exclude/layer limit, expert token floor and `STATS_VERSION` |
 | `tables` | the phase-1 tables | the stats digest, the candidates, `--rotation`, `--smooth`, `--effort`, `TABLES_VERSION` |
 | `probe` | `sensitivity.json` | the tables digest, a hash of the probe token ids (`--sens-seqs`, `--sens-len`), `--sens-floor`, `--sens-dtype`, `--sens-batch`, `--expert-share-floor`, the reference candidate, `--effort`, device count, `PROBE_VERSION` |
 
@@ -70,8 +70,9 @@ error ratio, rounding, smoothing, rotation, candidates or QAD: one stats entry s
 every allocation target, ratio sweep, smoothing exponent or candidate set of a model
 and calibration. A change of the phase-1 settings re-tabulates from the cached
 statistics without running the model (`layerwise.tables_from_stats`, same tables bit for
-bit). The workdir keeps only `cache_ref.json` (which entries it used) plus the small
-`sensitivity.json`; `cache.StatsView` reads either layout.
+bit). The workdir records `cache_ref.json` (entries used) and the small
+`sensitivity.json`, alongside its run/recovery artifacts; `cache.StatsView`
+reads persistent or workdir-local statistics.
 
 Entries are built in `<digest>.tmp-<pid>` and renamed when complete, under a lock
 (`<digest>.lock`), so parallel runs of a sweep wait for one computation instead of
@@ -80,19 +81,59 @@ repeating it, and an interrupted build is never used. The log says
 statistics build the tool warns when the free space under the cache root is below the
 estimated entry size (`cache.estimate_stats_bytes`).
 
-Invalidation: entries are content-keyed, so a different model, text, tokenizer or
-setting simply misses. When the code that produces an entry changes its output, bump
-`STATS_VERSION`, `TABLES_VERSION` or `PROBE_VERSION` in `hi2/cache.py`; old entries are
-then never hit again. To remove entries:
+**Current identity:** `sha256-content-v1` hashes full config/index/shard bytes
+and relative filenames, including nested index-referenced shards. Same-size
+weight edits invalidate it even if timestamps are preserved; an identical copy
+with the same relative layout has the same model fingerprint. This API identifies
+the model directory only.
+
+When `$HI2_NGRAM_MMAP` is active, `cache.auxiliary_model_inputs()` separately
+records its `role` (`ngram_mmap`), canonical absolute `path` and full-file
+`sha256`. Missing or nonregular inputs are rejected; unset or empty means an
+empty list. These records are part of the statistics key and, transitively, the
+table/probe keys. Changing any table byte invalidates all three even when size
+and modification time are restored. Selecting another canonical file path also
+invalidates them, even if its bytes match; relative paths and symlink aliases
+of the same file identify the same input.
+
+The run identity records the same list under `source.auxiliary_inputs`, so an
+unchanged run can resume but changed, selected or removed auxiliary inputs
+cannot reuse its work/output directories. During execution the statistics key
+reuses the current run's source fingerprint and auxiliary records rather than
+hashing them twice. Direct calls without that identity compute the missing
+records fresh. There is no cross-invocation or stat-based memoization: each
+invocation streams the checkpoint and active auxiliary bytes in full
+(O(total input bytes) I/O/hash work, bounded 1 MiB chunks). Keep source files,
+auxiliary files and their selection unchanged for the entire run. Token IDs
+and other keyed settings identify the corresponding products.
+
+**Historical limitations:** statistics version 1 used config bytes plus
+weight/index names and sizes, not full weight bytes. Version 2 hashed model
+directory contents but omitted the external n-gram table. The current
+`STATS_VERSION=3` invalidates those products and their dependent table/probe
+keys; old entries remain prunable. Do not manually rekey or blindly reuse old
+recovery artifacts after changing weights or auxiliary inputs. Output/workdir
+resume has its own stricter run identity; see
+[operations.md](operations.md#resume-and-invalidation).
+
+Maintainers bump `STATS_VERSION`, `TABLES_VERSION` or `PROBE_VERSION` when producer
+code changes its outputs. Inspect entries and preview pruning before removing
+only the intended cache products:
 
 ```bash
 python -m hi2 cache list                    # entries, sizes, last use, model, calibration
 python -m hi2 cache size
-python -m hi2 cache prune                   # interrupted builds only
-python -m hi2 cache prune --older-than 14   # unused for 14 days
-python -m hi2 cache prune --keep-gb 100     # least recently used first, down to 100 GiB
-python -m hi2 cache prune --digest <digest> # one entry
+python -m hi2 cache prune --dry-run                   # preview interrupted-build cleanup
+python -m hi2 cache prune --older-than 14 --dry-run   # preview entries unused for 14 days
+python -m hi2 cache prune --keep-gb 100 --dry-run     # preview least-recently-used eviction
+python -m hi2 cache prune --digest <digest> --dry-run # preview one entry
 ```
+
+Remove `--dry-run` only after inspecting the selected entries. Pruning uses the
+same locks as cache construction and skips held entries; permanent `.lock`
+files are coordination state, not orphaned cache products. A dry-run removes no
+products but may create lock files. Cache pruning does not delete source
+checkpoints, outputs or unrelated work directories.
 
 `--cache-fp16-above K` stores Sigma in fp16 for inputs wider than K (part of the key).
 It halves the disk for the large inputs but is lossy; it is off by default (see the
@@ -274,5 +315,7 @@ pytest tests   # CPU; the kernel tests run on a gfx10/gfx11 GPU
 | Test | Checks |
 | --- | --- |
 | `test_gptq_fast.py` | batched torch engine and fused kernel equal the reference loop bit for bit: INT2/INT4/INT8, blocks 16/32/64, act-order, K not a multiple of 128, row chunking, several jobs and batches of mixed widths |
-| `test_cache.py` | cached runs byte-identical to uncached ones (gptq and nearest), hits on rerun without running the model, new phase-1 settings from cached statistics, probe cached, multi-ratio outputs equal single runs, `encode_many` equals the per-tensor reference (shared inputs, two devices, act-order), triangle storage exact, prune/list, probe prefix replay bit-identical |
+| `test_cache.py` | cached runs byte-identical to uncached ones (gptq and nearest), hits on rerun without running the model, new phase-1 settings from cached statistics, probe cached, full model/auxiliary byte changes invalidate all dependent products, current invocation identity reused without rehashing, multi-ratio outputs equal single runs, `encode_many` equals the per-tensor reference (shared inputs, two devices, act-order), triangle storage exact, prune/list, probe prefix replay bit-identical |
 | `test_allocate_fast.py` | the vectorised allocator gives the old picks, bpw, multiplier and ratio |
+| `test_ngram_mmap.py` | real mmap gathers and dtype casts, canonical auxiliary identity, full-file hashing beyond the first chunk, missing/nonregular input rejection |
+| `test_auxiliary_inputs.py` | shared source/auxiliary identity, unchanged subprocess resume, rejection without artifact mutation after same-size/restored-mtime table edits, changed file selection or removal |

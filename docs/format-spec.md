@@ -1,15 +1,26 @@
-# HadamardINT2-FP16 v3.2 (draft)
+# HadamardINT2-FP16 v3.2
 
-Status: **draft for review.** Supersedes v3.1 for the points listed in section 10.
-Every number in sections 3, 4 and 6 is produced by a script in this repo
-(`experiments/`) or by a probe that was assembled and **run on a
-gfx1030 V620**; where something is a design choice or a guess it says so.
+Status: **published serialization reference for the implemented v3.2 format**.
+Section 2 defines the normative tensor representation and decode semantics;
+the [stacked MoE names, arrays and invariants](moe.md#stacked-expert-layout---moe-layout-stacked)
+extend its container. [`hi2/format.py`](../hi2/format.py),
+[`hi2/checkpoint.py`](../hi2/checkpoint.py) and [`hi2/stack.py`](../hi2/stack.py)
+are the corresponding implementation. Section 10 records changes from v3.1.
 
-| --- | --- | --- | --- | --- |
+The remaining sections record encoder policy, dated experiments, hardware
+observations and explicitly identified proposals; they are not additional
+serialization requirements or a guarantee that a particular runtime supports
+the format. Section 12 is the evaluation protocol for this document's research
+claims, not a loader requirement. The design study in section 11 is non-normative.
+The original measurements in sections 3, 4 and 6 came from `experiments/` scripts
+or gfx1030 V620 probes; no new GPU validation is implied by this documentation.
+
+| Property | Scope |
+| --- | --- |
 | Scope | Weight matrices. Activation handling is defined only for the dot-product input. KV cache is out of scope. |
-| Hardware | RDNA2 `gfx1030`, ROCm 7.14 toolchain. |
-| Runtime | vLLM. The format, loader and kernels go into the vLLM PR. **Calibration does not**: it lives in the separate `hi2` quantizer, which produces checkpoints in this format. |
-| Format name | `rdna_hint_flex` (quant_method; "HI2" is the short name used in this document), tensor prefix `hi2_`, mode `flex`. v2 and v2i4 are restrictions of flex. The earlier name `hadamard_int2` is kept as a load-time alias because the rows carry INT2, INT4 and INT8. |
+| Hardware evidence | RDNA2 `gfx1030`, ROCm 7.14 toolchain; see each measurement's conditions. |
+| Runtime boundary | Native loader/kernels live in an external vLLM fork; calibration lives in `hi2`. Historical serving results do not identify a newly qualified runtime revision. |
+| Format name | `rdna_hint_flex` (`quant_method`; "HI2" in this document), tensor prefix `hi2_`, mode `flex`. Historical runtime names such as `hadamard_int2` are not an alternative emitted schema or a promise of alias support in other loaders. |
 
 ## 1. What changed from v3.1, in one table
 
@@ -28,9 +39,14 @@ gfx1030 V620**; where something is a design choice or a guess it says so.
 
 ### 2.1 Tensor and blocks
 
-`W[R, K]`. Blocks run along K, size `B` in {16, 32, 64}, chosen per row. Each row
-is INT2 (4 levels) or INT4 (16 levels), chosen per row. `K` must be a multiple
-of 64.
+`W[R, K]`. Blocks run along K, size `B` in {16, 32, 64}, chosen per row.
+The serialized row width is **INT2, INT4 or INT8** (`nbits` in {2, 4, 8};
+4, 16 or 256 code levels respectively). `K` must be a multiple of 64.
+
+Serialized support is distinct from encoder search policy. The current encoder
+defaults to INT2/INT4 with B=16/32/64; `--bits 2,4,8` additionally permits
+INT8/B32 and INT8/B64 candidates ([`calibrate.SELECTABLE`](../hi2/calibrate.py)).
+INT8 is not enabled by default and does not require a different container.
 
 ### 2.2 Affine ladder with hierarchical parameters
 
@@ -96,17 +112,21 @@ Codes are packed LSB-first in 32-bit words as before (16 INT2, 8 INT4 or 4 INT8 
 
 ### 2.5 Bit accounting
 
-`bpw = nbits + 16/B + 48/K + meta/(R*K)` with `meta` as in v3.1 section 4
-(Hadamard flags, 1 bit per row when INT2 and INT4 rows are mixed, 2 bits per row when
-block sizes differ), plus
-`16/R` when the tensor carries a smoothing vector (0.004 at R=4096, but 0.125 for
-a 128-row k or v projection). Tensors that share an input (q, k, v; gate, up)
-share the same `s`, so it can be stored once or folded into the preceding norm.
+The allocation model is `nbits + 16/B + 48/K`, plus modeled metadata
+(Hadamard bits, row-width and block-size flags) and `16/R` for a smoothing
+vector. At R=4096 smoothing costs 0.004 bpw, but at R=128 it costs 0.125 bpw.
+This is **not the actual serialized size**: stored offsets and per-row arrays
+have the dtypes in the container, rather than bit-packed theoretical flags.
+Use [`hi2 size`](evaluation.md#size-and-bpw) for actual tensor bytes, body bpw
+and whole-checkpoint comparisons. Shared-input transforms can have the same
+values without being stored only once; folding them into a norm is not the
+current serialized representation.
 
 | nbits | B=16 | B=32 | B=64 |
 | --- | --- | --- | --- |
 | 2 | 3.012 | 2.512 | 2.262 |
 | 4 | 5.012 | 4.512 | 4.262 |
+| 8 | 9.012 | 8.512 | 8.262 |
 
 (K=4096, metadata excluded. The saving over v3.1's fp16 pair is 0.98 bpw at B=16,
 0.48 at B=32 and 0.23 at B=64.)
@@ -118,8 +138,9 @@ Model Qwen2.5-0.5B-Instruct (bf16 weights, fp32 math), 5 layers (0, 6, 12, 18,
 captured by hooking the real forward pass on 4096 tokens of repo documentation.
 **The encoder is calibrated on the first 2048 tokens and every error below is
 measured on the other 2048** (held out). Metric: relative L2 error of the layer
-output `X W_hat^T` against `X W^T`, averaged over matrices. This is output
-error, **not KL divergence and not perplexity**; neither has been measured yet.
+output `X W_hat^T` against `X W^T`, averaged over matrices. This experiment measures
+output error, **not KL divergence or perplexity**; later model-level results below
+and in [results.md](results.md) use those other metrics.
 One small model: treat the *ordering* of options as the finding, not the
 absolute values. Script `experiments/scale_study.py`; raw results
 `experiments/results/qwen2.5-0.5b-scale-study.json`.
@@ -847,24 +868,27 @@ Every technique is judged on the same measurements as section 4.5:
 * **The gap to EXL3** (4.7, 4.8): at 3.0 bpw, 1.32 against 1.12 on Qwen3.5-0.8B and
   1.10 against 1.05 on Qwen3.5-4B, about 0.8 bpw at equal quality on both. What remains
   is probably EXL3's trellis codebook and block-parameter-free format (section 11).
-* **Accuracy and inference cost are not yet compared.** KL and perplexity are measured;
-  multiple-choice accuracy (ARC, HellaSwag, MMLU) is being measured for EXL3, HI2 and
-  GGUF, and the inference-cost comparison (decode work per weight, activation
-  transforms, kernel variants, measured decode speed of EXL3 and GGUF) is pending.
-  No HI2 kernel exists, so HI2's own speed is unknown.
+* **Runtime and task coverage remains model-specific.** Multiple-choice accuracy,
+  native HI2 speed and later GGUF comparisons are now recorded in
+  [results.md](results.md). HI2 kernels exist in the external fork; the earlier
+  "no kernel" status is superseded. This is not a complete cross-format,
+  cross-model runtime qualification; consult the
+  [support matrix](getting-started.md#supported-inputs-and-evidence).
 * **Is a trellis path worth its inference cost?** A trellis-coded INT2/INT4 variant
   (11.2) would add a second decode path; it is a proposal, not planned, and would be
   decided against the measured quality gap at the same code width (11.4).
 * **Allocation:** sensitivity weighting helps at 3.0 bpw but flex still does not beat a
   uniform INT4/B64 at 4.3 bpw. Measured per-precision sensitivity (8.6) is the next step.
-* **Three models only.** Qwen2.5-0.5B, Qwen3.5-0.8B and Qwen3.5-4B, one text. Everything
-  was tuned on the small ones.
+* **Limited model/domain coverage.** The initial encoder studies used
+  Qwen2.5-0.5B, Qwen3.5-0.8B and Qwen3.5-4B. Later OLMoE and 27B measurements
+  broaden that evidence, but do not qualify every architecture or source revision.
 * The smoothing vector costs `16/R` bpw per tensor, which matters for small tensors.
   It is shared between q/k/v and between gate/up (`calibrate.shared_transform`: one
   vector and one set of rotation flags per shared input). Folding it into the preceding
   norm is not implemented.
-* Calibration and evaluation text is repository documentation, not a standard
-  corpus.
+* The initial calibration/evaluation study used repository documentation;
+  later mixed-domain and task studies are in [results.md](results.md).
+  Corpus-specific results should not be generalized to arbitrary workloads.
 
 ## 10. Corrections to v3.1
 
@@ -1012,12 +1036,14 @@ A third row class, INT8 (`nbits = 8`, B = 16, 32 or 64; the tool offers 32 and 6
 very sensitive projections. It uses the same ladder, params and packing (four codes per
 word, one byte each) and is the natural operand of `v_dot4_i32_i8` in the I8 mode. It
 is opt-in in the quantizer (`--bits 2,4,8`) and the global allocation decides where it
-pays: a mixed row-width stream needs `ceil(log2(3)) = 2` flag bits per row. Measured on
-Gaussian rows: relative error 2e-5 at 8.44 bpw (INT4 at 4.44 bpw: 7e-3), so INT8 rows
-are effectively lossless and cost about 4 extra bpw over INT4; whether any row earns
-that price is a sensitivity-allocation question for the 4B runs.
+pays. The allocation model budgets `ceil(log2(3)) = 2` row-width flag bits when
+all three widths are candidates; actual serialization stores a uint8 width
+array. On the measured Gaussian rows, relative error was 2e-5 at 8.44 bpw
+(INT4 at 4.44 bpw: 7e-3), a small nonzero reconstruction error, not lossless
+model behavior. The [later INT8 study](lowbit.md) found no material gain at
+3.0-3.5 bpw on its 0.8B/4B models.
 
-## 12. How to evaluate a quantized model (normative for this spec's claims)
+## 12. How to evaluate a quantized model (research acceptance protocol)
 
 A format claim ("better than GGUF", "between GGUF and EXL3") is only accepted when it
 is measured on all four axes below, on the same model, the same held-out text and the
@@ -1083,10 +1109,10 @@ is one model and a handful of benchmarks, so it is a lead and not a measurement 
 
 **No format change.** The extension lives entirely in the quantizer; the container,
 kernels and compute modes of Sections 2 and 6 are untouched, and a QAD checkpoint is a
-normal v3.2 checkpoint. It is the training-time counterpart of Hessian-aware rounding
-(8.3): where 8.3 compensates rounding error layer by layer against a fixed input
-second moment, QAD lets the weights move so the whole network's output distribution
-matches the teacher.
+normal v3.2 checkpoint. Layer-wise QAD trains against hidden-state reconstruction;
+the implemented final phase trains a limited set of parameters against the
+whole-network logit distribution. Neither objective guarantees improved KLD
+on every independent corpus.
 
 **Why the format suits it.**
 
@@ -1096,32 +1122,40 @@ matches the teacher.
   `fake_quant` is the 8-bit-parameter ladder of 2.1 with an STE on the rounding.
 * Per-row `(nbits, B)` picks stay frozen from the PTQ allocation (including INT8 rows),
   so the bit budget does not drift during training.
-* Teacher and student share tokenizer and architecture, so the teacher is the
-  unquantized checkpoint and the loss is `KL(teacher || student)` on logits.
+* Teacher and student share tokenizer and architecture. The layer objective is
+  normalized hidden-state MSE; optional layerwise KL and the final phase use
+  `KL(teacher || student)` on logits.
 
-**Procedure.**
+**Implemented procedure.**
 
-1. Run the normal PTQ pipeline (calibrate, allocate, Hessian-rounded encode) and keep
-   its picks, smoothing vectors and rotation flags.
-2. Initialise the student's latent weights from the unquantized weights (not from the
-   dequantized ones) and train with the fake-quantized forward, STE gradients, a small
-   learning rate and fp32 master weights; also let the per-block `lo`/`step` follow the
-   latents (refit each step, or learn them with the STE).
-3. Train on text from the calibration distribution plus agent and code data, for a
-   small token budget (hundreds of millions of tokens at most for a 4B model, to be
-   measured); hold out the Section 12 evaluation text.
-4. Re-encode: round the final latents to codes with the PTQ picks, requantize the
-   params, and write the checkpoint through the existing writer.
+1. Calibrate and allocate with PTQ; initialize each layer with Hessian-aware
+   encoding and keep its row picks, smoothing vectors and rotation flags.
+2. Train layer-wise latent weights and ladder-byte parameters using the exact
+   fake-quantized decode and straight-through gradients. Keep the best evaluated
+   local state, including PTQ as a candidate. Optional norm training
+   (`train_norms`) is implemented and off by default.
+3. Use internal train/validation windows from calibration text, while reserving
+   independent tuning and final-test corpora ([evaluation.md](evaluation.md)).
+   The internal validation objective is not final-test KLD.
+4. In the `default` and `thorough` presets, request 200 final logit-KL steps.
+   This trains ladder bytes and, by default, norms, with codes frozen. `fast`
+   leaves it off; `--qad-final-kl 0` disables it explicitly.
+5. Write the retained quantized tensors and any trained dense norm overrides
+   through the checkpoint writer.
 
-**Cost and fit.** A layer-by-layer variant (train one decoder layer against the
-teacher's hidden states, then move on) fits the box's 29 GiB GPUs for 4B-class models
-and keeps the existing layerwise executor; a full-network variant needs the student,
-the teacher and optimizer state in memory at once and is practical only with GPU+RAM
-offload or TP. Quantization time grows from minutes to hours; the vLLM PR is unchanged.
+**Cost and fit.** Layer-wise QAD keeps hidden states/source weights in RAM and
+trains one decoder layer at a time. Final-KL has a different memory model: the
+student is sharded across devices, and saved teacher head inputs avoid loading
+the teacher when available. If the GPU fit estimate fails, the final phase is
+skipped with a note; successful quantization alone does not prove it ran.
+An unfinished layer or final phase restarts at that phase boundary, not at an
+optimizer step. A full-network pass training all weights is not implemented.
+See [operations.md](operations.md) for phase costs and recovery limits.
 
-**Status: implemented and on by default** (`hi2 quantize`; `--no-qad` for PTQ only;
-presets `fast`, `default`, `thorough`; layer-wise, resumable; design, defaults and tables
-in `docs/qad.md`). Measured on the allocation of the PTQ run it starts from:
+**Status: implemented and enabled with calibration** (`hi2 quantize`;
+`--no-qad` for PTQ only). The following table records layer-wise measurements
+at the same allocations as their PTQ baselines; it does not retroactively
+include the later default-on final-KL phase. Details are in [qad.md](qad.md).
 
 | Model, bpw | KLD docs (PTQ to QAD) | KLD mixed text | Top-1 docs | Task accuracy |
 | --- | --- | --- | --- | --- |
@@ -1133,5 +1167,7 @@ QAD at ratio 6 beats PTQ at ratio 4 on both texts with 0.27 bpw less (0.8B). Red
 step budget costs accuracy beyond noise (budget 0.5: 17 instead of 41 minutes on the
 0.8B, KLD 0.099 against 0.077 on docs), so `default` keeps 300 steps per layer; `fast` is
 the budgeted run. Distribution fidelity improves much more than multiple-choice accuracy:
-HellaSwag and MMLU stay below EXL3 3.0 for every HI2 variant tested. Not done: QAD on a MoE
-model, a final logit-KL phase, norm-weight training.
+HellaSwag and MMLU stay below EXL3 3.0 for every HI2 variant in those tables.
+MoE QAD has no published end-to-end measurement here. Final-KL and norm training
+are implemented as described above; their measured gains and limits are in
+[lowbit.md](lowbit.md) and the completed 27B results in [qad.md](qad.md).

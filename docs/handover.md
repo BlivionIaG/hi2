@@ -1,12 +1,30 @@
-# Handover (2026-10-29)
+# Historical handover (2026-10-29)
 
-State of the project at the end of this session, and what comes next. Detail lives in the
-linked documents. Machine-specific paths and hosts are deliberately not written here.
+This is a **dated maintainer record, not current operating guidance**. It preserves
+the session's findings and then-open investigations. Runtime blockers below
+describe that checkout/session, not every current fork build. The later
+[completed 27B run](surfaces.md#the-default-27b-run-finished-2026-10-29) and
+[results including 2026-10-31 follow-ups](results.md#qwen38-27b-at-30-bpw)
+supersede the pending-task wording. Use [installation](installation.md),
+[operations](operations.md) and the [support matrix](getting-started.md#supported-inputs-and-evidence)
+for the user path. Machine-specific paths and hosts are deliberately omitted.
+
+**Metric correction for this record:** historical served "domain KLD" / "teacher-forced
+KLD" from `bench/tfkld.py` is the signed mean log-probability gap, in nats/token:
+`mean(log p_reference(greedy_reference_token) - log p_candidate(same_token))`.
+It can be negative and is neither full-vocabulary KL nor a reference-sampled KL
+estimator. A small gap or matching task scores does not prove distribution equivalence,
+and the gap supplies no KL-based bound or universal quality threshold. The docs/mix
+corpus KLD from dense `hi2 eval` / `evalq` remains full-vocabulary KL, a different metric.
+Served comparisons require matching token IDs, tokenizer, chat template and thinking
+settings; equal token counts alone do not establish this. The current scorer forces
+`enable_thinking=false`, which reference generation must also use
+([scoring contract](../bench/README.md#teacher-forced-scores-and-shell-wrappers)).
 
 ## In flight
 
 * **Nothing runs.** The 27B `default` checkpoint is written and scored (the result is the first
-  bullet under "Done this session"). The open follow-ups are its teacher-forced domain KLD and
+  bullet under "Done this session"). The open follow-ups are its teacher-forced domain log-probability gap and
   its reduced task suite (`docs/surfaces.md`, "After this run, in order"); neither is started.
   The suite arm is blocked on the serve path: the plain `vllm-rdna-0.31.0` fork rejects the
   checkpoint's `rdna_hint_flex` quantization method, no fork tree under the home registers it,
@@ -15,9 +33,10 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 
 ## Where things are
 
-* Repository: `BlivionIaG/hi2` (private, Apache-2.0), branch `main`. History was rewritten once
-  on 2026-10-27 (a trailer removed): re-clone or `git fetch && git reset --hard origin/main`
-  any other clone.
+* Repository at the time: `BlivionIaG/hi2`, described then as private, Apache-2.0,
+  branch `main`. History was rewritten on 2026-10-27 to remove a trailer.
+  This historical event is not an instruction to reset or discard another
+  clone's work; preserve local changes when reconciling repository history.
 * Long jobs run on the GPU build box (8 Radeon PRO V620; HIP devices 2-5 are ours) from a
   frozen copy of the repository, never from a directory that is re-synced; nothing under
   `/tmp`; stop only your own processes, by explicit pid.
@@ -52,10 +71,10 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   (`hi2/tune.py`). Smoke-tested on the 0.8B, PTQ only (target 0.05 gave ratio 2.2, 4.1 bpw).
 * `bench/`: task-level evaluation suite (GSM8K, HumanEval, MBPP, instruction following, ToolACE
   tool calls, long-context retrieval, multiple choice, decisions) with paired comparison, and
-  `bench/tfkld.py`, the teacher-forced domain KLD. Drivers `bench/serve_run.sh`,
+  `bench/tfkld.py`, the teacher-forced mean log-probability gap. Drivers `bench/serve_run.sh`,
   `bench/hook.sh`. The smoke run is verified: a served 4B as the reference and a 3.0 bpw PTQ
   checkpoint as the candidate, scored against the reference's own completions, 20 items per
-  task. The teacher-forced pass works now. The domain KLD of that checkpoint is 0.162 (gsm8k),
+  task. The teacher-forced pass works now. The domain mean log-probability gap is 0.162 (gsm8k),
   0.051 (toolcall) and 0.161 (decision). Pooled task accuracy falls from 76.2 % to 62.5 %
   (-13.8 points, McNemar p = 0.000977), and the reference arm reproduced the earlier run
   item for item.
@@ -63,8 +82,8 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   the 27B comparison (AWQ is clearly better: 81.8 % first-tool agreement against 66.7 %).
 * Calibration study on the 4B: a four-point PTQ ladder (one shared phase 1, probe and encode)
   plus the four checkpoints already on the box, eight points on the full 4765-item suite with
-  paired statistics, the teacher-forced domain KLD per task family, a target table per use case
-  and the noise floor. The tables and the reasoning are in [results.md](results.md).
+  paired statistics, the teacher-forced mean log-probability gap per task family, a table of
+  observed outcomes per use case and the noise floor. The tables and reasoning are in [results.md](results.md).
 * The 27B anchor on the task suite (reduced to 100 items per family, so not comparable with the
   4B numbers): against a BF16 27B at TP=4, the 3.0 bpw PTQ model loses 6.2 points pooled and the
   QAD one 8.2, almost all of it in tool calls (-23.7 and -32.0) and the agent decisions
@@ -93,32 +112,39 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   nMSE); the 200-step final phase (470.8 min) moved the held-out KL 0.4122 → 0.2427 (−41.1 %)
   and the mix KLD with it. The `fast` checkpoint's +36 % mix regression was the skipped final
   phase, not the layer-wise QAD. Raw: `experiments/results/kld_27b_2026-10-29/`.
-* On the 4B, task loss follows KLD, not the method: top-1 disagreement is about 0.42 x sqrt(KLD)
-  for PTQ and QAD alike. So the calibration can use cheap PTQ points.
-* Token-level KLD understates agentic loss: the 27B decisions are far below what its top-1
-  agreement suggests.
-* The domain KLD of one checkpoint is not one number: the 3.0 bpw PTQ 4B checkpoint scores
-  0.16 on gsm8k and decision but 0.05 on toolcall. A target table needs a KLD per task family.
-* The 0.42 x sqrt(KLD) rule held on the smoke run as well: 18.8 % of the items flipped against
-  16.8 % predicted from the mean KLD of 0.16.
+* On the 4B, the historical summary described top-1 disagreement as about
+  `0.42 x sqrt(KLD)` for PTQ and QAD alike. Treat that as a descriptive fit,
+  not a task-loss guarantee; applying it to the served gap does not make that gap KL.
+* Token-level metrics do not establish agentic fidelity: the 27B decisions are far below
+  what its top-1 agreement alone would suggest.
+* The domain mean log-probability gap of one checkpoint is not one number: the 3.0 bpw PTQ
+  4B checkpoint scores 0.16 on gsm8k and decision but 0.05 on toolcall. Read each family's
+  gap alongside its measured task outcomes, not as a per-family acceptance threshold.
+* The smoke run had 18.8 % of items flip. The historical 16.8 % prediction came from
+  applying 0.42 x sqrt(score) to its mean served gap of 0.16. That numerical proximity
+  does not validate the prediction: this signed greedy-token gap is not KL, so
+  KL-based theoretical bounds do not apply.
 * The first Triton autotune of the linear-attention backward takes about 10 minutes.
 * **The suite is stable enough to read small differences.** A second run of the same BF16 model,
   on another GPU and another server, reproduces the first: under half a point on every family,
   a fifth of a point pooled, the same first tool call on all 66 decision prompts, and a
-  teacher-forced KLD of 2e-05 or less. Every difference in the calibration tables is therefore a
-  property of the checkpoint.
+  teacher-forced mean log-probability gap of 2e-05 or less. This supported repeatability
+  in that experiment; it did not prove distribution equivalence or that every difference
+  was solely a checkpoint effect.
 * **On this 4B nothing below 4.2 bpw is free.** The families that break break early: tool calls
-  lose at a domain KLD of 0.0219 (4.0 bpw), math at 0.0592, instruction following at 0.2166,
-  short programs at 0.0442 (4.2 bpw). The agent-decision family is not ordered by KLD at all:
-  two checkpoints 0.2 bpw apart land 44 points apart on it.
+  lose at a domain mean log-probability gap of 0.0219 (4.0 bpw), math at 0.0592,
+  instruction following at 0.2166, short programs at 0.0442 (4.2 bpw). The agent-decision
+  family is not ordered by this gap at all: two checkpoints 0.2 bpw apart land 44 points
+  apart on it. These are observed outcomes, not transferable gap thresholds.
 * **On the 27B, tool calling is the loss.** At 3 bpw the format loses 24 points on the
   tool-call family and 14 on the agent decisions while math, instruction following, multiple
   choice and long-context retrieval stay flat. The AWQ INT4 checkpoint at about 4.5 bpw loses
   1.9 points pooled against the same-size formats' 6 to 8, so the extra 1.5 bpw buy most of
   the loss on agentic work.
-* A single "default ratio" is the wrong knob: the budget depends on the domain, so the default
-  quality rule has to be picked per use case (tool calls need a KLD below 0.01 on their own
-  text, instruction following tolerates 0.13).
+* A single "default ratio" does not encode task requirements. The historical proposals
+  of a served gap below 0.01 for tool calls and 0.13 for instruction following summarized
+  this study, not validated acceptance cutoffs. Choose budgets from held-out task outcomes;
+  neither number guarantees quality for another model, corpus or serving setup.
 * **The layers a restarted run trains fresh start from a worse held-out nMSE - and the cause was
   a data race in the pinned staging.** In the 27B run of 2026-10-28, the layers the run trained
   itself (54 to 63) started at 1.9e-01 to 2.6e-01 where the run of 2026-10-27 had 1.2e-01 to
@@ -142,9 +168,10 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   faster. The float32 buffers and the one-to-four-GPU split moved the number by 2 %
   of a 33 % gap; the requested 200-step final logit-KL phase was **skipped** (see the
   finding below), which is why the `default` run with the phase reversed it (docs KLD 0.059,
-  mix 0.184; the first bullet above). The teacher-forced domain KLD says where the `fast`
-  damage is: tool calls 63 % worse than PTQ and math 21 % worse, against the agent-decision
-  text 13 % better. **The layer-wise nMSE is a proxy that did not predict the one end-to-end
+  mix 0.184; the first bullet above). The teacher-forced mean log-probability gap is
+  63 % higher than PTQ on tool calls and 21 % higher on math, but 13 % lower on the
+  agent-decision text; those are score changes, not percentages of task damage.
+  **The layer-wise nMSE is a proxy that did not predict the one end-to-end
   result there is, so a recipe cannot be judged on it.**
 * **The 27B final logit-KL phase never ran in the `fast` checkpoints: the fit check skipped it.**
   Those two checkpoints are layer-wise only. The 2026-10-28 log says `final KL: skipped, the student
@@ -170,10 +197,10 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
   is not a registered quantization method.** `ModelConfig` rejects it before the loader
   (`Unknown quantization method: rdna_hint_flex`). No vLLM fork tree under the home (0.28.0 or
   any 0.31.0 variant) contains the string, and the serving venv has no plugin that registers
-  it, so the 27B suite/domain-KLD arm needs either that fork/plugin or `hi2 export-dense`
+  it, so the 27B suite/domain-score arm needs either that fork/plugin or `hi2 export-dense`
   (a dense fp16 checkpoint served at TP=4). The docs' 27B suite numbers were measured on
   2026-10-28 but their raw JSONs are not on the box (`hi2-bench/experiments/results/` has only
-  the decision-fidelity and KLD files), so a fresh reference run would be needed too.
+  the decision-fidelity and historically named KLD score files), so a fresh reference run would be needed too.
 * **The 27B's GPU page faults are the copy engine on host pages - not a bad card, not our
   kernels.** The faulting client is the copy engine (SDMA0 or SDMA1), so no custom kernel is
   involved; the faulting address is a process virtual address, and the faults walk over
@@ -210,8 +237,8 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
 
 1. Calibration study: **done**. PTQ ladder on the 4B (ratios 2-16 in one shared pass) plus the
    existing 4B checkpoints, the full suite on eight points with paired statistics, the domain
-   KLD per task family, a target table (KLD per use case) and the noise floor, then the 27B
-   anchor on the reduced suite. In [results.md](results.md).
+   mean log-probability gap per task family, a table of observed outcomes per use case and
+   the noise floor, then the 27B anchor on the reduced suite. In [results.md](results.md).
 2. 27B rerun: **done, and the verdict is positive.** The `default` recipe with the 200-step
    final logit-KL phase finished on 2026-10-29 (247 min layer-wise + 471 min final, after the
    encoder staging and the head-input shape fix); the checkpoint is
@@ -232,14 +259,18 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
       directions under a 150 GiB RSS process, on one card, for a few hours. That is the
       cheapest way to tell the runtime's direct-DMA path from our own use of it, and it does
       not need the 27B.
-3. The teacher-forced domain KLD of the 27B anchor: **measured** (2026-10-28). A second BF16
-   27B serve at TP=4 carried a teacher-forced pass and was scored on the *first* run's
-   completions, so it pairs exactly with the candidates' log-probs. AWQ INT4 is 4 to 12x lower
-   than HI2 on every family (tool calls 0.00980 against PTQ's 0.02984 and the QAD's 0.04875,
-   instruction following 0.02002 against 0.18594), and the 4B study's per-use-case budgets hold
-   at this size. The 27B noise floor is **exactly zero**: the two reference runs land all 766
-   items the same way. The table is in
-   [results.md](results.md#the-teacher-forced-domain-kld-of-the-27b-anchor).
+3. The teacher-forced domain log-probability gap of the 27B anchor: **measured** (2026-10-28).
+   A second BF16 27B serve at TP=4 carried a teacher-forced pass on the *first* run's
+   completions, as used for the candidates. That pairs the intended completion text;
+   it does not by itself prove identical token IDs or chat-template settings.
+   AWQ INT4's mean gap is 4 to 12x lower than HI2 on every family (tool calls 0.00980
+   against PTQ's 0.02984 and the QAD's 0.04875, instruction following 0.02002 against
+   0.18594). These are descriptive score ratios, not distribution-distance ratios or
+   validation of the 4B study's proposed per-use-case budgets at this size.
+   The two reference runs showed **zero observed score disagreement** on all 766 items
+   under those conditions, not distribution equivalence or a universal zero noise floor.
+   The table is in
+   [results.md](results.md#the-teacher-forced-domain-log-probability-gap-of-the-27b-anchor).
 4. `--target-kld` with QAD on the 4B; decide the default quality rule from step 1, per use case
    rather than as one global ratio.
 5. **The QAD's speed, in the order the measurements put it** (the modes - recipe, math
@@ -262,7 +293,7 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
       float16.
    b. **Stop the layers that stopped gaining - a flag, and running; the end-to-end result was
       negative only without the final phase.** `--qad-preset fast` (budget 0.5, early stop
-      under 1 %) or `--qad-config '{"budget": ..., "min_gain": ...}'`. The 27B rerun of
+      under 1 %) or a `--qad-config` file setting `budget` and `min_gain`. The 27B rerun of
       2026-10-28 ran it with the float32 buffers, so the early stop was not firing on the
       bf16 rounding, and the layer phase came out 2.76x faster for the same per-layer nMSE.
       Its mix KLD was 0.28846 against PTQ's 0.21710, but that checkpoint skipped the final
@@ -289,6 +320,7 @@ linked documents. Machine-specific paths and hosts are deliberately not written 
    are no spare resources for it right now, and it does not touch the quantizer. What it would
    need when it is picked up: the same harness at c=1 on one card, and the dequantize-and-GEMM
    step of the serving path measured against AWQ's, to tell the layout from the recurrence.
-8. Also open: INT3 rows, and a KLD path for AWQ checkpoints (they are compressed-tensors
-   pack-quantized, so `hi2 eval` cannot read them; the cheapest path is the teacher-forced
-   pass the chain already runs).
+8. Also open: INT3 rows, and a full-vocabulary KLD path for AWQ checkpoints (they are
+   compressed-tensors pack-quantized, so `hi2 eval` cannot read them). The teacher-forced
+   pass the chain already runs supplies a signed mean log-probability gap, not a substitute
+   for that missing KL measurement.

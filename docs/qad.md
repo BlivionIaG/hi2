@@ -15,19 +15,21 @@ cd .
 python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --max-error-ratio 6
 # PTQ only
 python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --no-qad
-# check inputs and print the plan (tokens, RAM, layers) without doing anything
+# inspect inputs/settings and resource estimates; this is not a model execution
 python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --dry-run
 # score it against the unquantized model on held-out text
 python -m hi2 eval <hf_model_dir> <out_dir> --text heldout.txt --device cuda:0
-# dense fp16 copy for another engine (llama.cpp, the vLLM multiple-choice harness)
+# dense fp16 Hugging Face copy (llama.cpp requires a separate compatible GGUF conversion)
 python -m hi2 export-dense <hf_model_dir> <out_dir> <dense_dir>
 ```
 
-At the start the run logs that QAD is on, a rough estimate of its extra time on the
-chosen device, and that `--no-qad` turns it off. A run without `--calib` (data-free)
-cannot distill: it logs a warning and writes a PTQ checkpoint. `--max-error-ratio 6`
-is the recommended size for QAD (see "Recommendation for the default ratio"); without it
-the quantizer's `DEFAULT_ERROR_RATIO` applies.
+At the start the run logs that QAD is on and a rough estimate of layer-wise training
+time on the chosen device. That estimate is not total runtime: final-KL, probing,
+encoding and first-use compilation have separate costs ([operations.md](operations.md)).
+A run without `--calib` (data-free) cannot distill: it logs a warning and writes a
+PTQ checkpoint. `--no-qad` also selects PTQ only. `--max-error-ratio 6` is the
+current default allocation target with QAD (see "Recommendation for the default
+ratio"); this is a global error proxy, not a final-KLD guarantee.
 
 Expected cost on one Radeon PRO V620 (gfx1030), model in RAM:
 
@@ -35,6 +37,10 @@ Expected cost on one Radeon PRO V620 (gfx1030), model in RAM:
 | --- | --- | --- | --- | --- | --- |
 | Qwen3.5-0.8B (24 layers) | 8-13 min | 41 min (about 1.7 min per layer) | 17 min | 1.4 GiB | about 15 GiB |
 | Qwen3.5-4B (32 layers) | 50 min | 3.1 h (about 5.5 min per layer) | about 1.3 h (estimate) | 6.0 GiB | about 46 GiB |
+
+These historical QAD timings describe layer-wise training, not the subsequently
+default-on final-KL phase. For example, the completed 27B `default` run took
+247 minutes layer-wise **plus 470.8 minutes final-KL**.
 
 The first trained layer of a run also pays the one-time Triton autotune of the
 linear-attention backward kernels (about 10 minutes on this box, cached afterwards).
@@ -76,10 +82,11 @@ encode. QAD then trains the decoder layers one at a time, in order:
 * **Loss and optimizer:** normalised MSE of the layer output against the target, AdamW
   (no weight decay) with separate learning rates for latents and bytes, linear warm-up
   then cosine decay, gradient accumulation over `batch` sequences per step.
-* **Keep-best:** the loss on held-out calibration sequences (spread over the set) is
-  measured before training (for both the starting state and the PTQ encoding) and at
-  every evaluation; the layer keeps the best of the trained states and the PTQ encoding,
-  so QAD never makes a layer worse on held-out calibration data than PTQ did.
+* **Keep-best:** the loss on internal held-out calibration sequences (spread over
+  the set) is measured before training (for the starting state and PTQ encoding)
+  and at each evaluation. With `keep_best` enabled, the layer retains the best
+  evaluated state under that local objective. This does not bound full-model
+  KLD, task accuracy, or loss on an independent final corpus.
 * **Step budget and early stop.** A run may spend `budget x steps x layers` optimizer
   steps. Each layer gets the remaining budget per remaining layer, scaled by how much the
   previous layer gained relative to the mean gain so far (0.5x to 2x, the first layer
@@ -91,11 +98,13 @@ encode. QAD then trains the decoder layers one at a time, in order:
   writer. `dequantize_stored` of the exported tensor equals the forward's stored values
   bit for bit (tested), and the written shards equal the per-layer artifacts (tested).
 
-Calibration data for QAD is a separate draw from the PTQ head: `samples + val` random
-non-overlapping `seq_len` windows from the whole calibration text (seeded), so every
-domain of a concatenated file is represented. Without calibration text the run falls
-back to PTQ with a warning; too little text fails before phase 1 with a message naming
-the option to change.
+QAD uses a separate sampling operation from the PTQ prefix: `samples + val`
+seeded, non-overlapping `seq_len` windows from the **whole calibration text**.
+They can overlap the PTQ prefix; random sampling does not guarantee every domain
+appears. Interleave domains and reserve final-test documents outside the entire
+calibration input ([data roles](evaluation.md#prepare-independent-data)).
+Without calibration text the run falls back to PTQ with a warning; too little
+text fails with the required amount and options to change.
 
 ## The modes
 
@@ -162,8 +171,8 @@ with it cannot be compared with the earlier runs.
 0.4 % of the activation, which is the noise floor the early stop's threshold sits on, so
 the stop fires on noise. The first fast run at the 27B (2026-10-27) had bf16 buffers and
 its early stop fired at a median layer gain of 1.5 % - the noise, not the layer's
-progress. The 27B run of 2026-10-28 uses `--qad-config '{"buffer_dtype": "float32"}'`
-for that reason.
+progress. The 27B run of 2026-10-28 uses a `--qad-config` file containing
+`{"buffer_dtype": "float32"}` for that reason.
 
 ### The two fast runs, compared per layer (2026-10-27 and 2026-10-28)
 
@@ -215,7 +224,9 @@ on four V620s). Tested on the CPU tiny model:
 `q27b-b3.0-qad-default` (3.012 bpw, the same allocation as PTQ and `fast`) was run with the
 `default` preset (300 steps a layer, 256 sequences, float32 buffers, four-GPU data-parallel
 steps) and the 200-step final logit-KL phase, which now runs from the teacher head inputs the
-layer-wise phase saves. Measured on the same windows as every other number here:
+layer-wise phase saves. The docs/mix KLD below is full-vocabulary corpus KL from dense
+evaluation, measured on the same windows as the other corpus numbers here; it is not
+the served greedy-token score described after the table.
 
 | | docs KLD | mix KLD | top-1 (docs / mix) | EAR (docs / mix) |
 |---|---:|---:|---:|---:|
@@ -240,7 +251,8 @@ to 0.2427 (−41.1 %) in 200 steps (7.85 h, teacher pass 0 s), and both `fast` r
    the two texts disagree.
 
 **What the new checkpoint now has** (measured 2026-10-31): its own row in the teacher-forced
-domain KLD table and its own column in the task-suite table. Domain KLD gsm8k 0.0404,
+domain mean log-probability gap table and its own column in the task-suite table.
+The signed mean gaps (nats/token) are gsm8k 0.0404,
 humaneval 0.0212, mbpp 0.0521, ifeval 0.1740, toolcall 0.0325, decision 0.0770 — lower than
 PTQ on every family except tool calls, 9 % higher there. Suite macro 82.5 %, pooled -3.4
 [-5.6, -1.2] against BF16, with tool calls back to 55.7 % (PTQ 37.1 %) and decisions still at
@@ -248,6 +260,15 @@ PTQ on every family except tool calls, 9 % higher there. Suite macro 82.5 %, poo
 format remains the one thing 3 bpw does not recover. Its docs KLD, mix KLD, top-1, EAR and
 perplexities are in `experiments/results/kld_27b_2026-10-29/`, the suite and domain numbers in
 `experiments/results/suite_27b_2026-10-30/`.
+
+Those served scores from `bench/tfkld.py` were historically labeled "domain KLD".
+They are `mean(log p_reference(greedy_reference_token) - log p_candidate(same_token))`,
+not full-vocabulary KL or a reference-sampled KL estimator, and can be negative.
+They neither prove distribution equivalence nor supply a universal quality threshold;
+the task outcomes above are separate measurements. Comparisons require identical token
+IDs, tokenizer, chat template and thinking settings, not merely equal token counts.
+The current scorer forces `enable_thinking=false`; reference generation must match
+([scoring contract](../bench/README.md#teacher-forced-scores-and-shell-wrappers)).
 
 ### What to pick
 
@@ -389,14 +410,24 @@ Other defaults: batch 4 sequences per step, 8 held-out sequences, `lr_w` 0.01 (s
 units), `lr_p` 0.05 bytes per step, warm-up 5 % then cosine over each layer's allotment,
 `init=weights`, `sampling=random`, seed 0.
 
-**Devices.** Training runs on the first device; with several devices the teacher and
-student propagation passes split the sequences across them (training itself is not
-data-parallel). The model stays in RAM in every mode.
+**Devices.** With multiple devices and `data_parallel: true` (the default), each
+training step splits its sequences across layer replicas, broadcasts decoded
+weights and sums gradients back. The gradient agrees with the one-device
+calculation up to floating-point summation order, not a bitwise reproducibility
+guarantee. Teacher/student propagation also splits sequences across devices.
+Training uses the first device when `data_parallel` is false, when `train_norms`
+is true, or for layers with the optional logit-KL head loss (`kl_layers > 0` on
+the selected final layers). Held-out layer evaluation remains on the first
+device. See [`train_layer`](../hi2/qad.py) for these conditions.
 
-**Resume.** Every finished layer is written to `<workdir>/qad/layerNNN.pt` with a
-fingerprint of everything it depends on (phase-1 settings, allocation, QAD settings);
-re-running the same command reuses phase 1, the sensitivity probe and the finished
-layers, and continues. A changed setting invalidates exactly what depends on it.
+**Resume.** Completed layers are saved under `<workdir>/qad/layerNNN.pt`;
+matching phase-1, allocation and QAD identities allow reuse. An interrupted
+layer restarts, not its last optimizer step. Final-KL has a separate
+`final_kl.pt` artifact and an unfinished final phase restarts. The current run
+manifest guards reuse with resolved settings/input identity, including full
+source weight-content hashing; historical manifests/caches did not have that
+contract. Preserve inputs throughout execution and use
+[fresh work/output state for changed inputs/settings](operations.md#resume-and-invalidation).
 
 **Progress.** Each layer logs its held-out loss before and after (against the PTQ
 encoding), whether it kept the trained state, the steps it spent out of its allotment
@@ -586,24 +617,28 @@ default ratio 4 on both held-out texts with 0.27 bpw less; on 4B, QAD at ratio 6
 multiple-choice task within two standard errors of PTQ at the same size. Ratio 11
 (3.0 bpw) is where QAD helps most relative to PTQ (KL -62 % on 4B docs), but its
 HellaSwag and ARC-Easy losses against the unquantized model remain (-6.7 and -3.2
-points). For PTQ without QAD the placeholder 4 (3.70 / 3.80 bpw) remains a sensible
+points). For PTQ without QAD, ratio 4 (3.70 / 3.80 bpw) remains a sensible
 default; the mapping from ratio to bpw shifts by about 0.05-0.1 bpw between the two
 models, so the ratio is a quality knob, not a size knob. Not measured: QAD at ratio 6
 on 4B exactly (6.2 was run) and PTQ at ratio 4 on 4B with this calibration.
 
-## What is not done
+## Implemented options and remaining work
 
-* A full-network final phase. `--qad-final-kl STEPS` trains a small set of parameters
-  (the quantized Linears' ladder bytes and the norms) against the logits; it is on with the
-  `default` and `thorough` presets (200 steps) and splits the network layer-wise over the devices when
-  it does not fit one GPU ([lowbit.md](lowbit.md)). A pass that trains everything needs the student, teacher and optimizer state together.
-* Training the dense norm weights in the layer-wise phase is available as an option
-  (`train_norms` in the QAD config) and is off: it was within seed noise
-  ([lowbit.md](lowbit.md)).
-* Data-parallel training across several GPUs (the teacher/student propagation passes
-  do split across devices; the training step runs on the first device).
-* Decision fidelity (spec 12.3) and a kernel-side check of a QAD checkpoint in the
-  fork's HI2 loader (the format is unchanged, so it is expected to load as-is).
+* The final **whole-network loss with limited trainable parameters** is
+  implemented: `--qad-final-kl` trains ladder bytes and, by default, norms while
+  codes stay fixed. It runs for 200 steps in `default`/`thorough`, is off in
+  `fast`, and can be disabled explicitly. The network is sharded layer-wise
+  across devices; saved teacher head inputs avoid placing the teacher when
+  available. A model-fit check can skip the phase with a note. A final phase
+  that trains *all* model weights is not implemented.
+* Layer-wise norm training (`train_norms`) is implemented but off by default;
+  it was within seed noise in the [low-bit study](lowbit.md).
+* Data-parallel layer training is implemented with the configuration exceptions
+  in "Devices" above. It is distinct from layer-sharded final-KL training.
+* Decision-fidelity and serving results now exist for specific QAD checkpoints
+  ([results.md](results.md)). They do not qualify every model, dtype or runtime
+  revision; consult the [support matrix](getting-started.md#supported-inputs-and-evidence).
+  MoE QAD remains without published full-model measurements.
 
 ### The half-precision math, measured (2026-10-28)
 
@@ -659,14 +694,16 @@ default float32, so nothing changes) and the measurement is here; a usable versi
 would keep the attention and the recurrence in float32 and put only the MLP in float16,
 which is a per-branch dtype the model code does not offer.
 
-### What is left, in order
+### Follow-up ideas from 2026-10-28
 
-1. **The recipe** (the lever that works): `--qad-preset fast` spends the steps where
-   they still gain. The 27B rerun of 2026-10-28 runs it with the float32 buffers (the
-   earlier fast run had bf16 buffers, whose 0.4 % rounding sits at the noise floor of
-   the 1 % early stop, so its early stop fired on noise). It has to be judged on the mix
-   KLD: the layer-wise nMSE is a proxy that did not predict the one end-to-end result
-   we have.
+The first item below is resolved by subsequent measurements; the copy/buffer
+ideas remain research observations, not promises of an implemented speedup.
+
+1. **The recipe:** the 2026-10-28 `fast` rerun with float32 buffers completed
+   and regressed mix KLD against PTQ. The 2026-10-29 `default` run with final-KL
+   improved both measured corpora. See the dated fast-run comparison and
+   default-recipe verdict above.
+   Layer-wise held-out nMSE alone did not predict these outcomes.
 2. **The copies.** The per-step PCIe traffic is about 9.6 GB (the decoded weights to the
    three workers and the gradients back) and it is hidden behind the compute now (the
    four-way split is within 2 % of ideal). If the workers decoded the weights locally

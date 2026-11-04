@@ -1,23 +1,40 @@
 # Actionable surfaces for a 27B HI2 run
 
-What can be changed, what the tool already decides, what it leaves to the operator, and what
-has been measured at 27B rather than inferred from the 0.8B/4B studies. Written 2026-10-29,
-while the first `default` 27B run was in flight; its result is not in this page yet.
+What can be changed, what the tool already decides, what it leaves to the operator,
+and what has been measured at 27B rather than inferred from the 0.8B/4B studies.
+Started 2026-10-29 while the first `default` run was in flight; its
+[completed measurement](#the-default-27b-run-finished-2026-10-29) is below.
+The [subsequent task/domain evaluation](#after-this-run-in-order) completed on
+2026-10-31. These are dated results, not a current environment qualification.
 
 ## What is measured
 
 | measurement | command | what it says | 27B cost |
 | --- | --- | --- | --- |
-| corpus KLD | `hi2 eval --text docs\|mix` | distribution distance on one corpus, top-1, EAR | about 20 min (13 min of it is placing the model) |
-| domain KLD | `bench/tfkld.py` | KL per task family, teacher-forced on the reference's own completions | hours (needs a TP=4 BF16 serve) |
+| corpus KLD | `hi2 eval --text docs\|mix` | full-vocabulary KL on corpus contexts, top-1, EAR | about 20 min (13 min of it is placing the model) |
+| domain mean log-probability gap | `bench/tfkld.py` | signed greedy-reference-token score gap per task family, not KL | hours (needs a TP=4 BF16 serve) |
 | task suite | `bench/run.py` | paired accuracy per family, McNemar | 3.5 h (reduced to 766 items at 27B) |
 
-The 27B noise floor is **exactly zero** on the suite (766/766 items identical across two
-reference runs) and 2e-05 on the teacher-forced KLD, so one run per candidate is enough and
-every difference is the checkpoint's. The layer-wise held-out nMSE is **not** a decision
-metric: the `fast` checkpoint matched the previous run's per-layer nMSE within 2 % on 21 of 42
-layers and within 5 % on all 42, and came out 33 % worse than PTQ on the mix KLD
-(`qad.md`, "The verdict").
+The served metric, historically labeled "domain KLD" / "teacher-forced KLD", is
+`mean(log p_reference(greedy_reference_token) - log p_candidate(same_token))`
+in nats/token. It can be negative; it is neither full-vocabulary KL nor a
+reference-sampled KL estimator. It supplies no KL-based bound or universal task-quality
+threshold. Keep it separate from the dense corpus KL and from measured task outcomes.
+Comparisons require matching token IDs, tokenizer, chat template and thinking settings;
+equal token counts alone do not establish that identity. The current scorer forces
+`enable_thinking=false`, which reference generation must also use
+([scoring contract](../bench/README.md#teacher-forced-scores-and-shell-wrappers)).
+
+Two BF16 reference runs at TP=4 on the same four cards, with the same greedy
+batching, agreed on all 766 scored items; the teacher-forced mean log-probability gap was
+about 2e-05. This is **zero observed score disagreement in that repetition**,
+not proof of distribution equivalence or deterministic behavior across seeds, requests,
+runtimes or hardware.
+Read checkpoint differences with the paired item-level intervals and the
+[prompt-fingerprint caveat](results.md#the-27b-noise-floor-the-same-model-twice).
+The layer-wise held-out nMSE is **not** a decision metric: `fast` matched the
+earlier run's per-layer nMSE within 2 % on 21 of 42 layers and within 5 % on all
+42, yet was 33 % worse than PTQ on mix KLD ([qad.md](qad.md)).
 
 ## Who decides what
 
@@ -87,7 +104,7 @@ domain is the largest measured lever in the whole tool (`format-spec.md` 8.7).
 | --- | --- |
 | bits are 2, 4 or 8 | INT3 is not packable (32 is not divisible by 3); the INT3 rows in "not done" need a format change |
 | blocks are 16, 32, 64 | 128 is not offered by the encoder or the decoder |
-| rotation group is 128 | a wider group lowers error 1-2 % at the same block but is not in the format |
+| rotation group is 16 | the 128-wide rotation is a non-normative study (spec 11.5), not the current serialized transform; `hi2.format.GROUP` is 16 |
 | `embed`, `lm_head`, `norm`, MTP are kept dense | 6.5 GiB of the 15.3 GiB 27B file is fp16; quantizing them (the GGUF does) would need loader support and would buy about 1.1 bpw for the body at the same file size |
 
 ## QAD surfaces
@@ -100,10 +117,11 @@ domain is the largest measured lever in the whole tool (`format-spec.md` 8.7).
 | `default` | 300 | 1.0 | none | 256 | 200 | 41 min | 1.061 / 1.286 |
 | `thorough` | 600 | 1.0 | none | 512, batch 8 | 200 | 141 min | 1.047 / 1.267 |
 
-At 27B the `fast` layer phase spent 4333 steps on 42 layers (2.76x faster than the first run)
-and the `default` layer phase is about 290 s a layer (5.3 h for 64). The early stop is inert at
-27B with budget 0.5 (the only candidate is step 100, past the allotment), so `fast` == budget
-0.5 in practice.
+At 27B the historical `fast` layer phase spent 4333 steps on the compared 42 layers
+(2.76x faster than the earlier run). The completed `default` run took 247 minutes
+over all 64 layers, followed by 470.8 minutes final-KL. In the measured `fast` run,
+the early-stop candidate at step 100 was past the allotment, so the budget rather
+than early stopping limited those layers.
 
 ### Optimizer and initialisation
 
@@ -129,7 +147,7 @@ and the `default` layer phase is about 290 s a layer (5.3 h for 64). The early s
 | `seed` | 0 | 0.8B seed noise about 0.01 ppl / 0.01 mix KLD |
 | `buffer_dtype` | `auto` (float32 at 27B: 41 GiB fits) | bf16 rounds 0.4 % of the activation, which is the noise floor of a 1 % early stop |
 | `dtype` | `float32` | float16 is 1.43x faster but does not learn (nMSE -1.8 % against -45 %) and the full-attention layers do not run; bf16 is not an instruction on gfx1030 |
-| `data_parallel` | on | same gradient up to summation order; 1.7x a step at 3 GPUs |
+| `data_parallel` | on | same gradient up to summation order; 1.7x a step at 3 GPUs in the 0.8B study; disabled for `train_norms` or layers using the optional layerwise KL head ([qad.md](qad.md)) |
 | `--qad-final-kl` | preset (200 for default/thorough, 0 for fast) | see below |
 
 ### Final logit-KL phase
@@ -179,13 +197,16 @@ checkpoints, so the result is a clean comparison at fixed size.
 
 ## After this run, in order
 
-1. Score it on the teacher-forced tool-call/math KLD and the reduced suite — **done 2026-10-31**.
-   Domain KLD: gsm8k 0.0404, humaneval 0.0212, mbpp 0.0521, ifeval 0.1740, toolcall 0.0325,
+1. Score its teacher-forced tool-call/math mean log-probability gap and reduced suite — **done 2026-10-31**.
+   Domain mean gaps: gsm8k 0.0404, humaneval 0.0212, mbpp 0.0521, ifeval 0.1740, toolcall 0.0325,
    decision 0.0770 (lower than PTQ on every family except tool calls, 9 % higher there). Suite
    macro 82.5 %, pooled -3.4 [-5.6, -1.2]; tool calls recovered to 55.7 % (PTQ 37.1 %), the
-   decisions did not (74.2 %, level with PTQ). Numbers in `results.md`.
-2. If a domain still loses to PTQ: the answer is a larger size (ratio 6 is about 3.5 bpw on
-   the 27B; the tool-call budget on the 4B needed 4.2 bpw) or a domain-calibrated run.
+   decisions did not (74.2 %, level with PTQ). These task results are not implied by the gap.
+   Numbers in [results.md](results.md#the-teacher-forced-domain-log-probability-gap-of-the-27b-anchor).
+2. If a domain still loses to PTQ, test a larger size or a domain-calibrated run
+   on tuning data, then re-evaluate on untouched final data. Ratio 6 was estimated
+   near 3.5 bpw at 27B; the 4B tool-call study needed about 4.2 bpw. Neither is a
+   guaranteed remedy for another corpus or model.
 3. A calibration-domain run: a mix-heavy or tool-heavy calibration (the largest evidenced
    lever, untested at 27B) scored on the tool-call text.
 4. Final-KL tuning (steps, `final_lr_p`) now that the phase actually runs at 27B.

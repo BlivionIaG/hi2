@@ -1,7 +1,9 @@
 # How hi2 works
 
-`hi2` runs four phases. Each phase reads the output of the one before it. Phases 1 and 2
-make the plan. Phases 3 and 4 make the checkpoint.
+`hi2` has four conceptual phases. Phases 1 and 2 select the allocation.
+For QAD, PTQ encoding initializes each layer before its training; the final
+streaming writer publishes the trained tensors afterwards, rather than writing
+a complete final PTQ checkpoint before QAD.
 
 ```mermaid
 flowchart TD
@@ -17,16 +19,17 @@ flowchart TD
         A[pick bits and block for every row<br/>under one model-wide quality target]
     end
     P2 --> P3
-    subgraph P3[3 Encode - encode.py, hessian.py, checkpoint.py]
-        G[GPTQ rounding with fixed ladders]
-        W[stream tensors to shards]
-        G --> W
+    subgraph P3[3 Encode - encode.py, hessian.py]
+        G[GPTQ rounding with fixed ladders<br/>per-layer initialization when QAD is on]
     end
     P3 --> P4
     subgraph P4[4 Distill - qad.py, finalkl.py]
         Q[train latent weights and ladder bytes<br/>against the unquantized layer output]
+        K[limited-parameter final logit-KL<br/>requested by default/thorough]
+        Q --> K
     end
-    P4 --> C[rdna_hint_flex checkpoint]
+    P4 --> W[checkpoint.py: publish tensors and metadata]
+    W --> C[rdna_hint_flex checkpoint]
 ```
 
 ## Phase 1: tabulate
@@ -45,6 +48,11 @@ Every row of the whole model chooses its candidate. The tool minimizes bits unde
 model-wide error limit (`--max-error-ratio`), or minimizes error under a bit budget
 (`--target-bpw`). A sensitivity probe gives each tensor a weight, so errors in sensitive
 tensors cost more. The result is a mix: INT2 for rows that matter less, INT4 for the rest.
+
+The quality constraint is global: the summed sensitivity-weighted candidate
+errors must fit R times the summed best-candidate floor. A row may exceed R
+times its own minimum; the sum, not each row, is constrained. This dimensionless
+allocation proxy is not an end-to-end KLD bound ([evaluation.md](evaluation.md#allocation-and-kld-targets)).
 
 ## Phase 3: encode
 
@@ -72,15 +80,20 @@ flowchart LR
     S -->|keep if it beats PTQ<br/>on held-out data| O[export bit-exact]
 ```
 
-Row picks, smoothing vectors, and rotation flags stay as PTQ chose them. A layer keeps its
-PTQ encoding when training does not beat it on held-out calibration data. An optional last
-phase (`--qad-final-kl`) trains a few parameters against the full logits.
+Row picks, smoothing vectors, and rotation flags stay as PTQ chose them.
+Keep-best chooses among the evaluated local states, including PTQ; it does not
+guarantee final-corpus KLD or task accuracy. The last phase (`--qad-final-kl`)
+is implemented and requested for 200 steps by `default`/`thorough`; `fast`
+requests none, and an explicit 0 disables it. It trains only ladder bytes and,
+by default, norms, with codes fixed. It shards the student across devices and
+uses saved teacher head inputs when available. A failed model-fit estimate
+skips it with a note; this is not the same as completing it.
 
 ## Module map
 
 | Module | Job |
 | --- | --- |
-| `__main__.py` | Command line: `quantize`, `verify`, `eval`, `export-dense`, `restack`, `cache`. |
+| `__main__.py` | Command line: `quantize`, `verify`, `eval`, `export-dense`, `restack`, `calib`, `size`, `cache`. |
 | `pipeline.py` | The phases, `RunConfig`, resume logic. |
 | `format.py` | The storage format, decode, and reference semantics. |
 | `encode.py` | Block encoder: least-squares fit of `lo` and `step`, 8-bit parameters, code assignment. |
@@ -108,8 +121,13 @@ flowchart LR
     H --> D[probe results]
 ```
 
-The cache key is the content of the inputs, so the Hessians survive a change of target,
-ratio, rounding, smoothing, rotation, or candidates. See [speed.md](speed.md).
+Statistics keys include sampled token IDs, the `sha256-content-v1` model identity
+and relevant settings, so compatible Hessians survive allocation/encoder changes.
+The current model fingerprint reads full config/index/shard contents and relative
+filenames; the earlier names-and-sizes-only identity was invalidated by statistics
+version 2. This content hash costs a checkpoint read and does not permit mutating
+inputs during execution. Work/output reuse additionally checks the run manifest.
+See [speed.md](speed.md#the-cache) and [recovery rules](operations.md#resume-and-invalidation).
 
 ## Boundaries
 

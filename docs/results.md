@@ -1,10 +1,17 @@
 # HI2 (`rdna_hint_flex`) against EXL3, GGUF and AWQ: what we measured
 
-Snapshot of 2026-10-26. Every number is from this project's runs on 4x Radeon PRO V620
-(gfx1030); "n/m" means not measured. Perplexity ratio (PPL x) is the quantized perplexity
-divided by the unquantized perplexity on the same text and the same evaluator.
-KLD is in nats/token against the unquantized model's logits (llama.cpp rows: against its
-own F16 logits, so KLD is comparable across formats but PPL is not).
+The initial snapshot is from 2026-10-26, with dated follow-up measurements below
+through 2026-10-31. GPU runs used Radeon PRO V620 (gfx1030); some numerical
+evaluations ran on CPU, as specified in their sections. "n/m" means not measured.
+Perplexity ratio (PPL x) is quantized perplexity divided by the unquantized
+perplexity on the same text and evaluator. KLD denotes full-vocabulary KL divergence,
+in nats/token against the reference logits. The served teacher-forced scores below
+are instead signed **mean log-probability gaps**, not KL or distribution distances;
+see the [score definition and limitations](../bench/README.md#teacher-forced-scores-and-shell-wrappers).
+Different engines, baselines and scored positions still matter: equal metric names
+do not make every cross-harness comparison controlled.
+See the [support matrix](getting-started.md#supported-inputs-and-evidence) and
+[metric boundaries](evaluation.md#read-the-results).
 
 Reading guide: "docs" is the repo-docs held-out text, which the early HI2 runs were also
 *calibrated* on (flattering); "mix" is a held-out chat, instruction and tool-calling text;
@@ -187,7 +194,7 @@ bandwidth bound.
 | HI2 | code extract, `lo + code*step` fma, `v_dot2_f32_f16` (F16 mode) | divide by smoothing vector + 16-point Hadamard per layer input | 2 widths x 3 blocks (+ INT8) | decode 2.06x dense (4B, TP=1) |
 | HI2 I8 mode | code to int8, `v_dot4_i32_i8`, integer epilogue per 64 columns | int8 activation quantization | as above | accuracy cost < 0.2 % PPL; kernel not benchmarked |
 | EXL3 | window extract + procedural codebook (about 4 to 5 ops) + dot2 | two 128-wide Hadamards (input and output side) | one per bit width | n/m |
-| GGUF K-quants | superblock scale unpacking, mixed int dot | q8 activation quantization | many types | n/m (llama-bench pending) |
+| GGUF K-quants | superblock scale unpacking, mixed int dot | q8 activation quantization | many types | Not in this initial table; later [27B llama-bench measurements](#what-the-other-formats-cost-at-this-size-measured) are below |
 | AWQ int4 | int4 dequant + scale fma | none | one | decode 0.65x of HI2 (0.5B) |
 
 ## Qwen3.5-0.8B: error-ratio sweep (mixed calibration, sensitivity probe, PTQ)
@@ -277,9 +284,10 @@ must answer with one XML tool call. Decoding is greedy at concurrency 1 in the f
 with thinking off. A run scores the first tool called (or none, when the model answers in
 prose), and the same tool with the same argument.
 
-The baseline is the unquantized model booted twice. Both boots made the same first call on
-all 66 prompts, so greedy decoding adds no spread on this set, and every difference below is
-a difference of the model. With 66 prompts the 95 % interval is about 10 points wide.
+The unquantized model was booted twice under those conditions. Both boots made
+the same first call on all 66 prompts: no disagreement was observed in that
+repetition. This does not eliminate runtime variation in other runs or sampling
+uncertainty. With 66 prompts the reported 95 % interval is about 10 points wide.
 
 | Model (4B) | Same first tool | 95 % interval | Same tool and argument | Well-formed calls | Garbage |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -307,16 +315,19 @@ Read this as follows.
 Raw decisions of every run are in
 [`experiments/results/decision_fidelity_4b_2026-10-27/`](../experiments/results/decision_fidelity_4b_2026-10-27/);
 the harness is `experiments/decision_fidelity.py` (see [experiments](../experiments/README.md)).
-Not measured: other formats (EXL3, GGUF) on the same prompts, and the 27B model.
+Other formats (EXL3, GGUF) were not measured on these 4B prompts; the later 27B
+decision comparison is recorded in the next section.
 
 ## Qwen3.8-27B at 3.0 bpw
 
 The last column is the 4-bit AWQ checkpoint `cyankiwi/Qwen3.8-27B-AWQ-INT4` (group 32), served the same way. It is about 1.5 bpw larger, so it is a quality ceiling for a 4-bit format and not a same-size comparison.
 
-Qwen3.8-27B (BF16, 64 layers, 24.35 B weights in the 496 quantized linears) quantized with
-`experiments/run_27b.sh`: target 3.0 bpw, the mixed calibration text, the sensitivity probe,
-four V620s for the calibration, probe and encode, and one for QAD. Served in the fork's vLLM
-(fp16), one V620 for the quantized models and four (TP=4) for the BF16 baseline.
+Qwen3.8-27B (BF16, 64 layers, 24.35 B weights in the 496 quantized linears) was
+quantized with `experiments/run_27b.sh`: target 3.0 bpw, mixed calibration and a
+sensitivity probe, with four V620s for calibration/probe/encode. The initial
+`fast` QAD run used one GPU; later `fast` and `default` runs used four, as dated
+in [qad.md](qad.md). Serving used the fork's vLLM (fp16): one V620 for quantized
+models and four (TP=4) for the BF16 baseline.
 
 | | BF16 | HI2 PTQ | HI2 PTQ + QAD (`fast`) | HI2 PTQ + QAD (`default`) | AWQ INT4 (cyankiwi) | GGUF Q4_K_M (unsloth) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -361,8 +372,9 @@ Read this as follows.
    slices use; re-run 2026-10-31, reproduced to four decimals): docs **KLD 0.01424 ± 0.00084**
    (ppl ratio 1.0088), mix **KLD 0.07760 ± 0.00748**. So the GGUF at 4.738 bpw is 4.2x closer
    to BF16 than the HI2 `default` on docs text (0.0142 against 0.0593) and 2.4x closer on mix
-   text (0.0776 against 0.1837). The AWQ KLD is still not measured: hi2 cannot dequantize AWQ,
-   so the table above carries its ppl, suite and domain KLD instead. The equal-body cross-format
+   text (0.0776 against 0.1837). The AWQ full-vocabulary KLD is still not measured:
+   hi2 cannot dequantize AWQ. Its available evidence is perplexity, suite outcomes
+   and the served domain mean log-probability gaps below. The equal-body cross-format
    comparison remains the 4B study at the top of this file (HI2 3.0 + QAD at 0.061–0.068
    against GGUF Q2_K 0.259, Q3_K_M 0.100 and IQ4_XS 0.041). Raw results:
    `experiments/results/kld_27b_2026-10-27/` (PTQ, `fast`),
@@ -417,8 +429,9 @@ What it says:
 2. **The `default` recipe is what makes 3 bpw viable.** Pooled -3.4 [-5.6, -1.2] against -6.2
    for PTQ and -8.2 for `fast`, and it recovers 27 points of tool-call accuracy over `fast`
    and 18 over PTQ. It does not recover the decision format: 74.2 % and 53.0 % of the first
-   tool calls, level with PTQ and behind `fast` (66.7 %). So the final logit-KL phase buys the
-   distribution and the tool-call content, not the format.
+   tool calls, level with PTQ and behind `fast` (66.7 %). The final logit-KL phase
+   accompanies better tool-call content, not format; the separate dense evaluation
+   above measures the docs/mix distribution improvement.
 3. **AWQ INT4 is still a ceiling, but the gap is now 1.7 points.** At 4.625 bpw it loses 1.9
    pooled against 3.4 for the `default`, and it keeps 81.8 % of the first tool calls against
    53.0 %. Per family the `default` beats AWQ on tool calls (55.7 against 49.5) and loses on
@@ -427,14 +440,28 @@ What it says:
 
 Measured on 2026-10-28, in the next section.
 
-### The teacher-forced domain KLD of the 27B anchor
+### The teacher-forced domain log-probability gap of the 27B anchor
 
 The measurement the anchor was missing: a second BF16 27B serve at TP=4 that carries a
-teacher-forced pass, scored on the **first** reference's completions, so it pairs exactly with
-the candidates' log-probs. KL(BF16 || quantized) over the vocabulary, in nats/token, per task
-family, on the text the tasks were scored on.
+teacher-forced pass, scored on the **first** reference's greedy completions, as are
+the candidates. Each task-family column below is the **mean log-probability gap**
+in nats/token: `mean(log p_reference(token) - log p_candidate(token))`, weighted by
+scored tokens, with both models scoring the same greedy reference token.
 
-| candidate | bpw (body) | gsm8k | humaneval | mbpp | ifeval | toolcall | decision |
+These historical served scores were labeled "domain KLD" or "teacher-forced KLD",
+but they are neither full-vocabulary KL nor a reference-sampled KL estimator.
+The gap is signed and can be negative when the candidate assigns the reference
+tokens higher probability. It does not measure distribution distance, establish
+distribution improvement, or support theoretical KL bounds or task-loss budgets.
+See the [benchmark definition](../bench/README.md#teacher-forced-scores-and-shell-wrappers).
+Comparable scores require matching token IDs, tokenizers, chat templates and
+generation/scoring settings; equal token counts alone do not establish this.
+The current scorer forces `enable_thinking=false`, so reference generation must
+match. The historical values below are retained, not rescored or certified as
+meeting every current prerequisite. The dense `hi2 eval`/`evalq` and llama.cpp
+full-vocabulary KLD results elsewhere on this page remain distinct measurements.
+
+| candidate | bpw (body) | gsm8k gap | humaneval gap | mbpp gap | ifeval gap | toolcall gap | decision gap |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | HI2 3.0 bpw (PTQ) | 3.012 | 0.04187 | 0.02604 | 0.05670 | 0.18594 | 0.02984 | 0.07913 |
 | HI2 3.0 bpw (PTQ + QAD `fast`) | 3.012 | 0.05068 | 0.02590 | 0.05485 | 0.18384 | 0.04875 | 0.06925 |
@@ -444,26 +471,29 @@ family, on the text the tasks were scored on.
 (The `fast` row is the 2026-10-27 checkpoint; the `default` row is the 2026-10-29 checkpoint
 with the final logit-KL phase, the one the suite table above scores in its fourth column.)
 
-1. **The 4B study's budgets hold at 27B.** The target table further down says a tool-calling
-   workload needs a domain KLD below 0.0094, instruction following tolerates 0.1296 and math
-   0.0350. AWQ INT4 is inside every one of those budgets (tool calls at 0.0098, just outside),
-   which is what its suite column shows: the smallest pooled loss. HI2 at 3.0 bpw is over the
-   tool-call budget on all three points (PTQ 3.2x, `fast` 5.2x, `default` 3.5x) and over the
-   instruction-following one (1.4x for PTQ and `default`, 1.4x for `fast`), and those are the
-   two families where it loses.
-2. **The `default` final phase moves every family except tool calls.** Against PTQ it is lower
-   on gsm8k (0.04040 against 0.04187), humaneval (0.02121 against 0.02604), mbpp (0.05214
-   against 0.05670), ifeval (0.17396 against 0.18594) and decision (0.07701 against 0.07913),
-   and slightly higher on tool calls (0.03251 against 0.02984, 9 % worse). That last cell is
-   the honest caveat: the suite shows the `default` recovering 18 points of tool-call accuracy
-   over PTQ while its teacher-forced KLD on the same text is 9 % worse, so the tool-call gain
-   is real but the distribution there did not improve. The `fast` checkpoint, by contrast,
-   pays for its decision gain (0.06925 against 0.07913, 13 % less) with a 63 % worse tool-call
-   KLD, which is the pooled -8.2 the suite table already showed.
-3. **The gap AWQ closes is not a rounding difference.** It is 3.3 to 11x lower than the
-   `default` on every family: 11.4x on math, 11.1x on humaneval, 8.7x on instruction following
-   and 3.3x on tool calls and decisions. It buys that with 1.6 bpw more (4.625 against 3.012)
-   and a 31 % bigger file.
+1. **The 4B observations are context, not budgets transferable to 27B.** The 4B
+   outcome table below records gaps of 0.0094 for tool calls, 0.1296 for instruction
+   following and 0.0350 for math at selected points without a detected loss.
+   AWQ INT4's 27B gaps are below those values except tool calls (0.0098), and it has
+   the smallest observed pooled loss. HI2's tool-call gaps are 3.2x (PTQ), 5.2x
+   (`fast`) and 3.5x (`default`) the 4B value; its instruction-following gaps round
+   to 1.4x for all three points. These numerical comparisons do not establish
+   common thresholds across models or predict their task outcomes.
+2. **The `default` gap is lower in every family except tool calls.** Against PTQ
+   it is lower on gsm8k (0.04040 against 0.04187), humaneval (0.02121 against 0.02604),
+   mbpp (0.05214 against 0.05670), ifeval (0.17396 against 0.18594) and decision
+   (0.07701 against 0.07913), and higher on tool calls (0.03251 against 0.02984,
+   9 % higher). The suite nevertheless shows the `default` recovering 18 points
+   of tool-call accuracy over PTQ. That is a task gain alongside a higher gap,
+   not evidence for or against improvement of the full tool-call distribution.
+   The `fast` checkpoint has a 13 % lower decision gap (0.06925 against 0.07913)
+   and a 63 % higher tool-call gap; its observed pooled task difference is -8.2.
+   These are paired observations, not a causal explanation of that pooled loss.
+3. **AWQ has smaller positive gaps in this comparison.** They are 3.3 to 11x
+   lower than the `default`: 11.4x on math, 11.1x on humaneval, 8.7x on instruction
+   following and 3.3x on tool calls and decisions. AWQ uses 1.6 bpw more
+   (4.625 against 3.012) and a 31 % bigger file. These gap ratios are not ratios
+   of distribution distance or guarantees of task quality.
 
 ### The 27B noise floor: the same model, twice
 
@@ -482,17 +512,17 @@ teacher-forced pass, and paired against the first run exactly like the quantized
 | decision | 66 | 87.9 | 87.9 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
 | **pooled** | 766 | 86.1 | 86.1 | **+0.0 [+0.0, +0.0]** | | |
 
-**The floor at this size is exactly zero, not a fraction of a point.** The two runs are greedy
-decodes of the same weights on the same cards with the same batching, and every one of the 766
-items lands the same way - the decision family reproduces the same first tool call on all 66
-prompts and the same argument on all 66. The 4B floor was half a point, because there the two
-runs sat on different GPUs and different servers.
+**Zero score disagreement was observed in this pair of runs.** They used the
+same weights, cards, greedy decoding and batching; all 766 items received the
+same scores, and the decision family reproduced the same first tool and argument
+on all 66 prompts. The 4B repetition below used different GPUs/servers and showed
+small differences.
 
-So at 27B every difference against the reference is the model's and none of it is the harness's:
-the intervals in the suite table above are the item-level uncertainty alone. The one caveat is
-the needle family, where the harness reported a prompt fingerprint difference between the two
-runs (it is the only family that does not reproduce byte-identically); it scored 100 % in both,
-so it did not move a number.
+This supports repeatability under the measured conditions, not universal
+determinism or attribution of every future difference solely to checkpoint
+weights. The suite's paired intervals describe item-level uncertainty; they do
+not estimate all runtime/environment variation. The needle family also had a
+prompt-fingerprint difference between runs, despite scoring 100 % in both.
 
 ### What the other formats cost at this size (measured)
 
@@ -548,7 +578,7 @@ and no final logit-KL phase, the 2026-10-28 one with float32 buffers and four GP
 requested final phase was skipped because the 27B teacher does not fit four V620s, `qad.md`.
 The 2026-10-29 row is the `default` checkpoint with the 200-step final phase that did run, and
 it is the best HI2 row on both texts. The `fast` verdict is in
-[qad.md](qad.md#the-verdict-2026-10-28-the-fast-recipe-does-not-beat-ptq-at-27b).)
+[qad.md](qad.md#the-two-fast-runs-compared-per-layer-2026-10-27-and-2026-10-28).)
 
 1. **The GGUF buys its quality with bits.** Q4_K_M has a KLD of 0.0142 on the docs text: 4.2x
    lower than the HI2 `default` (0.0593) and 6.3x lower than the `fast` checkpoint (0.0901).
@@ -558,17 +588,20 @@ it is the best HI2 row on both texts. The `fast` verdict is in
 2. **The mix text is where the formats separate.** Every format is worse on it than on the docs
    text: the GGUF's KLD goes from 0.0142 to 0.0776, HI2 PTQ from 0.0975 to 0.2171, HI2 QAD
    `fast` from 0.0901 to 0.2947 and the `default` from 0.0593 to 0.1837. The GGUF's mix-text
-   KLD is still lower than HI2's *docs*-text KLD, and QAD helps on the docs text while the
-   `fast` checkpoint hurts on the mix text, the same split the 27B section above reports.
-3. **At equal file size HI2 is ahead**, and it is the only one of the three that is under
-   16 GiB. The AWQ INT4 checkpoint is the largest file of the three, 28 % above the GGUF and
-   31 % above HI2, and it has no KLD yet: it is a compressed-tensors pack-quantized
-   checkpoint, not an HI2 checkpoint, so `hi2 eval` cannot read it and llama.cpp's converter
-   has no support for it either (next step 5 in the handover).
-4. **The AWQ's perplexity says it is close to BF16** (x 1.020 on the docs text against
-   x 1.043 for HI2 with QAD and x 1.009 for the GGUF), but that is a perplexity ratio in
-   vLLM, not a distribution distance, and the HI2 mix text already shows how a ratio near 1
-   can hide a different distribution (point 3 of the 27B section above).
+   KLD is below PTQ's and `fast`'s *docs*-text KLD, but above the `default` HI2
+   docs KLD (0.0593). Compare like corpora: GGUF is lower than all HI2 rows on
+   both texts in this table; the earlier `fast` run regressed on mix.
+3. **Both HI2 and GGUF are below 16 GiB (16,384 MiB).** HI2 is 15,290 MiB;
+   GGUF Q4_K_M is 15,702 MiB, 412 MiB larger, but has lower measured KLD on
+   both corpora. This is not an equal-file-size quality win for HI2. AWQ is
+   20,044 MiB, above the threshold, and has no measured KLD in this table.
+   Its compressed-tensors pack-quantized checkpoint is not an HI2 input to
+   `hi2 eval`; do not treat a missing score as poor quality.
+4. **The AWQ perplexity is close to its baseline** (x 1.020 on docs, against
+   x 1.043 for the historical HI2 `fast` run, x 1.012 for `default`, and x 1.009
+   for GGUF). These are evaluator-specific perplexity ratios, not a direct
+   distribution distance. The HI2 mix result shows how a ratio near or below 1
+   can still accompany substantial KLD.
 
 ### The GGUF's own types at the same bit rate
 
@@ -603,18 +636,22 @@ prints the last chunk)
 
 ## Calibration: what a KLD costs on real work (Qwen3.5-4B)
 
-The KLD in the tables above is a number on held-out text. This section asks what it costs on
-work. The method: a PTQ ladder on Qwen3.5-4B, the full task suite run against a BF16 reference
-of the same model, every item paired, the teacher-forced domain KLD of each point measured on
-the reference's own completions, and a second run of the reference itself to know what the
-measurement can produce on its own (the noise floor, below).
+The full-vocabulary KLD in the dense-evaluation tables above is a number on held-out
+text. This section compares it descriptively with observed task outcomes. The method:
+a PTQ ladder on Qwen3.5-4B, the full task suite run against a BF16 reference of the
+same model, every item paired, a separate teacher-forced mean log-probability gap
+for each point on the reference's greedy completions, and a second reference run
+to observe variation under those conditions (the noise floor, below). The served
+gaps have the [definition and limitations](../bench/README.md#teacher-forced-scores-and-shell-wrappers)
+described for the 27B anchor; they are not the dense study-text KLD.
 
 ### The ladder
 
 Four points from one shared phase 1, one probe and one encode pass (`--max-error-ratio
 2,4,8,16 --no-qad`, the study text as the calibration, sensitivity probe, 128 x 2048 tokens, so
-the same allocation mode as the 4B checkpoints above). The KLD is `hi2 eval` on the held-out
-study text: the same measurement as the rest of this page. The calibration tokens are the
+the same allocation mode as the 4B checkpoints above). The KLD is full-vocabulary
+`hi2 eval` on the held-out study text, not the served greedy-token gap.
+The calibration tokens are the
 first 262 144 tokens of that text and the measurement starts after 800 000, so the KLD is on
 tokens the calibration never saw, but it is still the corpus the model was calibrated on.
 
@@ -666,8 +703,9 @@ What it says:
    ladder at a slightly higher KLD (0.0900) loses 8.1. Part of this is measurement: the ladder
    and the 4.0 bpw point are calibrated on the study text and their KLD is measured on it (on
    tokens the calibration did not see), so their KLD is flattered, while the three mixed-calibrated
-   checkpoints are measured out of domain. The fair comparison is the domain KLD below, and it
-   still shows the ladder's points are the weaker ones where it matters (the decision family).
+   checkpoints are measured out of domain. The served gaps below add a different
+   view on reference completions; they do not replace a controlled full-vocabulary
+   KL comparison or consistently order the decision-family task outcomes.
    Inside the group that *is* comparable the curve is consistent: the 4.0 bpw point, calibrated on
    the same text as the ladder, loses 2.5 points at a KLD of 0.0344, between the ladder's r2
    (-0.3 at 0.0188) and r4 (-3.1 at 0.0461).
@@ -678,8 +716,9 @@ What it says:
    where r4 loses 3.1.
 5. **The agent-decision set moves the other way at the top of the ladder.** The 4B at
    0.0188 makes *more* well-formed first tool calls than BF16 (87.9 % against 72.7 %, 11 items
-   of 66). This is the opposite of the 27B result above, where the QAD model trailed the PTQ
-   model on first-tool agreement. The noise floor below says it is not a measurement artefact.
+   of 66). This differs from the earlier 27B comparison. The repeated reference
+   below did not reproduce a decision flip, which supports the comparison but
+   does not rule out every measurement or runtime contribution.
 
 ### The noise floor: the same model, twice
 
@@ -700,26 +739,30 @@ suite, and paired against the first run exactly like the quantized points.
 | decision | 66 | 72.7 | 72.7 | +0.0 [+0.0, +0.0] | 0.0 | 0.0 |
 | **pooled** | 4765 | 77.8 | 77.9 | **-0.0 [-0.2, +0.1]** | | |
 
-The floor is under half a point on every family and a fifth of a point pooled, and the
-teacher-forced pass of the same model against itself gives a KLD of 2e-05 or less in every
-family: that is the serving stack's own spread in log-prob space, three orders of magnitude
-below the smallest quantized point (0.0094 on tool calls). The decision set, the smallest
-family, is the one that reproduces exactly: the same first tool call on all 66 prompts, and
-the same argument on all 66.
+In this repetition, absolute family accuracy differences were small (the largest
+printed difference is HumanEval +0.6 points), and the paired pooled difference
+rounded to zero with interval [-0.2, +0.1]. The teacher-forced self-comparison
+mean log-probability gap was 2e-05 or less in every measured family, below the
+smallest quantized point (0.0094 on tool calls). This is a signed greedy-token
+score, not a bound on distribution distance. The decision family reproduced the
+same first tool and argument on all 66 prompts.
 
-Two consequences. The decision family's +15.2 points at the 4.2 bpw ladder point is not
-noise, and neither is the -28.8 points of the 4.0 bpw point: two checkpoints 0.2 bpw apart
-land 44 points apart on that family, and no KLD orders them (the 3.8 bpw point, with a higher
-domain KLD than both, loses 4.5). And the flip rates in the table above are all real: the
-floor flips 0.0 to 0.4 % of a family's items, the quantized points flip 3.5 to 21.7 %.
+The decision shifts of +15.2 points at 4.2 bpw and -28.8 at 4.0 bpw are larger
+than the variation observed in that repeated baseline. The quantized runs also
+show more item flips. These are useful comparative observations, not proof
+that other runtime conditions cannot vary or that every difference is causal.
+Keep the paired intervals and dataset limitations with the reported results.
 
-### The KLD depends on the domain
+### The mean log-probability gap depends on the domain
 
-The study-text KLD is one number for the whole model. The teacher-forced pass measures it per
-task family, on the reference's own completions: the text the tasks were scored on. This is
-the number to look at for a given use case.
+The study-text column remains full-vocabulary KLD from dense evaluation. The six
+task-family columns are instead teacher-forced **mean log-probability gaps** in
+nats/token on the reference's greedy completions. They describe those tokens,
+not the whole output distribution; the two metrics must not be compared as if
+they measured the same quantity. The [served-score limitations](../bench/README.md#teacher-forced-scores-and-shell-wrappers)
+apply to every family and checkpoint here.
 
-| point | bpw | study KLD | gsm8k | humaneval | mbpp | ifeval | toolcall | decision |
+| point | bpw | study KLD (full vocabulary) | gsm8k gap | humaneval gap | mbpp gap | ifeval gap | toolcall gap | decision gap |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | lad-r2 | 4.211 | 0.0188 | 0.0350 | 0.0194 | 0.0442 | 0.1296 | 0.0094 | 0.0751 |
 | lad-r4 | 3.796 | 0.0461 | 0.0931 | 0.0413 | 0.0965 | 0.3247 | 0.0267 | 0.1133 |
@@ -730,35 +773,43 @@ the number to look at for a given use case.
 | b3.5-qad | 3.499 | 0.0416 | 0.0838 | 0.0496 | 0.1066 | 0.3140 | 0.0235 | 0.1462 |
 | b4.0-sens | 4.000 | 0.0344 | 0.0592 | 0.0300 | 0.0648 | 0.2166 | 0.0219 | 0.1086 |
 
-The spread across families is large and it is not the same spread everywhere: at the 4.2 bpw
-point the instruction-following text is 14 times off the study KLD (0.1296 against 0.0188)
-and the tool-calling text is half of it (0.0094). A single KLD number therefore says very
-little about what a model will do on a given kind of work.
+The spread across task-family gaps is large: at the 4.2 bpw point the
+instruction-following gap (0.1296) is about 14 times the tool-calling gap (0.0094).
+Neither is a domain-specific version of the study-text KLD (0.0188). Their
+association with task outcomes must be read from the paired suite results, not
+inferred from the magnitudes or from ratios to the dense KLD.
 
-### Target table: what a use case needs
+### Observed task outcomes alongside mean log-probability gaps
 
-For each family, the domain KLD up to which the family shows no measurable loss, and the
-bit rate that reaches it. "Flat" means the paired 95 % CI of the accuracy difference contains
-zero; the next column is the first point that does lose. The noise floor is half a point, so
-a CI that excludes zero is a real loss. The needle and multiple-choice families are not scored
-teacher-forced, so they have no domain KLD and get no budget.
+For each family, the table records selected tested points and their served mean
+log-probability gaps. "No detected loss" means the paired 95 % interval contains
+zero or lies above it; it is not proof of equivalence. The last column records
+a tested point with a detected loss, not a threshold: other checkpoints can have
+larger gaps without a detected loss (for example, toolcall at 0.0235 for b3.5-qad).
+These corpus/model observations do not define task budgets, universal cutoffs or
+theoretical KL bounds. Needle and multiple choice were not scored teacher-forced,
+so no served gaps are available for them.
 
-| use case | family | flat up to (domain KLD) | bpw | first point that loses |
+| use case | family | gap at selected point without detected loss | bpw of that point | selected tested point with a loss |
 | --- | --- | --- | --- | --- |
 | tool calling | toolcall | 0.0094 | 4.2 | 0.0219 at 4.0 bpw: -4.4 points |
 | math | gsm8k | 0.0350 | 4.2 | 0.0592 at 4.0 bpw: -1.7 points |
 | code, function synthesis | humaneval | 0.0413 | 3.8 | 0.0761 at 3.3 bpw: -22.0 points |
-| code, short programs | mbpp | below 0.0442 | above 4.2 | 0.0442 at 4.2 bpw: -5.4 points |
+| code, short programs | mbpp | none selected; 0.0442 already loses | not applicable | 0.0442 at 4.2 bpw: -5.4 points |
 | instruction following | ifeval | 0.1296 | 4.2 | 0.2166 at 4.0 bpw: -3.2 points |
-| long-context retrieval | needle | not measurable | any | -2.5 points at 3.3 bpw |
-| agent decisions | decision | 0.0751 | 4.2 | 0.1086 at 4.0 bpw: -28.8 points, and the KLD does not order this family |
+| long-context retrieval | needle | not measured | not applicable | -2.5 points at 3.3 bpw |
+| agent decisions | decision | 0.0751 | 4.2 | 0.1086 at 4.0 bpw: -28.8 points; the gap does not order this family |
 
-Two things to take from it. The budget is not uniform: a tool-calling workload needs a KLD
-below 0.01 on its own text, while instruction following tolerates 0.13, thirteen times more.
-And on this 4B model **nothing below 4.2 bpw is free**: the 4.2 bpw point is the last one
-without a measurable loss on the families that break, and the next point down (4.0 bpw) already
-loses on tool calls (-4.4 points), instruction following (-3.2), math (-1.7) and short programs
-(-6.2). The format's default recipe (ratio 6 with QAD, 3.0 to 3.5 bpw) sits in the range where
-the code and instruction-following families lose 5 to 15 points. The QAD checkpoints buy KLD
-where it is cheapest (tool calls, 0.0344 at 3.0 bpw against 0.0573 for PTQ) and barely at all
-where it is most needed (instruction following, 0.5386 against 0.6132).
+The tool-calling and instruction-following entries (roughly 0.01 and 0.13,
+thirteen times apart) are observations, not evidence that either workload
+"needs" or "tolerates" a particular gap. In this 4B study the 4.2 bpw point has
+no detected loss on those two families, whereas the tested 4.0 bpw point loses
+on tool calls (-4.4 points), instruction following (-3.2), math (-1.7) and short
+programs (-6.2). The 4.2 bpw point already loses on short programs, so it is not
+a loss-free quality guarantee either. Among the default-recipe checkpoints
+(ratio 6 with QAD, 3.0 to 3.5 bpw), code and instruction-following losses include
+5 to 15 points, with HumanEval at 3.0 bpw losing 20.1. QAD at 3.0 bpw lowers the
+tool-call gap from 0.0573 to 0.0344 and the instruction-following gap from 0.6132
+to 0.5386. The corresponding paired task losses improve from -13.0 to -6.6 on
+tool calls but worsen from -9.2 to -15.2 on instruction following. Lower gaps
+therefore do not consistently imply better task outcomes even within this study.
