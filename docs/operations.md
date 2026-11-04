@@ -173,6 +173,8 @@ must exit before reconciliation releases its resource leases.
 A validated commit from the job's bound `attempt_id` can win a late cancellation.
 The recorded process `returncode` remains the actual exit code, not a fabricated
 zero. An older successful attempt with the same `run_id` cannot complete this job.
+Forced termination can prevent a worker receipt from being written. Its absence
+alone does not invalidate a recoverable, validated commit from the current attempt.
 Read the persisted job result and the run/artifact evidence together.
 Interrupted work is not automatically replayed.
 

@@ -339,7 +339,7 @@ def _assert_committed_quantization(store, job_id, recipe, final):
 
 
 @pytest.mark.parametrize("reused", [False, True])
-@pytest.mark.parametrize("interruption", ["sigint", "sigkill"])
+@pytest.mark.parametrize("interruption", ["sigint", "sigkill", "cancel"])
 def test_committed_quantization_wins_dispatch_interruption(
     store, source, tmp_path, faulted_job, reused, interruption
 ):
@@ -361,23 +361,29 @@ def test_committed_quantization_wins_dispatch_interruption(
     assert not (directory / "receipt.json").exists()
     row = _row(store, job_id)
 
-    # A committed artifact does not free the live worker's leases. Leave the
-    # cancellation pending on a stopped process so this observation cannot race.
+    # A committed artifact does not free the live worker's leases. Stop the
+    # worker so ownership and pending cancellation observations cannot race.
     os.kill(row["worker_pid"], signal.SIGSTOP)
     offline = source.with_name("committed-source-offline")
     source.rename(offline)
     try:
-        ack = store.cancel(job_id)
-        assert ack["state"] == "cancelling" and ack["ownership"]["worker"]
+        assert store.status(job_id)["ownership"]["worker"]
         assert _sql(store, "SELECT resource FROM leases WHERE job_id = ?", (job_id,))
-        _wait(
-            store,
-            job_id,
-            lambda status: any(
-                event.get("phase") == "cancellation" and event["status"] == "sigint"
-                for event in status["events"]
-            ),
-        )
+        if interruption == "sigint":
+            # Isolate SIGINT receipt handling from cancellation escalation.
+            # The separate cancel case may terminate before a receipt is written.
+            os.kill(row["worker_pid"], signal.SIGINT)
+        else:
+            ack = store.cancel(job_id)
+            assert ack["state"] == "cancelling" and ack["ownership"]["worker"]
+            _wait(
+                store,
+                job_id,
+                lambda status: any(
+                    event.get("phase") == "cancellation" and event["status"] == "sigint"
+                    for event in status["events"]
+                ),
+            )
         os.kill(
             row["worker_pid"],
             signal.SIGKILL if interruption == "sigkill" else signal.SIGCONT,
@@ -388,12 +394,11 @@ def test_committed_quantization_wins_dispatch_interruption(
     finally:
         offline.rename(source)
     if interruption == "sigint":
-        # Interpreter teardown may outlast the cancellation grace period; the
-        # durable receipt, not a particular process exit code, proves this path.
+        # No cancellation escalation can interrupt this receipt publication.
         receipt = json.loads((directory / "receipt.json").read_text())
         assert receipt["state"] == "interrupted"
         assert receipt["error"]["type"] == "KeyboardInterrupt"
-    else:
+    elif interruption == "sigkill":
         assert final["returncode"] == -signal.SIGKILL
         assert not (directory / "receipt.json").exists()
     _assert_committed_quantization(store, job_id, recipe, final)
