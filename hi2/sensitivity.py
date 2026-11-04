@@ -24,8 +24,8 @@ from .cache import StatsView
 from .calibrate import Config, TensorTable, encode_with_picks
 from .checkpoint import make_resolver, weight_map
 from .executor import Executor
-from .pinned import PinnedWindow, module_to_device
 from .format import dequantize
+from .pinned import PinnedWindow, module_to_device
 from .stats import ColumnStats
 
 REF_CANDIDATE = (2, 32)
@@ -186,7 +186,9 @@ def load_probe_model(src, dtype: torch.dtype, ex: Executor, log=print):
 
     from .moe import unfuse_experts
 
-    model = AutoModelForCausalLM.from_pretrained(src, dtype=dtype).eval()
+    model = AutoModelForCausalLM.from_pretrained(
+        src, dtype=dtype, trust_remote_code=False
+    ).eval()
     unfuse_experts(model)
     dev = ex.primary
     if dev.type == "cpu":
@@ -347,8 +349,13 @@ def probe_sensitivity(
     s_unit = [dkl / max(rel, 1e-12) for _, dkl, rel in raw]
     vals = sorted(s_unit)
     med = vals[len(vals) // 2] if vals else 1.0
+    if med == 0:
+        # Zero-signal units cannot define a relative scale. Preserve any measured
+        # differences; if the whole probe is zero, keep the neutral unit weights.
+        vals = [value for value in vals if value > 0]
+        med = vals[len(vals) // 2] if vals else 1.0
     out = {}
     for (members, _, _), su in zip(raw, s_unit):
         for name, wt in members:
-            out[name] = max(su / med, floor) * wt
+            out[name] = (max(su / med, floor) if vals else 1.0) * wt
     return out
