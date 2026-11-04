@@ -68,6 +68,8 @@ class Client:
             "prompt_logprobs": 0,
         }
         plp = self.post("/v1/completions", body)["choices"][0]["prompt_logprobs"]
+        if len(plp) != len(ids):
+            raise ValueError("server returned incomplete prompt_logprobs")
         return [None if e is None else e[str(t)]["logprob"] for t, e in zip(ids, plp)]
 
 

@@ -13,12 +13,18 @@ paired sample size that detects a 1-point difference at the observed discordance
 """
 
 import argparse
+import hashlib
 import json
 import math
 import random
 import sys
 from pathlib import Path
 from statistics import NormalDist
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from bench.run import completed  # noqa: E402
 
 Z = NormalDist().inv_cdf
 
@@ -86,11 +92,9 @@ def wilson(k: float, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def paired(ref: dict, cand: dict) -> dict:
-    """Paired statistics over the items both runs completed without a request error."""
+    """Paired statistics over responses with a completed score in both runs."""
     ids = sorted(
-        i
-        for i in ref.keys() & cand.keys()
-        if "error" not in ref[i] and "error" not in cand[i]
+        i for i in ref.keys() & cand.keys() if completed(ref[i]) and completed(cand[i])
     )
     n = len(ids)
     r = [bool(ref[i]["ok"]) for i in ids]
@@ -105,7 +109,7 @@ def paired(ref: dict, cand: dict) -> dict:
         "cand_acc": acc_c,
         "diff": acc_c - acc_r,
         "ci95": [lo, hi],
-        "mcnemar_p": mcnemar_exact(b, w),
+        "mcnemar_p": mcnemar_exact(b, w) if n else math.nan,
         "b": b,
         "c": w,
         "flip_right_to_wrong": b / n if n else math.nan,
@@ -120,11 +124,15 @@ def agreement(ref: dict, cand: dict, keys: list[str]) -> dict:
     ids = [
         i
         for i in ref.keys() & cand.keys()
-        if "error" not in ref[i] and "error" not in cand[i]
+        if completed(ref[i])
+        and completed(cand[i])
+        and all(
+            x in ref[i].get("details", {}) and x in cand[i].get("details", {})
+            for x in keys
+        )
     ]
     k = sum(
-        all(ref[i]["details"].get(x) == cand[i]["details"].get(x) for x in keys)
-        for i in ids
+        all(ref[i]["details"][x] == cand[i]["details"][x] for x in keys) for i in ids
     )
     lo, hi = wilson(k, len(ids))
     return {
@@ -151,29 +159,239 @@ def metric_means(rows: dict, keys) -> dict:
         v = [
             float(r["details"][k])
             for r in rows.values()
-            if "error" not in r and k in r.get("details", {})
+            if completed(r) and k in r.get("details", {})
         ]
         out[k] = sum(v) / len(v) if v else math.nan
     return out
 
 
+def task_names(run: dict) -> list[str]:
+    requested = run.get("config", {}).get("requested_tasks")
+    if requested is not None:
+        return list(requested)
+    return list(
+        dict.fromkeys(
+            [
+                *run.get("config", {}).get("tasks", {}),
+                *run.get("results", {}),
+                *run.get("completion", {}).get("tasks", {}),
+            ]
+        )
+    )
+
+
+def task_completion(run: dict, name: str) -> dict:
+    if name not in task_names(run):
+        return {"status": "missing", "expected": None, "completed": 0, "missing": None}
+    cfg = run.get("config", {}).get("tasks", {}).get(name, {})
+    declared = run.get("completion", {}).get("tasks", {}).get(name, {})
+    rows = (
+        run.get("results", {}).get(name, {})
+        if declared.get("status") != "load_error"
+        else {}
+    )
+    expected = declared.get("expected", cfg.get("n"))
+    done = sum(completed(row) for row in rows.values())
+    failed = len(rows) - done
+    status = declared.get("status")
+    if status is None:
+        status = (
+            "incomplete"
+            if failed or not rows or (expected is not None and done != expected)
+            else "complete"
+            if expected is not None
+            else "unverified"
+        )
+    elif status == "complete" and (failed or not expected or done != expected):
+        status = "incomplete"
+    return {
+        "status": status,
+        "expected": expected,
+        "completed": done,
+        "failed": failed,
+        "missing": max(0, expected - len(rows)) if expected is not None else None,
+        "error": declared.get("error"),
+        "dataset": {
+            key: cfg.get(key)
+            for key in (
+                "datasets",
+                "items_sha256",
+                "fingerprint",
+                "version",
+                "seed",
+                "limit",
+            )
+        },
+    }
+
+
+def read_source(path: Path) -> dict:
+    raw = path.read_bytes()
+    return {
+        "path": str(path.resolve()),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "data": json.loads(raw),
+    }
+
+
+def measurement(
+    value, unit: str, source: str | None, *, status="measured", scope=None
+) -> dict:
+    if value is None or (isinstance(value, float) and not math.isfinite(value)):
+        value, status = None, "missing"
+    return {
+        "status": status,
+        "value": value,
+        "unit": unit,
+        "source": source,
+        "scope": scope,
+    }
+
+
+def evidence(run: dict, sources: dict, runtime_context: dict | None = None) -> dict:
+    """Adapt the real size/eval/manifest outputs; absent inputs remain absent."""
+    manifest = sources.get("manifest", {}).get("data", {})
+    size = sources.get("size", {}).get("data", {})
+    quality = sources.get("quality", {}).get("data", {})
+    result = manifest.get("result") or {}
+    metrics = quality.get("metrics", quality)
+    quality_measured = bool(metrics) and quality.get("status") != "not_measured"
+    context = runtime_context or {"kind": "unknown"}
+    if context.get("kind") not in ("native", "dense_numerical", "unknown"):
+        raise ValueError(
+            "runtime_context.kind must be native, dense_numerical or unknown"
+        )
+    measurements = {
+        "allocation_bpw": measurement(
+            result.get("allocation_bpw"),
+            "bits/weight",
+            "manifest#/result/allocation_bpw",
+            status="predicted",
+            scope="allocator estimate, not stored bytes",
+        ),
+        "stored_quantized_bpw": measurement(
+            size.get("linears", {}).get("bpw"),
+            "bits/weight",
+            "size#/linears/bpw",
+            scope="quantized linears including their storage metadata",
+        ),
+        "whole_model_tensor_bytes": measurement(
+            size.get("tensor_bytes"),
+            "bytes",
+            "size#/tensor_bytes",
+            scope="all tensors",
+        ),
+        "whole_model_file_bytes": measurement(
+            size.get("file_bytes"),
+            "bytes",
+            "size#/file_bytes",
+            scope="weight shard files, not ancillary model files",
+        ),
+        "quality": measurement(
+            metrics if quality_measured else None,
+            "per-metric",
+            "quality",
+            scope=quality.get("context", "dense_numerical"),
+        ),
+        "benchmark_wall_seconds": measurement(
+            run.get("timing", {}).get("_wall"),
+            "seconds",
+            "benchmark#/timing/_wall",
+            scope="client harness including requests/scoring; cumulative over resumes",
+        ),
+        "peak_memory_bytes": measurement(None, "bytes", None, scope="not collected"),
+        "native_kernel_seconds": measurement(
+            None, "seconds", None, scope="not collected"
+        ),
+    }
+    return {
+        "sources": sources,
+        "source": manifest.get("source"),
+        "artifact": quality.get("artifact")
+        or (
+            {"run_id": manifest.get("run_id"), "outputs": manifest.get("outputs")}
+            if manifest
+            else None
+        ),
+        "calibration": manifest.get("calibration"),
+        "quality_dataset": quality.get("dataset"),
+        "effective_recipe": manifest.get("config"),
+        "environment": manifest.get("environment"),
+        "commands": run.get("attempts", []),
+        "config": run.get("config", {}),
+        "runtime_context": context,
+        "quality_status": quality.get("status"),
+        "measurements": measurements,
+    }
+
+
+def json_values(value):
+    """Standards-compliant JSON: unavailable statistics are null, never NaN."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: json_values(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_values(v) for v in value]
+    return value
+
+
 def compare(ref_run: dict, cand_run: dict) -> dict:
-    out = {"tasks": {}, "warnings": []}
-    rc, cc = ref_run["config"]["tasks"], cand_run["config"]["tasks"]
+    out = {"schema_version": 1, "tasks": {}, "warnings": []}
+    rc = ref_run.get("config", {}).get("tasks", {})
+    cc = cand_run.get("config", {}).get("tasks", {})
     tot = {"b": 0, "c": 0, "n": 0, "ref": 0, "cand": 0}
-    for name in [t for t in rc if t in cc]:
-        for k in ("version", "seed", "fingerprint"):
-            if rc[name].get(k) != cc[name].get(k):
+    for name in dict.fromkeys([*task_names(ref_run), *task_names(cand_run)]):
+        mismatches = []
+        for k in ("version", "seed", "fingerprint", "items_sha256"):
+            if rc.get(name, {}).get(k) != cc.get(name, {}).get(k):
+                mismatches.append(k)
                 out["warnings"].append(
-                    f"{name}: {k} differs ({rc[name].get(k)} vs {cc[name].get(k)})"
+                    f"{name}: {k} differs "
+                    f"({rc.get(name, {}).get(k)} vs {cc.get(name, {}).get(k)})"
                 )
-        ref, cand = ref_run["results"][name], cand_run["results"][name]
+        ref_status, cand_status = (
+            task_completion(ref_run, name),
+            task_completion(cand_run, name),
+        )
+        ref = (
+            ref_run.get("results", {}).get(name, {})
+            if name in task_names(ref_run)
+            else {}
+        )
+        cand = (
+            cand_run.get("results", {}).get(name, {})
+            if name in task_names(cand_run)
+            else {}
+        )
+        if ref_status["status"] == "load_error":
+            ref = {}
+        if cand_status["status"] == "load_error":
+            cand = {}
         res = paired(ref, cand)
+        res["completion"] = {"reference": ref_status, "candidate": cand_status}
+        res["status"] = (
+            "incomplete"
+            if mismatches
+            or any(
+                s["status"] not in ("complete", "unverified")
+                for s in (ref_status, cand_status)
+            )
+            else "unverified"
+            if any(s["status"] == "unverified" for s in (ref_status, cand_status))
+            else "complete"
+        )
+        res["measurement_status"] = "measured" if res["n"] else "missing"
+        if res["status"] != "complete":
+            out["warnings"].append(
+                f"{name}: comparison {res['status']}; "
+                f"reference={ref_status['status']}, candidate={cand_status['status']}"
+            )
         res["groups"] = groups(ref, cand)
         res["agree"] = [
-            agreement(ref, cand, list(k)) for k in rc[name].get("agree", [])
+            agreement(ref, cand, list(k)) for k in rc.get(name, {}).get("agree", [])
         ]
-        mk = rc[name].get("metrics", [])
+        mk = rc.get(name, {}).get("metrics", [])
         res["metrics"] = {"ref": metric_means(ref, mk), "cand": metric_means(cand, mk)}
         out["tasks"][name] = res
         tot["b"] += res["b"]
@@ -191,7 +409,24 @@ def compare(ref_run: dict, cand_run: dict) -> dict:
         "pooled_n": n,
         "pooled_diff": (tot["cand"] - tot["ref"]) / n if n else math.nan,
         "pooled_ci95": list(bootstrap_diff_ci(tot["b"], tot["c"], n)),
-        "pooled_mcnemar_p": mcnemar_exact(tot["b"], tot["c"]),
+        "pooled_mcnemar_p": mcnemar_exact(tot["b"], tot["c"]) if n else math.nan,
+    }
+    states = [x["status"] for x in out["tasks"].values()]
+    run_incomplete = any(
+        run.get("status", "complete") != "complete"
+        or run.get("completion", {}).get("errors")
+        for run in (ref_run, cand_run)
+    )
+    out["status"] = (
+        "incomplete"
+        if not states or "incomplete" in states or run_incomplete
+        else "unverified"
+        if "unverified" in states
+        else "complete"
+    )
+    out["runtime"] = {
+        "performance_compared": False,
+        "reason": "paired task quality and client timing are not native-kernel performance",
     }
     return out
 
@@ -209,8 +444,21 @@ def _num(x):
     return "-" if math.isnan(x) else f"{x:.3f}"
 
 
-def markdown(ref_path: str, cand_path: str, res: dict, show_groups: bool) -> str:
-    lines = [f"## {Path(cand_path).stem} vs {Path(ref_path).stem}", ""]
+def markdown(
+    ref_path: str,
+    cand_path: str,
+    res: dict,
+    show_groups: bool,
+    reference: dict | None = None,
+    candidate: dict | None = None,
+) -> str:
+    lines = [
+        f"## {Path(cand_path).stem} vs {Path(ref_path).stem}",
+        "",
+        f"Comparison status: **{res['status']}**. Scores below use completed pairs only.",
+        "This is a quality comparison, not a native-kernel performance comparison.",
+        "",
+    ]
     lines += [f"> warning: {w}" for w in res["warnings"]]
     lines += [
         "| task | n | ref % | cand % | diff [95% CI] | McNemar p | R->W % | W->R % "
@@ -242,6 +490,46 @@ def markdown(ref_path: str, cand_path: str, res: dict, show_groups: bool) -> str
         "(alpha 0.05, McNemar) at this pair's discordance rate (- when no item "
         "flipped); about 78500 x the discordance.",
     ]
+    lines += [
+        "",
+        "| task | comparison | reference completed / expected | reference status | "
+        "candidate completed / expected | candidate status | unpaired observed items |",
+        "|" + "---|" * 7,
+    ]
+    for name, r in res["tasks"].items():
+        rs, cs = r["completion"]["reference"], r["completion"]["candidate"]
+        re = rs["expected"] if rs["expected"] is not None else "unknown"
+        ce = cs["expected"] if cs["expected"] is not None else "unknown"
+        lines.append(
+            f"| {name} | {r['status']} | {rs['completed']} / {re} | {rs['status']} | "
+            f"{cs['completed']} / {ce} | {cs['status']} | {r['skipped']} |"
+        )
+    if reference is not None and candidate is not None:
+        for label, data in (("reference", reference), ("candidate", candidate)):
+            src = data["sources"]["benchmark"]
+            lines += [
+                "",
+                f"### {label} provenance",
+                "",
+                f"- Benchmark: `{src['path']}`; SHA256 `{src['sha256']}`.",
+                f"- Source: `{json.dumps(data['source'], sort_keys=True)}`.",
+                f"- Artifact: `{json.dumps(data['artifact'], sort_keys=True)}`.",
+                f"- Runtime context (operator-declared): `{json.dumps(data['runtime_context'], sort_keys=True)}`.",
+                f"- Quality status: `{data['quality_status'] or 'missing'}`.",
+                "- Full raw reports, recipe, datasets and command history are retained in JSON.",
+                "",
+                "| measurement | status | value | unit | scope |",
+                "|---|---|---|---|---|",
+            ]
+            for key, m in data["measurements"].items():
+                value = (
+                    "-"
+                    if m["value"] is None
+                    else json.dumps(m["value"], sort_keys=True)
+                )
+                lines.append(
+                    f"| {key} | {m['status']} | {value} | {m['unit']} | {m['scope']} |"
+                )
     extra = [
         (n, r) for n, r in res["tasks"].items() if r["agree"] or r["metrics"]["ref"]
     ]
@@ -279,22 +567,68 @@ def main(argv=None) -> int:
     ap.add_argument("--md", type=Path, help="also write the markdown here")
     ap.add_argument("--json", type=Path, help="write the full statistics here")
     ap.add_argument("--groups", action="store_true", help="per-group tables")
+    ap.add_argument(
+        "--metadata",
+        type=Path,
+        help="JSON mapping run paths to manifest/size/quality paths and runtime_context",
+    )
     a = ap.parse_args(argv)
     if len(a.runs) < 2:
         ap.error("need a reference and at least one candidate")
-    ref = json.loads(Path(a.runs[0]).read_text())
-    md, js = [], {"reference": a.runs[0], "candidates": {}}
+    metadata_source = read_source(a.metadata) if a.metadata else None
+    root = a.metadata.resolve().parent if a.metadata else Path.cwd()
+    metadata = {
+        str((root / key).resolve()): value
+        for key, value in (metadata_source["data"] if metadata_source else {}).items()
+    }
+    inputs = {}
+    for path in a.runs:
+        src = read_source(Path(path))
+        entry = metadata.get(src["path"], {})
+        sources = {"benchmark": src}
+        for kind in ("manifest", "size", "quality"):
+            if entry.get(kind):
+                sources[kind] = read_source(root / entry[kind])
+        inputs[path] = evidence(src["data"], sources, entry.get("runtime_context"))
+    ref = inputs[a.runs[0]]["sources"]["benchmark"]["data"]
+    md = []
+    js = {
+        "schema_version": 1,
+        "reference": a.runs[0],
+        "candidates": {},
+        "inputs": inputs,
+        "command": ["bench/compare.py", *(sys.argv[1:] if argv is None else argv)],
+        "metadata": metadata_source,
+    }
     for path in a.runs[1:]:
-        res = compare(ref, json.loads(Path(path).read_text()))
+        cand = inputs[path]["sources"]["benchmark"]["data"]
+        res = compare(ref, cand)
+        res["source_runs"] = {"reference": a.runs[0], "candidate": path}
+        rkind = inputs[a.runs[0]]["runtime_context"]["kind"]
+        ckind = inputs[path]["runtime_context"]["kind"]
+        if rkind != ckind or "unknown" in (rkind, ckind):
+            res["warnings"].append(
+                f"runtime contexts are {rkind} vs {ckind}; do not infer native performance"
+            )
         js["candidates"][path] = res
-        md.append(markdown(a.runs[0], path, res, a.groups))
+        md.append(
+            markdown(a.runs[0], path, res, a.groups, inputs[a.runs[0]], inputs[path])
+        )
+    states = [r["status"] for r in js["candidates"].values()]
+    js["status"] = (
+        "incomplete"
+        if "incomplete" in states
+        else "unverified"
+        if "unverified" in states
+        else "complete"
+    )
     text = "\n".join(md)
     print(text)
     if a.md:
         a.md.write_text(text)
     if a.json:
-        a.json.write_text(json.dumps(js, indent=1))
-    return 0
+        a.json.write_text(json.dumps(json_values(js), indent=1, allow_nan=False))
+    return 1 if js["status"] == "incomplete" else 0
 
 
 if __name__ == "__main__":
