@@ -454,6 +454,9 @@ concatenated file. `limit` is a raw-byte count, not encoded length. Cursors must
 be integers in `[0, 2**53 - 1]`. Support/status are compact documents, not file
 pages. Missing reports are errors, not fabricated empty reports. A log not yet
 created for queued/cancelling/cancelled work reports `available: false`.
+An allowed cursor at or beyond the current file size returns an empty page with
+`eof: true` and the requested cursor unchanged. It does not seek beyond EOF, so
+the protocol's cursor range does not depend on a filesystem's maximum seek offset.
 
 ```python
 import base64

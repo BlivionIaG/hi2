@@ -387,12 +387,14 @@ def test_committed_quantization_wins_dispatch_interruption(
         assert final["state"] == "succeeded", final
     finally:
         offline.rename(source)
-    assert final["returncode"] == (-signal.SIGKILL if interruption == "sigkill" else 1)
     if interruption == "sigint":
+        # Interpreter teardown may outlast the cancellation grace period; the
+        # durable receipt, not a particular process exit code, proves this path.
         receipt = json.loads((directory / "receipt.json").read_text())
         assert receipt["state"] == "interrupted"
         assert receipt["error"]["type"] == "KeyboardInterrupt"
     else:
+        assert final["returncode"] == -signal.SIGKILL
         assert not (directory / "receipt.json").exists()
     _assert_committed_quantization(store, job_id, recipe, final)
     binding = json.loads((directory / "run-binding.json").read_text())

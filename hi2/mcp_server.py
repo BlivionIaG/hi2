@@ -168,8 +168,10 @@ def _file_page(directory: Path, name: str, cursor: int, limit: int) -> dict:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ValueError("resource must be a regular, unaliased file")
-        stream.seek(cursor)
-        data = stream.read(limit)
+        data = b""
+        if cursor < info.st_size:
+            stream.seek(cursor)
+            data = stream.read(limit)
     return {
         "schema_version": 1,
         "encoding": "base64",
