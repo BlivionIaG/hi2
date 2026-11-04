@@ -12,7 +12,7 @@ The [subsequent task/domain evaluation](#after-this-run-in-order) completed on
 | measurement | command | what it says | 27B cost |
 | --- | --- | --- | --- |
 | corpus KLD | `hi2 eval --text docs\|mix` | full-vocabulary KL on corpus contexts, top-1, EAR | about 20 min (13 min of it is placing the model) |
-| domain mean log-probability gap | `bench/tfkld.py` | signed greedy-reference-token score gap per task family, not KL | hours (needs a TP=4 BF16 serve) |
+| domain mean log-probability gap | `bench/logprob_gap.py` | signed greedy-reference-token score gap per task family, not KL | hours (needs a TP=4 BF16 serve) |
 | task suite | `bench/run.py` | paired accuracy per family, McNemar | 3.5 h (reduced to 766 items at 27B) |
 
 The served metric, historically labeled "domain KLD" / "teacher-forced KLD", is

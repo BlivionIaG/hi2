@@ -20,9 +20,9 @@ trap 'exit 143' TERM
 "$PY" "$HERE/run.py" --url "http://127.0.0.1:$PORT" --model "$SERVED" \
   --tasks "${TASKS:-all}" ${LIMIT:+--limit "$LIMIT"} --workers "${WORKERS:-16}" \
   --out "$OUT/bench.json" ${EXTRA:-}
-if [[ ${TF_KLD:-1} != 0 ]]; then
+if [[ ${TF_LOGPROB_GAP:-1} != 0 ]]; then
   stage=teacher_forced
-  "$PY" "$HERE/tfkld.py" score --url "http://127.0.0.1:$PORT" --model "$SERVED" \
+  "$PY" "$HERE/logprob_gap.py" score --url "http://127.0.0.1:$PORT" --model "$SERVED" \
     --ref-results "${REF_RESULTS:-$OUT/bench.json}" --limit "${TF_LIMIT:-200}" \
     ${TF_TASKS:+--tasks "$TF_TASKS"} --out "$OUT/lp.json"
 fi

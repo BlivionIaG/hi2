@@ -8,6 +8,8 @@
 #   WORKERS, EXTRA (more run.py flags), PY (python of the bench client), REF_RESULTS (the
 #   reference run's json: score its completions teacher-forced into TAG.lp.json; leave unset
 #   for the reference arm itself) and TF_LIMIT (items per task, default 200).
+#   TF_LOGPROB_GAP=0 omits teacher-forced scoring; it is enabled by default.
+#   TF_TASKS selects chat tasks for scoring; leave unset to use the reference's tasks.
 set -uo pipefail
 SERVE_VALIDATE=${SERVE_VALIDATE:?set SERVE_VALIDATE to the serve_validate.sh of the fork}
 GPU=${GPU:?GPU (HIP device list) required}
@@ -21,7 +23,7 @@ if (($# == 0)); then
   echo "usage: bench/serve_run.sh TAG=MODEL_DIR [TAG=MODEL_DIR ...]" >&2
   exit 2
 fi
-export TASKS LIMIT WORKERS EXTRA PY REF_RESULTS TF_LIMIT TF_KLD TF_TASKS
+export TASKS LIMIT WORKERS EXTRA PY REF_RESULTS TF_LIMIT TF_LOGPROB_GAP TF_TASKS
 status=0
 for arm in "$@"; do
   tag=${arm%%=*}

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from bench import run, tfkld
+from bench import logprob_gap, run
 from bench.client import Client
 from bench.data import DatasetMissing
 
@@ -376,13 +376,13 @@ def test_teacher_forced_failures_return_nonzero(tmp_path, monkeypatch, failure):
             raise ConnectionError("fixture server unavailable")
         return [-1.0, -2.0]
 
-    monkeypatch.setattr(tfkld.registry, "get", lambda name: task)
-    monkeypatch.setattr(tfkld, "token_logprobs", logprobs)
+    monkeypatch.setattr(logprob_gap.registry, "get", lambda name: task)
+    monkeypatch.setattr(logprob_gap, "token_logprobs", logprobs)
     source, out = tmp_path / "ref.json", tmp_path / "lp.json"
     source.write_text(json.dumps(ref))
     tasks = "gsm8k,toolcall" if failure == "missing_task" else "gsm8k"
     assert (
-        tfkld.main(
+        logprob_gap.main(
             [
                 "score",
                 "--url",
@@ -446,27 +446,36 @@ def wrapper_env(tmp_path):
         "PORT": "1",
         "SERVED": "fixture",
         "BENCH_ATTEMPT": "fixture-attempt",
-        "TF_KLD": "1",
+        "TF_LOGPROB_GAP": "1",
         "BENCH_RC": "0",
         "LP_RC": "0",
     }
 
 
-@pytest.mark.parametrize(("bench_rc", "lp_rc"), [(7, 0), (0, 9), (0, 0)])
-def test_hook_propagates_stage_exit_codes(tmp_path, wrapper_env, bench_rc, lp_rc):
-    wrapper_env |= {"BENCH_RC": str(bench_rc), "LP_RC": str(lp_rc)}
+@pytest.mark.parametrize(
+    ("bench_rc", "lp_rc", "score_enabled"),
+    [(7, 0, True), (0, 9, True), (0, 0, True), (0, 9, False)],
+)
+def test_hook_propagates_stage_exit_codes(
+    tmp_path, wrapper_env, bench_rc, lp_rc, score_enabled
+):
+    wrapper_env |= {
+        "BENCH_RC": str(bench_rc),
+        "LP_RC": str(lp_rc),
+        "TF_LOGPROB_GAP": str(int(score_enabled)),
+    }
     hook = Path(run.__file__).with_name("hook.sh")
     proc = subprocess.run(
         ["bash", str(hook)], env=wrapper_env, capture_output=True, text=True
     )
-    expected = bench_rc or lp_rc
+    expected = bench_rc or (lp_rc if score_enabled else 0)
     assert proc.returncode == expected
     assert proc.stdout.splitlines()[-1] == ("FAIL" if expected else "PASS")
     assert (tmp_path / "bench.exit").read_text().split()[:2] == [
         "fixture-attempt",
         str(expected),
     ]
-    assert (tmp_path / "lp.json").exists() == (bench_rc == 0)
+    assert (tmp_path / "lp.json").exists() == (bench_rc == 0 and score_enabled)
 
 
 @pytest.mark.parametrize(
@@ -538,13 +547,13 @@ def test_teacher_forcing_does_not_claim_success_for_unknown_reference_completene
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setattr(tfkld.registry, "get", lambda name: fake_task())
-    monkeypatch.setattr(tfkld, "token_logprobs", lambda *args: [-1.0])
+    monkeypatch.setattr(logprob_gap.registry, "get", lambda name: fake_task())
+    monkeypatch.setattr(logprob_gap, "token_logprobs", lambda *args: [-1.0])
     ref = {
         "config": {"seed": 0},
         "results": {"gsm8k": {"f/alpha": {"ok": True, "completion": "alpha"}}},
     }
-    report = tfkld.score(
+    report = logprob_gap.score(
         Client("http://unused", "m"), ref, ["gsm8k"], 1, 1, tmp_path / "lp.json"
     )
     assert report["status"] == "incomplete"

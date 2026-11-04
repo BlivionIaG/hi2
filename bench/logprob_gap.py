@@ -10,9 +10,9 @@ Only matching items and lengths are paired; callers must ensure identical
 tokenizers and chat-template settings. Token identity is not verified here.
 
     # under the reference server, then under each candidate server:
-    python bench/tfkld.py score --url URL --model NAME --ref-results ref_bench.json \
+    python bench/logprob_gap.py score --url URL --model NAME --ref-results ref_bench.json \
         --tasks gsm8k,toolcall --limit 200 --out lp_TAG.json
-    python bench/tfkld.py compare lp_ref.json lp_cand.json [...]
+    python bench/logprob_gap.py compare lp_ref.json lp_cand.json [...]
 """
 
 import argparse
@@ -206,7 +206,7 @@ def main(argv=None) -> int:
             return 130
         report["config"]["reference"] = str(a.ref_results.resolve())
         report["config"]["command"] = [
-            "bench/tfkld.py",
+            "bench/logprob_gap.py",
             *(sys.argv[1:] if argv is None else argv),
         ]
         save(a.out, report)

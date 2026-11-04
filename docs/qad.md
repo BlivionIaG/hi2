@@ -261,7 +261,7 @@ format remains the one thing 3 bpw does not recover. Its docs KLD, mix KLD, top-
 perplexities are in `experiments/results/kld_27b_2026-10-29/`, the suite and domain numbers in
 `experiments/results/suite_27b_2026-10-30/`.
 
-Those served scores from `bench/tfkld.py` were historically labeled "domain KLD".
+Those served scores from the scorer now named `bench/logprob_gap.py` were historically labeled "domain KLD".
 They are `mean(log p_reference(greedy_reference_token) - log p_candidate(same_token))`,
 not full-vocabulary KL or a reference-sampled KL estimator, and can be negative.
 They neither prove distribution equivalence nor supply a universal quality threshold;

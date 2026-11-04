@@ -69,7 +69,7 @@ isolated endpoint or an authenticated proxy configured outside this client.
 | chat tasks (`gsm8k`, `humaneval`, `mbpp`, `ifeval`, `toolcall`, `decision`) | `/v1/chat/completions`, greedy generation (`temperature=0`), text `choices[].message.content` |
 | `needle` | `/v1/completions`, text `choices[].text`, sufficient context length |
 | `mc` | `/tokenize` with text and `add_special_tokens=false`; `/v1/completions` accepting token-ID prompts and returning `prompt_logprobs` for **all** prompt tokens |
-| `tfkld.py score` | all `mc` extensions, plus `/tokenize` accepting chat messages, `add_generation_prompt` and `chat_template_kwargs` |
+| `logprob_gap.py score` | all `mc` extensions, plus `/tokenize` accepting chat messages, `add_generation_prompt` and `chat_template_kwargs` |
 
 The last two rows are vLLM-style extensions, **not guaranteed by an
 OpenAI-compatible server**. A GGUF server without them cannot run those paths.
@@ -264,15 +264,19 @@ commands remain reviewable without rerunning a model.
 
 ### Teacher-forced scores and shell wrappers
 
-`python bench/tfkld.py score --url URL --model NAME --ref-results REF.json
---out LP.json` scores reference completions through the extended APIs above.
+Teacher-forced scoring measures log-probabilities for an existing completion.
+It does not generate a new answer. Use a complete reference benchmark and a
+server with the extended APIs listed above.
+
+`python bench/logprob_gap.py score --url URL --model NAME --ref-results REF.json
+--out LP.json` scores the reference completions.
 It defaults to supported chat tasks requested by the reference; `--tasks`
 requests an explicit list. No eligible tasks, missing requested reference tasks,
 failed data loads, missing completion/token scores or request errors produce an
 incomplete report and exit 1. Completed wrong reference answers can still be
 scored. Outputs are versioned reports with `results`, `completion` and `status`;
-`tfkld.py compare REF_LP.json CAND_LP.json` consumes those reports and reports
-unpaired items. Older unversioned LP files need to be rescored for this interface.
+`python bench/logprob_gap.py compare REF_LP.json CAND_LP.json` compares those reports
+and reports unpaired items. Rescore older unversioned LP files for this interface.
 The reference benchmark must explicitly have `status: complete`; legacy references
 without that evidence remain incomplete even if individual token scores succeed.
 
@@ -291,7 +295,7 @@ environment; that driver is not shipped or installed by hi2. Set `PY` to the
 client interpreter and `ROOT` to the results directory. `TASKS`, `LIMIT`,
 `WORKERS` and `EXTRA` are passed through to the task suite. The hook also runs
 teacher-forced scoring by default; `TF_LIMIT` and optional `TF_TASKS` control it.
-Set **`TF_KLD=0`** to explicitly omit that stage (for example for `needle,mc`
+Set **`TF_LOGPROB_GAP=0`** to omit that stage (for example for `needle,mc`
 without chat tasks, or a server lacking teacher-forced APIs).
 
 `hook.sh` prints `PASS`/`FAIL` **and returns the failing stage's nonzero exit

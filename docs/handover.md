@@ -10,7 +10,7 @@ supersede the pending-task wording. Use [installation](installation.md),
 for the user path. Machine-specific paths and hosts are deliberately omitted.
 
 **Metric correction for this record:** historical served "domain KLD" / "teacher-forced
-KLD" from `bench/tfkld.py` is the signed mean log-probability gap, in nats/token:
+KLD" from the scorer now named `bench/logprob_gap.py` is the signed mean log-probability gap, in nats/token:
 `mean(log p_reference(greedy_reference_token) - log p_candidate(same_token))`.
 It can be negative and is neither full-vocabulary KL nor a reference-sampled KL
 estimator. A small gap or matching task scores does not prove distribution equivalence,
@@ -71,7 +71,7 @@ settings; equal token counts alone do not establish this. The current scorer for
   (`hi2/tune.py`). Smoke-tested on the 0.8B, PTQ only (target 0.05 gave ratio 2.2, 4.1 bpw).
 * `bench/`: task-level evaluation suite (GSM8K, HumanEval, MBPP, instruction following, ToolACE
   tool calls, long-context retrieval, multiple choice, decisions) with paired comparison, and
-  `bench/tfkld.py`, the teacher-forced mean log-probability gap. Drivers `bench/serve_run.sh`,
+  the scorer now named `bench/logprob_gap.py`, the teacher-forced mean log-probability gap. Drivers `bench/serve_run.sh`,
   `bench/hook.sh`. The smoke run is verified: a served 4B as the reference and a 3.0 bpw PTQ
   checkpoint as the candidate, scored against the reference's own completions, 20 items per
   task. The teacher-forced pass works now. The domain mean log-probability gap is 0.162 (gsm8k),

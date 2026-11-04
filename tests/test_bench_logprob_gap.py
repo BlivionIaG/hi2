@@ -1,6 +1,6 @@
 import math
 
-from bench.tfkld import mean_logprob_gap
+from bench.logprob_gap import mean_logprob_gap
 
 
 def test_gap_is_the_token_weighted_mean_log_ratio():
