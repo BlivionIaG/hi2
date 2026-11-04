@@ -1,8 +1,17 @@
 # Installation and backend selection
 
-Start here, then follow [getting started](getting-started.md). The quantizer and
-native inference runtime are separate installations. Installing `hi2` does not
-install or qualify a vLLM loader for `rdna_hint_flex`.
+Install `hi2` to quantize a local model. This does not install or qualify a native
+inference runtime, such as a vLLM loader for `rdna_hint_flex`.
+
+**Before you start:** use a POSIX environment, Python >=3.10 and a local filesystem
+with working advisory locks. The commands below use Python 3.12. Native Windows
+is not supported by the run lifecycle. See [backend boundaries](#backend-boundaries).
+
+**Next:** [create a virtual environment](#checkout-and-virtual-environment),
+select Torch for your backend, and run the
+[installation check](#first-use-compilation-and-smoke).
+Then follow the [no-download CPU tutorial](getting-started.md#executed-no-download-cpu-smoke).
+These checks establish local functionality, not model quality or native serving.
 
 ## Recorded environment and evidence
 
@@ -48,9 +57,10 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-Success at this stage is an activated interpreter inside `.venv`; check it with
-`python -c 'import sys; print(sys.executable)'`. Obtain Python 3.12 through your
-platform's normal installation method if `python3.12` is not available.
+Confirm that `.venv` is active with
+`python -c 'import sys; print(sys.executable)'`. The path must point inside `.venv`.
+If `python3.12` is unavailable, install Python 3.12 through your platform's normal
+installation method.
 
 **Select Torch before installing the project.** Use the
 [PyTorch installation selector](https://pytorch.org/get-started/locally/) for your
@@ -67,20 +77,22 @@ python -m pip install 'torch==2.15.0' 'transformers==5.22.1' 'safetensors==0.8.0
 python -m pip install -e .
 ```
 
-This reproduces the listed version requests, not a complete transitive lock.
-A CPU-only Linux wheel or GPU wheel may have a different version suffix/index;
-select that explicitly rather than substituting the macOS command blindly.
-`hi2` and `python -m hi2` use the same entry point. For the optional MCP adapter:
+These requests select the listed versions; they are not a complete dependency
+lock. Linux CPU and GPU wheels can use a different version suffix or package
+index. Select the correct wheel instead of copying the macOS command unchanged.
+`hi2` and `python -m hi2` use the same entry point.
+
+For the optional Model Context Protocol (MCP) adapter:
 
 ```bash
 python -m pip install -e '.[mcp]'
 ```
 
-This adds the pinned `mcp==2.3.0` SDK, not a native inference runtime. Contributors
-should use the combined `.[test,mcp]` setup [below](#contributor-tests-and-checks)
-so optional protocol tests are not silently skipped. Benchmark setup and its
-separate `bench` extra are documented in [bench/README.md](../bench/README.md),
-not an installed `hi2 bench` command.
+This adds the pinned `mcp==2.3.0` software development kit (SDK), not a native
+inference runtime. Contributors should use the combined `.[test,mcp]` setup
+[below](#contributor-tests-and-checks) to include the optional protocol tests.
+For benchmarks, use the separate `bench` extra and setup in
+[bench/README.md](../bench/README.md). There is no installed `hi2 bench` command.
 
 ## Backend boundaries
 
@@ -132,14 +144,17 @@ python -m hi2 quantize --help
 python -m hi2 doctor
 ```
 
-Expected observations: no dependency conflict from `pip check`; imports and
-version/backend fields print successfully; help lists commands/options without
-loading a model; `doctor` reports the local dependency/backend environment.
-A help-only or doctor success does not execute model forward/backward passes or
-qualify native kernels.
-Save the outputs together with `git rev-parse HEAD` and the exact model
-revision before a [local-model smoke](getting-started.md#first-model-walkthrough).
-No native loader or GPU inference acceptance is implied by these CPU checks.
+Expected outcomes:
+
+- `pip check` reports no dependency conflict.
+- Imports print the package versions and backend fields.
+- Help lists commands and options without loading a model.
+- `doctor` reports the local dependency and backend environment.
+
+These checks do not run model forward or backward passes. They do not qualify
+native kernels or GPU inference. Save the outputs, `git rev-parse HEAD` and the
+exact model revision before a
+[local-model smoke](getting-started.md#first-model-walkthrough).
 
 ## Contributor tests and checks
 

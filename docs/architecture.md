@@ -1,9 +1,11 @@
 # How hi2 works
 
 `hi2` has four conceptual phases. Phases 1 and 2 select the allocation.
-For QAD, PTQ encoding initializes each layer before its training; the final
-streaming writer publishes the trained tensors afterwards, rather than writing
-a complete final PTQ checkpoint before QAD.
+Post-training quantization (**PTQ**) then encodes the weights.
+With quantization-aware distillation (**QAD**) enabled, PTQ initializes each
+layer before training. The final streaming writer publishes the trained
+tensors afterwards; it does not first publish a complete PTQ checkpoint.
+PTQ-only runs skip distillation.
 
 ```mermaid
 flowchart TD
@@ -16,19 +18,20 @@ flowchart TD
     end
     P1 --> P2
     subgraph P2[2 Allocate - allocate.py, sensitivity.py]
-        A[pick bits and block for every row<br/>under one model-wide quality target]
+        A[pick bits and block for every row<br/>under one model-wide error or bit budget]
     end
     P2 --> P3
     subgraph P3[3 Encode - encode.py, hessian.py]
         G[GPTQ rounding with fixed ladders<br/>per-layer initialization when QAD is on]
     end
-    P3 --> P4
+    P3 -->|QAD enabled| P4
     subgraph P4[4 Distill - qad.py, finalkl.py]
         Q[train latent weights and ladder bytes<br/>against the unquantized layer output]
-        K[limited-parameter final logit-KL<br/>requested by default/thorough]
+        K[final logit-KL training<br/>default/thorough request it; fit check can skip]
         Q --> K
     end
     P4 --> W[checkpoint.py: publish tensors and metadata]
+    P3 -->|PTQ only| W
     W --> C[rdna_hint_flex checkpoint]
 ```
 
@@ -36,8 +39,9 @@ flowchart TD
 
 The tool copies one decoder layer to a compute device. It runs the calibration sequences
 through that layer. Hooks collect, for every Linear, a 16x16 second-moment block for each
-column group. This is small: `K * 16` floats per tensor. It is enough to compute the
-activation-weighted error of every row in the rotated basis without keeping activations.
+column group. For input width `K`, this uses `K * 16` floats per tensor.
+These blocks let the tool compute each row's activation-weighted error in the
+rotated basis without keeping the activations.
 
 Each Linear gets a table: the weighted squared error of every row under every candidate
 (INT2 or INT4, block 16, 32 or 64). INT8 candidates exist and are off by default.
@@ -52,7 +56,8 @@ tensors cost more. The result is a mix: INT2 for rows that matter less, INT4 for
 The quality constraint is global: the summed sensitivity-weighted candidate
 errors must fit R times the summed best-candidate floor. A row may exceed R
 times its own minimum; the sum, not each row, is constrained. This dimensionless
-allocation proxy is not an end-to-end KLD bound ([evaluation.md](evaluation.md#allocation-and-kld-targets)).
+allocation proxy is not a bound on end-to-end Kullback–Leibler divergence (KLD)
+([evaluation.md](evaluation.md#allocation-and-kld-targets)).
 
 ## Phase 3: encode
 
@@ -67,27 +72,31 @@ Tensors are written as `<name>.hi2_*`. Other tensors are copied.
 
 QAD trains one layer at a time. The student layer is a fake-quantized copy that follows the
 exact decode of the format. Its input is the hidden state of the already quantized prefix.
-Its target is the output of the unquantized layer. Gradients pass through the rounding with
-a straight-through estimator.
+Its target is the unquantized teacher layer's output on the teacher prefix.
+A straight-through estimator (STE) passes gradients through rounding.
 
 ```mermaid
 flowchart LR
     X[hidden state from<br/>quantized prefix] --> S[student layer<br/>FakeQuantLinear]
     X2[hidden state from<br/>teacher prefix] --> T[teacher layer]
-    S --> L[MSE on layer output]
+    S --> L[mean-squared error on layer output]
     T --> L
     L -->|STE gradients| S
-    S -->|keep if it beats PTQ<br/>on held-out data| O[export bit-exact]
+    S -->|keep if it beats PTQ<br/>on internal validation| O[export bit-exact]
 ```
 
 Row picks, smoothing vectors, and rotation flags stay as PTQ chose them.
-Keep-best chooses among the evaluated local states, including PTQ; it does not
-guarantee final-corpus KLD or task accuracy. The last phase (`--qad-final-kl`)
-is implemented and requested for 200 steps by `default`/`thorough`; `fast`
-requests none, and an explicit 0 disables it. It trains only ladder bytes and,
-by default, norms, with codes fixed. It shards the student across devices and
-uses saved teacher head inputs when available. A failed model-fit estimate
-skips it with a note; this is not the same as completing it.
+Keep-best selects among evaluated local states, including PTQ. It does not
+guarantee final-corpus KLD or task accuracy.
+
+The final logit-KL **training** phase (`--qad-final-kl`) trains only ladder bytes
+and, by default, norms; codes stay fixed. The `default` and `thorough` presets
+request 200 steps. The `fast` preset requests none, and an explicit 0 disables it.
+The phase shards the student across devices and uses saved teacher head inputs
+when available. A failed model-fit estimate skips it with a note.
+Skipped training is not completed training, and completed training is not
+independent final quality evaluation. Use `quality` on separate final-test text
+to measure and accept or reject the published artifact.
 
 ## Module map
 
@@ -121,13 +130,21 @@ flowchart LR
     H --> D[probe results]
 ```
 
-Statistics keys include sampled token IDs, the `sha256-content-v1` model identity
-and relevant settings, so compatible Hessians survive allocation/encoder changes.
-The current model fingerprint reads full config/index/shard contents and relative
-filenames; the earlier names-and-sizes-only identity was invalidated by statistics
-version 2. This content hash costs a checkpoint read and does not permit mutating
-inputs during execution. Work/output reuse additionally checks the run manifest.
-See [speed.md](speed.md#the-cache) and [recovery rules](operations.md#resume-and-invalidation).
+The **cache** stores reusable phase products. The **workdir** stores one run's
+identity and recovery state. The **output** stores the published checkpoint and
+reports. Workdir and output reuse require a matching `run_id`; each execution
+gets a fresh `attempt_id`. A durable submission has a separate `job_id`.
+See [identity fields and paths](usage.md#cache-and-work-directory).
+
+Statistics keys include sampled token IDs, the `sha256-content-v1` model
+fingerprint and relevant settings. Compatible Hessians can survive allocation
+and encoder changes. The model fingerprint hashes full config/index/shard
+contents and relative filenames. Statistics version 2 invalidated the earlier
+names-and-sizes-only identity; current `STATS_VERSION=3` also includes active
+auxiliary model inputs by canonical path and full SHA-256.
+Hashing costs a checkpoint read and does not permit changing inputs during
+execution. See [speed.md](speed.md#the-cache) and
+[recovery rules](operations.md#resume-and-invalidation).
 
 ## Boundaries
 

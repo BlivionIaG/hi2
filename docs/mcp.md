@@ -1,10 +1,11 @@
 # Local MCP adapter
 
-`hi2-mcp` is an optional, local **stdio** adapter over the same service and durable
-job registry used by hi2. It does not accept shell commands, Python functions,
-remote model IDs, credentials, or arbitrary resource filenames. The baseline
-workflow uses ordinary MCP tool results containing job IDs; **Tasks is not
-required**.
+`hi2-mcp` is an optional, local Model Context Protocol (MCP) adapter. It uses
+standard input/output (**stdio**) and the same service and durable job registry
+as hi2. It does not accept shell commands, Python functions, remote model IDs,
+credentials, or arbitrary resource filenames. The baseline workflow returns
+job IDs in ordinary MCP tool results. The optional **Tasks** extension is not
+required.
 
 Inspection and planning read checkpoint metadata but do not quantize. Quantization,
 held-out quality evaluation, structural validation, and portable export return a
@@ -78,14 +79,18 @@ The process creates a missing state directory privately; an existing one must be
 operator-owned, mode **0700**, and not a symlink. Do not use a shared writable
 state directory. Jobs live only in `<state-root>/jobs`.
 
-WorkspacePolicy rechecks paths and registered IDs against the configured roots,
-including symlink escapes. Model and calibration inputs must already exist;
-outputs must be subdirectories of output roots and must not overlap inputs or
-private state. Safetensors metadata is readable; untrusted pickle/cache payloads
-are not accepted as tool resources. Recipes cannot nominate work/cache paths:
-those are private, deterministic, application-managed directories under state.
-Planning may create these private directories and persist registrations, but it
-does not create a checkpoint or submit a job.
+`WorkspacePolicy` checks paths and registered IDs against the configured roots,
+including symlink escapes. Model and calibration inputs must already exist.
+Outputs must be subdirectories of output roots and must not overlap inputs or
+private state. Tools can read safetensors metadata; they do not accept untrusted
+pickle/cache payloads as resources.
+
+The **output** holds the checkpoint and published reports. The **workdir** holds
+run recovery state. The **cache** holds reusable phase products. Recipes cannot
+set workdir or cache paths: the application assigns deterministic private
+directories under the state root. Planning may create these private directories
+and persist resource registrations. It does not create a checkpoint or submit
+a job.
 
 Quantizer-created ancillary links may point into configured model roots: tokenizer
 and template assets remain read-only model capabilities. Checkpoint weights,
@@ -164,6 +169,17 @@ A job handle contains `job_id`, `state`, `operation`, timestamps, request digest
 `cancelled`, and `interrupted`. Previews may be truncated or omitted; they are not
 full reports. An `interrupted` job is not a successful artifact and must not be
 silently treated as resumable success.
+
+Do not interchange these identifiers:
+
+| Field | Meaning |
+| --- | --- |
+| `job_id` | Durable submission in this registry. Use it for status, cancellation and reconnect. It also identifies validation, evaluation and export jobs. |
+| `run_id` | Deterministic identity of a quantization run's resolved recipe, inputs and implementation environment. A compatible resume keeps it. |
+| `attempt_id` | One execution of that quantization run. A new execution gets a fresh value, including on resume. |
+
+The quantization manifests `run.json` and `hi2_run.json` record the run and
+attempt IDs. They are not substitutes for the job ID returned by submission.
 
 Quality reports use `context: "dense_numerical"` and one of `target_met`,
 `target_not_met`, `not_measured`, or `measured`. `measured` means measurements exist
@@ -341,25 +357,24 @@ async with Client(server) as client:
     print(terminal)
 ```
 
-`cancelling` with `cancellation: "requested"` means the supervisor has received
-the request, **not** that the worker stopped or its leases were released. Poll to
-a terminal state. Cancellation may race success; `succeeded`/`already_finished`
-is truthful in that case. Partial artifacts from cancelled/failed/interrupted
-work are not automatically accepted.
+`cancelling` with `cancellation: "requested"` means cancellation was recorded.
+It does **not** mean the worker has stopped or released its resource leases.
+Poll to a terminal state. Cancellation can race success; the response can then
+report `succeeded` with `cancellation: "already_finished"`. Do not accept partial
+artifacts from cancelled, failed or interrupted work.
 
-For quantization, the worker binds its supervisor token and work directory to
-both the recipe's deterministic `run_id` and a fresh per-invocation `attempt_id`.
-The attempt is persisted in `run.json` and the committed `hi2_run.json`; reusing
-or resuming the same recipe keeps its `run_id` but creates a new attempt. A
-validated checkpoint committed by the bound attempt remains `succeeded` even
-if cancellation arrives before the worker writes its receipt or during teardown.
-This is recognized only after worker ownership ends; leases are not released
-early. A prior or later success of the same recipe cannot complete a different
-attempt's job. Orphan recovery also retains a matching failed/interrupted receipt
-and its original error, including quality measurements. Explicit cancellation
-takes precedence over an uncommitted failure and retains that worker error.
-The actual process return code is retained (and can be nonzero after a successful
-commit); orphan recovery reports an unknown return code as `null`.
+For quantization, the worker binds its supervisor token and workdir to both
+`run_id` and `attempt_id`. A validated checkpoint committed by that bound
+attempt remains `succeeded` if cancellation arrives before the worker receipt
+or during teardown. The registry recognizes this success only after worker
+ownership ends; it does not release leases early. A prior or later successful
+attempt with the same `run_id` cannot complete this job.
+
+Orphan recovery also retains a matching failed/interrupted receipt and its
+original error, including quality measurements. Explicit cancellation takes
+precedence over an uncommitted failure but retains the worker error.
+The actual process return code is retained. It can be nonzero after a successful
+commit; orphan recovery reports an unknown return code as `null`.
 
 Ownership uses inherited file locks, not a PID or heartbeat timeout. A stopped
 orphan retains leases until its ownership descriptor closes; do not delete locks
@@ -370,7 +385,9 @@ Detached supervisors are reaped by a background waiter when their submitter
 remains alive; submission does not wait for completion, and exiting the submitter
 does not stop its jobs.
 
-After a successful run, submit held-out quality evaluation with a new key:
+After quantization succeeds, submit independent final quality evaluation with
+a new key. This is dense numerical evaluation, not the final-KL training phase.
+Keep its text separate from all calibration and tuning inputs:
 
 ```python
 async with Client(server) as client:

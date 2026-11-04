@@ -6,20 +6,29 @@ for the reasons behind the defaults, read [results.md](results.md) and
 [design-notes.md](design-notes.md). Use `hi2 --help` to discover workflows and
 `hi2 COMMAND --help` for every accepted flag. `python -m hi2` is the same entry point.
 
+Terms used below: **PTQ** is post-training quantization. **QAD** is
+quantization-aware distillation, which trains the quantized model after PTQ
+initialization. **KLD** is Kullback–Leibler divergence between reference and
+quantized token distributions. **bpw** means bits per weight.
+
 ## The simplest run
 
 ```bash
 hi2 quantize MODEL OUT --calib calib.txt --target-bpw 3.0
 ```
 
-That is PTQ, then QAD with the `default` preset (300 steps a layer, 256 sequences), then a
-requested 200-step final logit-KL phase (which can be skipped by its fit check): the
-historical 27B recipe in [qad.md](qad.md). Every
-other knob is a default: `--devices auto` (every visible GPU), `--workdir OUT.work`, the
-sensitivity probe with `--sens-dtype auto` (float32, or float16 when the model does not fit
-float32 on the devices), smoothing 0.5 and rotation. Drop `--target-bpw` to let the quality
-mode pick the bit rate (`--max-error-ratio 6`); `--no-qad` for PTQ only; `--dry-run` prints
-the plan first.
+The command requests three stages:
+
+1. PTQ initialization.
+2. QAD with the `default` preset: 300 steps per layer and 256 training sequences.
+3. A 200-step final logit-KL training phase. The fit check can skip this phase.
+
+This is the historical 27B recipe in [qad.md](qad.md), not a guarantee of final
+quality. The other defaults are `--devices auto` (every visible GPU),
+`--workdir OUT.work`, sensitivity probing with `--sens-dtype auto` (float32,
+or float16 when float32 does not fit), smoothing 0.5, and rotation.
+Omit `--target-bpw` to select the bit rate with `--max-error-ratio 6`.
+Use `--no-qad` for PTQ only. Add `--dry-run` to inspect the plan before execution.
 
 ## Commands
 
@@ -42,8 +51,8 @@ the plan first.
 | `recipe save\|run` | Save a resolved plan or replay a versioned recipe with explicit overrides. |
 | `jobs submit\|status\|cancel` | Control durable local jobs; see below and [MCP setup](mcp.md). |
 
-`eval` dequantizes the weights and runs the original architecture. It checks the format
-numerically. It is not a kernel test.
+`eval` dequantizes the weights and runs the original architecture. It measures
+dense numerical quality, not structural validity or native-kernel behavior.
 
 The usual sequence is `doctor` → `inspect MODEL` → `quantize ... --dry-run` →
 `quantize ...` → `validate OUT` → `quality ...` → `export-portable ...`.
@@ -72,7 +81,8 @@ hi2 calib calib.txt docs.txt:2 chat.jsonl:1 tools.json:1 --holdout heldout.txt \
 * A source is a `.txt` file (blocks separated by blank lines), or a `.json` or `.jsonl` file
   whose records have `text`, or chat turns in `messages` or `conversations`.
 * `:WEIGHT` sets the share of each source (default 1). The tool interleaves the documents by
-  token share, so every stretch of the file has every domain.
+  token share. This mixes domains through the file; it does not guarantee exact
+  proportions or every domain in each window.
 * `--tokens` sets the size (default 540 672). The tool warns when the sources are smaller.
 * `--tokenizer` counts real tokens. Without it, 4 characters count as one token.
 * `--holdout` writes a second text from documents that the calibration text does not contain
@@ -105,14 +115,19 @@ nearest, and the model is not loaded. QAD is skipped with a warning.
 | CPU and RAM only | `--devices cpu` |
 | One GPU | `--devices cuda:0` |
 | Several GPUs | `--devices cuda:0,cuda:1,...`. The tool splits calibration sequences across devices and shards tensor rows. This is not a guarantee of bitwise equality across device counts. |
-| Model larger than VRAM | Automatic. The model stays in RAM, one layer at a time moves to the GPU, and hidden states stay in RAM. |
+| Layer-wise placement | Calibration and layer-wise QAD move active layers to devices and keep hidden states in host RAM. This is not a whole-run VRAM guarantee. |
 
 "Several GPUs" means row-sharded quantization with data-parallel calibration. It is not
 a tensor-parallel forward pass.
 
+Sensitivity probing, final-KL training and evaluation have different placement
+requirements. See the [phase resource map](operations.md#phase-resource-map)
+before running a model larger than device memory.
+
 ## Choosing the quality target
 
-Do not choose a bit rate. Choose how much error you accept.
+Choose an allocation-error budget, a tuning KLD target, or an allocation bit rate.
+None guarantees the final checkpoint's quality.
 
 * `--max-error-ratio R` (the default when you set neither option: 6 with QAD, 4 with PTQ
   only; the reasons are in [results.md](results.md#the-default-quality-target)): the
@@ -124,14 +139,16 @@ Do not choose a bit rate. Choose how much error you accept.
 * `--target-kld K` (with `--calib` and `--eval-text`): state the fidelity you need and let the
   tool find the ratio. It quantizes PTQ checkpoints at a few ratios (default 2, 4, 8, 16, one
   shared phase 1, probe and encode pass per round), measures KL(original to quantized) of each
-  on the held-out text, fits log KLD against log ratio, and runs with the largest ratio whose
+  on the tuning text, fits log KLD against log ratio, and runs with the largest ratio whose
   predicted KLD is within K. If K lies outside the measured range it measures more ratios
   (up to four extensions). `lossless` is only the corpus-specific KLD < 0.01 check;
   historical Qwen3.5-4B measurements were 0.061 at 3.0 bpw with QAD and 0.034 at
   4.0 bpw PTQ. QAD can improve or worsen final KLD; interpolation does not guarantee
   the chosen artifact meets K. Measure it independently with `quality` and an explicit
   gate. Measured tuning points are written to `<dst>.tune.json`.
-* `--target-bpw B`: fix the bit rate. The tool spends the bits where they help most.
+* `--target-bpw B`: target the allocator's modeled bit rate. The tool spends the bits
+  where they help most. This is not the complete serialized checkpoint size; use
+  `hi2 size` to measure the written artifact.
 * `--max-error-ratio a,b,c`: write one checkpoint per ratio to `<out>-r<ratio>`. The tool
   shares phase 1, the probe, and the encode pass between them.
 * `--bits 2,4,8`: allow INT8 rows. They are off by default because they did not help at
@@ -177,6 +194,11 @@ hi2 quantize <model> <out> --calib calib.txt --no-qad                # PTQ only
 | `--qad-final-kl STEPS` | Final logit-KL phase: 200 steps with `default` and `thorough`, 0 with `fast`; 0 turns it off. Split layer-wise over the devices when it does not fit one GPU; skipped with a note if it still does not fit. See [lowbit.md](lowbit.md). |
 | `--qad-config file.json` | All settings in a file. |
 
+“Final” in `--qad-final-kl` means the last **training** phase, not final quality
+evaluation. Internal validation selects training states. After training, run
+`quality` on independent final-test text to accept or reject the published
+checkpoint. QAD can improve or worsen that result.
+
 With several `--devices`, QAD can split each training step's sequences across replicas
 of the layer. `"data_parallel": false` disables this; norm training and layerwise
 logit-KL use the primary-device path. Gradient summation order can change results.
@@ -191,12 +213,22 @@ expected time first. It is resumable per layer: run the same command again. Deta
 
 ## Mixture-of-experts models
 
-The tool splits fused expert tensors, shares the gate and up smoothing, and counts routed
-tokens per expert. The default layout is `stacked`: one tensor group per layer. It loads
+For supported per-expert 2-D source checkpoints, the adapter splits experts fused
+in memory by Transformers. Fused 3-D expert tensors on disk are unsupported.
+The tool shares gate and up smoothing and counts routed tokens per expert.
+The default layout is `stacked`: one tensor group per layer. It loads
 about 9 times faster in the vLLM fork. Use `--moe-layout per-expert` for one tensor per
 expert. Details: [moe.md](moe.md).
 
 ## Cache and work directory
+
+Keep these three locations distinct:
+
+| Location | Purpose |
+| --- | --- |
+| Output (`DST` or `OUT`; recipe field `dst`) | The quantized checkpoint and its published reports. |
+| Work directory (`--workdir`; recipe field `workdir`) | Run identity, phase state and recovery artifacts; default `<out>.work`. |
+| Persistent cache (`--cache-dir`; recipe field `cache_dir`) | Compatible phase products that can be reused across runs; default `$HI2_CACHE_DIR` or `~/.cache/hi2`. |
 
 The tool caches statistics, Hessians, error tables, and probe results under `--cache-dir`
 (default `$HI2_CACHE_DIR` or `~/.cache/hi2`). Identity includes config/index/weight
@@ -224,6 +256,18 @@ are not completion evidence. Abrupt termination during publication requires reva
 With persistent caching enabled, cache, workdir and output trees must be pairwise
 disjoint and must not overlap source/calibration inputs, including through symlinks.
 Use sibling directories, not an output or workdir nested inside the cache.
+
+The identity fields answer different questions:
+
+| Field | Identifies | Resume behavior |
+| --- | --- | --- |
+| `run_id` | The resolved quantization recipe, input identities and implementation environment. | Stays the same for a compatible resumed run. |
+| `attempt_id` | One execution of that run. | A new execution gets a new value, even when it resumes the same `run_id`. |
+| `job_id` | One durable registry submission, for quantization or another supported operation. | Repeating the same request and idempotency key returns the same job, not a new attempt. |
+
+`run.json` and the published `hi2_run.json` record `run_id` and `attempt_id`.
+Use `status WORKDIR` for the run record and `jobs status JOB_ID` for the job.
+A successful older attempt does not prove that the current job completed.
 
 When the code that produces a cache entry changes, raise `STATS_VERSION`,
 `TABLES_VERSION`, or `PROBE_VERSION` in `hi2/cache.py`. See [speed.md](speed.md).
@@ -358,14 +402,17 @@ exact retries. Device leases and overlapping work/output paths serialize conflic
 CPU compute is exclusive within that registry. Separate registries do not share
 device arbitration.
 
-Closing the client does not cancel a job. Explicit cancellation remains `requested`
-until the worker exits: SIGINT, then bounded SIGTERM/SIGKILL escalation if needed.
-Poll `state` until `succeeded`, `failed`, `cancelled`, or `interrupted`; queued,
-running and cancelling are nonterminal. For quantization, a validated commit bound
-to the current worker/run can win a late cancellation, but only after worker
-ownership ends. The real `returncode` is preserved and can be nonzero despite
-`succeeded`; orphan recovery can leave it `null`. An old successful artifact does
-not prove the current job committed.
+Closing the client does not cancel a job. Explicit cancellation records a request;
+it does not mean the worker has stopped or released its resource leases.
+The supervisor uses SIGINT, then bounded SIGTERM/SIGKILL escalation if needed.
+Poll `state` until `succeeded`, `failed`, `cancelled`, or `interrupted`.
+`queued`, `running`, and `cancelling` are nonterminal.
+
+For quantization, a validated commit from the job's bound `attempt_id` can win a
+late cancellation, but only after worker ownership ends. The real `returncode`
+is preserved and can be nonzero despite `succeeded`; orphan recovery can leave
+it `null`. A successful artifact from another attempt does not prove that this
+job committed.
 
 A stopped orphan retains leases through its ownership descriptor; stale heartbeats
 or PIDs are not permission to release them. Resume or terminate the owned process

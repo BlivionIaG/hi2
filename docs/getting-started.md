@@ -1,19 +1,32 @@
 # First model: eligibility, quantization and validation
 
-This is an ordered local-model workflow, not a claim that every command below has
-been rerun in the currently recorded CPU environment. Historical model evidence
-is separated from implementation eligibility. Begin with
-[installation and its evidence boundary](installation.md); command defaults live
-in [usage.md](usage.md).
+Use this guide to check a local model, quantize it and measure the result.
+Begin with [installation](installation.md). For a first functional check, use the
+[no-download CPU tutorial](#executed-no-download-cpu-smoke). For a real model,
+follow the [ordered walkthrough](#first-model-walkthrough).
+Command defaults live in [usage.md](usage.md).
+
+Key terms:
+
+- **Post-training quantization (PTQ)** converts existing model weights to a
+  low-bit representation.
+- **Quantization-aware distillation (QAD)** trains quantized layers against the
+  original model.
+- **Final-KL** is an additional training phase that aims to reduce
+  Kullback–Leibler divergence (KLD) between model output distributions.
+
+Keep three outcomes separate: structural validity, dense numerical quality and
+native low-bit runtime qualification. This guide does not claim a fresh execution
+of every command. Recorded runs and model evidence are labeled below.
 
 ## Supported inputs and evidence
 
-Before allocating resources, establish all of the following:
+Check these prerequisites before allocating resources:
 
 * `SRC` is a **local Hugging Face directory** with `config.json`, tokenizer assets
   and either `model.safetensors` or a complete `model.safetensors.index.json`
-  plus its shards. A remote model ID, GGUF, AWQ/GPTQ packed checkpoint, or a
-  PyTorch `.bin` file is not this input contract.
+  plus its shards. Do not use a remote model ID, a GGUF file, prepacked AWQ/GPTQ
+  quantized weights, or a PyTorch `.bin` file as the source.
 * Eligible source tensors are floating-point 2-D `*.weight` matrices whose input
   width is divisible by 64, subject to include/exclude rules. Other tensors are
   copied rather than automatically quantized. Check the resulting tensor coverage.
@@ -21,18 +34,18 @@ Before allocating resources, establish all of the following:
   `AutoModelForCausalLM` and expose a recognized decoder `ModuleList`. The
   supported discovery paths are in [`layerwise.LAYER_PATHS`](../hi2/layerwise.py);
   matching a path is necessary, not proof that every model forward works.
-* MoE adaptation can unfuse **in-memory** experts loaded from per-expert 2-D
-  source weights. Fused 3-D expert weights **on disk** are not split by the writer.
-  These are different cases; inspect actual tensor names/shapes, not just the
-  model-family label. See [moe.md](moe.md).
+* A mixture-of-experts (MoE) model can load per-expert 2-D source weights and
+  combine them in memory. The adapter can split those in-memory experts.
+  The writer cannot split fused 3-D expert weights stored **on disk**.
+  Inspect tensor names and shapes, not just the model-family name. See [moe.md](moe.md).
 
 The matrix uses **M** = published historical measurement for the stated case,
 **I** = implementation exists but no full-model measurement supplied,
 **U** = untested/no qualifying measurement here, and **X** = unsupported input
 representation. M is evidence, not a promise that a new runtime or source
-revision will behave identically. Exact HF source revisions were not recorded in
-the linked model studies unless noted; that provenance gap is not filled in by
-inference. “Native” means direct low-bit loader/kernel evidence, not dense export.
+revision will behave identically. Exact Hugging Face source revisions were not
+recorded in the linked model studies unless noted. Those revisions remain unknown.
+“Native” means direct low-bit loader/kernel evidence, not dense export.
 
 | Model / source revision | On-disk input | PTQ | QAD | Final-KL | Dense numerical eval | Native serving | Hardware/environment and evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -53,14 +66,20 @@ This is narrow implementation coverage, not real-model qualification.
 
 ## Executed no-download CPU smoke
 
-This small workflow exercises the quantizer without fetching a model or selecting
-a GPU. It is a randomly initialized Llama, **not a useful language model**.
-Run it in an activated [installation](installation.md), in a directory without
-an existing `cpu-smoke/`. Dependencies must already be installed; offline mode
-below prevents Hub fetching, not package installation. Never use these two-step
-training settings or toy quality thresholds as a production recipe.
+This workflow creates and quantizes a tiny, randomly initialized Llama.
+It needs no model download or GPU. The result is **not a useful language model**.
 
-In a POSIX shell, create the local model, tokenizer and data with:
+Prerequisites:
+
+- Activate the [installation environment](installation.md) with dependencies installed.
+- Use a POSIX shell and a directory without an existing `cpu-smoke/`.
+- Keep both command blocks in the same shell. Offline mode prevents model
+  downloads; it does not install dependencies.
+
+The two-step training settings and toy quality thresholds are only for this
+functional check. Do not use them as a production recipe.
+
+Create the local model, tokenizer and data:
 
 ```bash
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false
@@ -135,21 +154,24 @@ The work manifest records layer/step progress and separates final-KL from
 layer-wise QAD. `hi2 validate` establishes structural validity, not quality
 acceptance; inspect the explicit quality result before distributing a bundle.
 
-Keep `cpu-smoke/model`, the calibration text and the work/cache paths for replay
-or later quality checks. Portable export retains run/quality evidence but does
-not bundle the recorded calibration corpus. Do not move the source just to test
-portability: ordinary output asset symlinks can still depend on it. Changing a
-recipe while retaining its work/output paths is an incompatible-resume error,
-not permission to overwrite them. See [safe recovery](operations.md#resume-and-invalidation).
+Keep the source model, calibration text and work/cache paths for replay and later
+quality checks. Portable export retains run/quality evidence but does not bundle
+the calibration corpus.
+
+Do not move the source model: ordinary output asset symlinks can still depend on
+it. If you change the recipe, use new work/output paths. Reusing incompatible
+paths is an error, not permission to overwrite them.
+See [safe recovery](operations.md#resume-and-invalidation).
 Native inference and GPU fit remain unmeasured.
 
 ## First-model walkthrough
 
-Use a locally available **Qwen3.5-0.8B safetensors checkpoint** for this example:
-it has published PTQ/QAD evidence, but a new source/dependency combination still
-needs the smoke below. Do not download or launch a 27B model just to test the CLI.
-Record the model's exact source revision and tokenizer provenance when acquiring
-it; the historical matrix cannot supply missing revision information for you.
+Prerequisite: a local **Qwen3.5-0.8B safetensors checkpoint**. This model has
+published PTQ/QAD evidence. Check a new source/dependency combination with the
+small compatibility run below before starting the full recipe.
+Do not download or launch a 27B model just to test the command-line interface.
+Record the exact source revision and tokenizer provenance when you acquire the
+model. The historical matrix cannot supply missing revisions.
 
 ### 1. Install and choose explicit paths/devices
 
@@ -161,12 +183,14 @@ MODEL=/absolute/path/to/Qwen3.5-0.8B
 DEVICES=cpu
 ```
 
-`MODEL` must exist with the assets listed above. `cpu` avoids accidental use of
-all visible GPUs; it does **not** make a full QAD run cheap. On a deliberately
-selected, separately qualified GPU installation, set `DEVICES=cuda:0` (ROCm uses
-that spelling too). Read [phase resource costs](operations.md#phase-resource-map)
-before the full recipe. Use new output/work directories for each recipe; none
-may overlap the source or data paths.
+`MODEL` must contain the assets listed [above](#supported-inputs-and-evidence).
+`cpu` avoids accidental GPU use; a full QAD run can still require substantial
+memory and time. For a deliberately selected, separately qualified GPU
+installation, set `DEVICES=cuda:0`. ROCm uses that spelling too.
+
+Read [phase resource costs](operations.md#phase-resource-map) before the full
+recipe. Use new output/work directories for each recipe. Keep them separate from
+the source and data paths.
 
 ### 2. Prepare independent documents, then mix
 
@@ -230,17 +254,20 @@ hi2 quantize "$MODEL" out/model --workdir work/model --devices "$DEVICES" \
   --max-error-ratio 6 --sensitivity probe --qad-preset default
 ```
 
-This explicitly selects calibrated PTQ, every eligible decoder layer, the
-sensitivity probe, default layer-wise QAD and its requested 200-step final-KL
-phase. Expected calibration requirement is 540,672 tokens. Check whether
-final-KL **completed or was skipped**, not only whether output was written.
-The layerwise time estimate is not total runtime. To choose PTQ only instead,
-use `--no-qad` with fresh paths; do not silently call that the default QAD recipe.
+This recipe requests calibrated PTQ, every eligible decoder layer, the
+sensitivity probe, default layer-wise QAD and 200 steps of final-KL.
+It requires 540,672 calibration tokens. Check the phase messages to see whether
+final-KL **completed or was skipped**. Written output alone does not prove that
+the phase ran.
 
-The allocation target is a global weighted error ratio, not a bound on every
-row or a promise of end-to-end KLD. If choosing a ratio with `--target-kld`, use
-`tuning.txt`, an explicit evaluation device, and the [prediction-versus-measurement
-rules](evaluation.md#allocation-and-kld-targets); keep `final-test.txt` untouched.
+The layer-wise time estimate is not total runtime. To select PTQ only, use
+`--no-qad` with fresh paths. That is not the default QAD recipe.
+
+The allocation target limits a global weighted error ratio. It does not bound
+each row's error or guarantee final-model KLD. If you select a ratio with
+`--target-kld`, use `tuning.txt` and an explicit evaluation device. Follow the
+[prediction-versus-measurement rules](evaluation.md#allocation-and-kld-targets);
+keep `final-test.txt` untouched.
 
 ### 5. Validate the completed artifact
 
@@ -252,19 +279,21 @@ hi2 eval "$MODEL" out/model --text final-test.txt --skip-tokens 0 \
   --device "$DEVICES" --dtype float32
 ```
 
-Quantization runs complete structural validation before its success record;
-`validate` repeats that check independently, including for an existing/moved
-artifact. `verify --max-tensors 8` remains sampled numerical reconstruction,
-not an all-shard integrity gate. Record checked/expected coverage rather than
-treating sample success as a full quality certificate.
+Quantization runs structural validation before recording success.
+`validate` repeats that check independently, including after an artifact moves.
+`verify --max-tensors 8` checks a numerical sample, not all-shard integrity or
+model quality. Record the checked and expected tensor counts.
 
-The size report separates quantized-body bytes from copied dense tensors. The
-numerical report should contain finite PPL/KLD/top-1/EAR results and the scored
-position count (16,376 for this default evaluation). Compare KLD with a
-**preselected corpus-specific threshold**, not an assumed guaranteed value.
-If using the result to retune, it is no longer untouched testing: reserve another
-final corpus. `eval` needs dense-model RAM/disk even though the checkpoint is
-compressed. See [metric boundaries](evaluation.md#read-the-results).
+The size report separates quantized-body bytes from copied dense tensors.
+Check that the numerical metrics are finite and the scored position count is
+16,376 for this default evaluation. See the
+[metric definitions and boundaries](evaluation.md#read-the-results).
+Compare KLD with a **preselected corpus-specific threshold**, not a guaranteed
+value.
+
+If you use the result to tune settings, reserve another final-test corpus.
+`eval` needs memory and disk space for the dense model even though the checkpoint
+is compressed.
 
 For an explicit final-quality gate, use `hi2 quality` **instead of** the `eval`
 command after setting `MAX_KLD` and `MAX_PPL_RATIO` to your preselected thresholds:
@@ -310,12 +339,12 @@ publish the destination while export is still running: a hard kill can leave an
 incomplete directory. See [publication caveats](operations.md#distribute-a-checkpoint).
 This is a portability check, not a native-runtime qualification.
 
-**Native guide qualification remains open.** Published fork results demonstrate
-that specific native runs occurred; the historical handover's registration
-failure does not prove native serving is universally broken. Conversely, neither
-those results nor `hi2 eval` establish that stock vLLM or an unnamed fork revision
-will load your checkpoint. No runtime revision or GPU validation is invented here.
-A qualified native guide needs all of:
+**A reproducible native installation guide is not yet qualified.** Published fork
+results document specific native runs. The historical handover's registration
+failure does not mean that all native serving is broken.
+
+Neither those results nor `hi2 eval` establish compatibility with stock vLLM or
+an unnamed fork revision. A qualified native guide needs all of:
 
 1. An obtainable runtime URL and exact commit, with installation dependencies.
 2. The accepted HI2 version, layout, dtype, model/source revision and checkpoint

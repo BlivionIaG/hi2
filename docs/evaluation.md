@@ -1,8 +1,16 @@
 # Prepare data and read the results
 
-`verify`, `size`, `eval` and the existing [benchmark harness](../bench/README.md)
-answer different questions. None is a substitute for all the others, and dense
-numerical evaluation does not test native HI2 kernels.
+Use `validate` for structural validity, `verify` for sampled weight comparisons,
+and `size` for byte accounting. Use `eval` to measure dense numerical quality,
+or `quality` to measure it and apply explicit acceptance thresholds. The
+[benchmark harness](../bench/README.md) measures named tasks. None of these
+checks replaces the others; dense evaluation does not test native HI2 kernels.
+
+**PTQ** means post-training quantization. **QAD** means quantization-aware
+distillation. **KLD** means Kullback–Leibler divergence between the reference
+and quantized token distributions. The final logit-KL phase is **training**;
+“final test” below means independent evaluation after training and selection.
+**bpw** means bits per weight.
 
 ## Prepare independent data
 
@@ -15,11 +23,12 @@ Assign document identities to these roles **before** mixing or tokenizing:
 | Tuning validation | `--eval-text` for KLD-target search, or repeated comparison of ratios/recipes | Once used to choose a checkpoint, it is selection data. Do not report it as an untouched final test. |
 | Final test | One independent evaluation after choosing the recipe/checkpoint | Reserve a nonempty corpus outside **all** calibration, QAD and tuning inputs. Do not tune on its scores. |
 
-The first two roles may deliberately use the same calibration file; QAD itself
-separates its train/validation windows. The tuning and final-test corpora should
-be separately reserved. Domain similarity is desirable; document identity must
-remain disjoint. This guidance does not establish leakage in every historical
-experiment: retain each result's actual protocol and limitations.
+PTQ and QAD may use the same calibration file. QAD separates its own training
+and internal-validation windows, but uses both to produce the model.
+Reserve tuning and final-test documents separately. They should represent the
+target domain without sharing document identities with training inputs.
+This guidance does not establish leakage in every historical experiment.
+Retain each result's actual protocol and limitations.
 
 ### Token budgets and offsets
 
@@ -145,12 +154,13 @@ Zero measured sensitivity is not proof of losslessness.
 ratio. The predicted KLD is not a measured score for the final checkpoint.
 An out-of-range target may remain unbracketed after extensions; inspect the
 reported tuning status and measured points, not just the selected ratio.
-QAD and final-KL can improve one corpus and regress another; the historical
-[27B fast-recipe regression](qad.md) remains relevant. Measure the **actual final
-artifact** on untouched text and enforce your chosen threshold on that result.
-Tuning returning a ratio does not mean that final quality passed. Use the
-independent `hi2 quality` gate for the chosen final artifact, not the tuning
-prediction. Select your thresholds before inspecting the final corpus:
+QAD and final logit-KL training can improve one corpus and regress another.
+The historical [27B fast-recipe regression](qad.md) remains relevant.
+A completed final-KL phase is not a final quality result.
+
+Choose acceptance thresholds before inspecting the final corpus. Then measure
+the **published final artifact** on that untouched text with `hi2 quality`.
+The tuning prediction and internal training scores cannot replace this gate:
 
 ```bash
 hi2 quality MODEL OUT --text final-test.txt \
@@ -262,6 +272,11 @@ Source: [`size.py`](../hi2/size.py) and [the corrected 27B comparison](results.m
 
 ### Numerical and task metrics
 
+**PPL** is perplexity; the PPL ratio compares the quantized model with its
+reference. **EAR** is the expected acceptance rate computed from distribution
+overlap, not a measured serving acceptance rate. **nMSE** is normalized
+mean-squared error.
+
 | Metric/check | What it measures | What it does not establish |
 | --- | --- | --- |
 | PPL and PPL ratio | Next-token likelihood of the chosen text; ratio to the matching reference | Equal PPL does not imply equal distributions or decisions. A ratio below 1 is possible after quantization. |
@@ -271,6 +286,12 @@ Source: [`size.py`](../hi2/size.py) and [the corrected 27B comparison](results.m
 | Internal QAD nMSE/KL | Training/selection objective on internal validation windows | Not an independent final-corpus score. |
 | Task accuracy and decision fidelity | Behavior on the named tasks/prompts and scoring rules | Not universal utility or proof that two sampled runs establish determinism. |
 | Native loader plus inference request | The selected runtime actually loads and executes the low-bit checkpoint | Not established by a dense export or `hi2 eval`. Requires its own versioned evidence. |
+
+A **signed log-probability gap** compares reference and candidate log-probabilities
+for selected tokens. It can be negative and is not true KLD over the full token
+distribution. Do not report such a gap as KLD or apply `--max-kld` thresholds
+to it. Use the benchmark harness's metric definitions when comparing task reports
+with dense `eval` results.
 
 `eval` exports/dequantizes the checkpoint to dense fp16 HF weights and loads the
 original architecture; `--dtype` controls evaluation math, not a native low-bit

@@ -14,13 +14,14 @@ indexed safetensors presence, and calibration token requirements. It reports
 resolved settings, output destinations and requested phases. It does not execute
 model forward/backward passes or native loading.
 
-The resource section deliberately leaves total runtime and peak VRAM unknown.
+The resource section leaves total runtime and peak GPU memory (VRAM) unknown.
 Its QAD fp32 hidden-state estimate is roughly
 `4 buffers * (training + validation sequences) * seq_len * hidden_size * 4 bytes`.
-That is not the full process RSS: source weights, live layer copies, Hessians,
-optimizer state and logits are additional. Free RAM/VRAM/disk is not reserved by
-a successful dry-run, and metadata readability is not Transformers architecture
-compatibility. Source: [`service.resolve_config`](../hi2/service.py) and
+This is not the full resident process memory (RSS). Source weights, live layer
+copies, Hessians, optimizer state and logits need additional memory.
+A successful dry-run does not reserve RAM, VRAM or disk space. Readable metadata
+also does not prove that Transformers can execute the architecture.
+Source: [`service.resolve_config`](../hi2/service.py) and
 [`pipeline.plan`](../hi2/pipeline.py).
 
 Dry-run performs read-only ownership/identity checks for existing work/output
@@ -67,13 +68,17 @@ be shared. Do not assume a single layerwise memory model applies to every phase.
   tokens; its CPU multiplier is a heuristic, not a CPU benchmark. Do not report
   it as a measured total-job ETA.
 
-Final-KL is requested by `default`/`thorough` and disabled by `fast` or explicit
-`--qad-final-kl 0`. On GPU the fit check can skip it with a note if the estimated
-per-device need remains too large after sharding. This estimate uses nominal
-capacity and headroom; it does not guarantee free VRAM or prevent every OOM.
-Retain the skip message/phase status and do not label such output “final-KL
-trained.” `final_tokens` reduces positions in the loss, not the model's weight
-placement requirement.
+Final-KL means the final **logit-KL training phase**, not independent quality
+evaluation. The `default` and `thorough` presets request it. The `fast` preset
+and explicit `--qad-final-kl 0` disable it.
+
+On GPU, the fit check can skip this phase if the estimated per-device memory
+need remains too large after sharding. The estimate uses nominal capacity and
+headroom. It does not guarantee free VRAM or prevent every out-of-memory (OOM)
+failure. Retain the skip message and phase status; do not label that output
+“final-KL trained.” `final_tokens` reduces positions in the loss, not the memory
+needed to place model weights. Even a completed phase needs independent
+[final quality evaluation](evaluation.md#allocation-and-kld-targets).
 
 ## First-use and slow starts
 
@@ -88,6 +93,10 @@ of a deadlock; inspect the current phase/compiler activity and available memory
 before stopping only the process you own.
 
 ## Artifact ownership
+
+The **output** is the checkpoint you evaluate or distribute. The **workdir**
+holds one run's recovery state. The **persistent cache** holds compatible phase
+products for reuse across runs. None of these directories replaces the others.
 
 Keep persistent cache, workdir and output trees separate from one another and from
 source/calibration inputs. Preflight rejects equality, containment and aliases
@@ -114,16 +123,20 @@ locks; multi-host ownership is not qualified.
 
 ## Resume and invalidation
 
-**Implemented lifecycle:** execution claims an exclusive workdir and output
-identity. The same resolved recipe and input identity can reuse committed phase
-products; a different identity is rejected rather than mixed with prior output.
+Execution takes exclusive ownership of the workdir and output paths.
+The `run_id` identifies resolved settings, inputs and implementation environment.
+A compatible resume keeps that ID and can reuse committed phase products.
+Each execution gets a fresh `attempt_id`. A durable submission has a separate
+`job_id`; see [the identity fields](usage.md#cache-and-work-directory).
+
+A different run identity is rejected rather than mixed with prior output.
 A nonempty legacy workdir without a valid run manifest is not automatically
-adopted. Final output is structurally validated before the success run record is
-published. Individual artifact replacements are atomic, not a transaction across
-all output markers and the workdir manifest. Ordinary publication exceptions
-restore prior success markers; a hard kill can leave partial publication or a
-stale `running` record. Neither atomic writes nor a marker's presence repairs
-corruption or proves that the current invocation finished.
+adopted. The pipeline structurally validates the output before publishing its
+success record. Each artifact replacement is atomic, but publication across
+all output markers and `run.json` is not one atomic transaction.
+Ordinary publication exceptions restore prior success markers. A hard kill
+can leave partial publication or a stale `running` record. A marker alone
+neither repairs corruption nor proves that the current attempt finished.
 
 Recovery granularity is phase-specific:
 
@@ -154,20 +167,24 @@ second writer. Changes to the recorded implementation/environment can also make
 resume incompatible; preserve the old run and choose fresh paths rather than
 editing its identity.
 
-For [durable MCP jobs](mcp.md), cancellation acknowledgement is only intent.
-The worker must exit before terminal reconciliation releases its leases. A
-committed quantization result bound to that job's current execution can win a
-late cancellation; the recorded process `returncode` remains the actual exit
-code, not a fabricated zero. An older successful output cannot stand in for the
-current execution. Inspect the persisted job result as well as the run/artifact;
-interrupted work is not automatically replayed.
+For [durable MCP jobs](mcp.md), a cancellation acknowledgement means **requested**,
+not **stopped**. Keep polling until the job reaches a terminal state. The worker
+must exit before reconciliation releases its resource leases.
+A validated commit from the job's bound `attempt_id` can win a late cancellation.
+The recorded process `returncode` remains the actual exit code, not a fabricated
+zero. An older successful attempt with the same `run_id` cannot complete this job.
+Read the persisted job result and the run/artifact evidence together.
+Interrupted work is not automatically replayed.
 
-Current cache identity is `sha256-content-v1` with statistics version 2: it
-streams full config/index/shard bytes and relative filenames, including nested
-index-referenced shards. An unchanged copy with the same relative layout matches;
-same-size edited weights do not, even with preserved timestamps. Old version-1
-entries miss transitively through their parent keys. Hashing costs a full
-checkpoint read, and source files must still remain immutable throughout a run.
+The model fingerprint uses `sha256-content-v1`. It hashes full config/index/shard
+bytes and relative filenames, including nested index-referenced shards.
+An unchanged copy with the same relative layout matches; same-size weight edits
+do not, even with preserved timestamps. Current statistics use
+`STATS_VERSION=3`, which also includes active auxiliary model inputs such as
+`HI2_NGRAM_MMAP` by canonical path and full SHA-256. Older statistics keys miss,
+as do the table/probe keys derived from them.
+Hashing costs a full checkpoint read. Keep source and auxiliary files unchanged
+throughout a run.
 
 Preview cache pruning with `hi2 cache list`, `hi2 cache size` and
 `hi2 cache prune --dry-run`. Remove only the selected obsolete products, never
