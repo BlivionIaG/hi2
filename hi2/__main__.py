@@ -1171,13 +1171,12 @@ def _success_result(a, out: dict) -> dict:
     }
 
 
-def _report_error(command, exc, *, json_mode, exit_code, args=None) -> int:
+def _report_error(command, exc, *, json_mode, args=None) -> int:
     message = str(exc)
     kind = "UsageError" if isinstance(exc, _UsageError) else type(exc).__name__
     from .errors import describe_error
 
-    category, classified_code, remedy = describe_error(exc)
-    exit_code = classified_code
+    category, exit_code, remedy = describe_error(exc)
     if isinstance(exc, _UsageError):
         category, exit_code = "invalid_input", 2
     if isinstance(exc, ModuleNotFoundError):
@@ -1226,8 +1225,8 @@ def main(argv=None) -> int:
     """CLI transport: one JSON object with --json; all execution logs on stderr.
 
     Successful JSON results keep their original top-level fields and add schema 1
-    metadata. Failures carry error.type/message/exit_code; usage errors exit 2,
-    command failures exit 1 (or the core's explicit nonzero code), interrupts 130.
+    metadata. Failures carry classified error metadata and exit codes:
+    usage errors exit 2, missing dependencies 3, and interrupts 130.
     Human mode retains command summaries and the size table. Help/version are text.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -1238,7 +1237,7 @@ def main(argv=None) -> int:
         a = ap.parse_args(argv)
     except _UsageError as exc:
         print(ap.format_usage(), file=sys.stderr, end="")
-        return _report_error(exc.command, exc, json_mode=json_mode, exit_code=2)
+        return _report_error(exc.command, exc, json_mode=json_mode)
     json_mode = a.json
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(line_buffering=True)
@@ -1256,22 +1255,21 @@ def main(argv=None) -> int:
                     allow_nan=False,
                 )
     except KeyboardInterrupt as exc:
-        return _report_error(a.cmd, exc, json_mode=json_mode, exit_code=130, args=a)
+        return _report_error(a.cmd, exc, json_mode=json_mode, args=a)
     except SystemExit as exc:
-        code = exc.code if isinstance(exc.code, int) and exc.code != 0 else 1
-        return _report_error(a.cmd, exc, json_mode=json_mode, exit_code=code, args=a)
+        return _report_error(a.cmd, exc, json_mode=json_mode, args=a)
     except (ValueError, OSError, ImportError, RuntimeError) as exc:
         if a.debug:
             import traceback
 
             traceback.print_exc(file=sys.stderr)
-        return _report_error(a.cmd, exc, json_mode=json_mode, exit_code=1, args=a)
+        return _report_error(a.cmd, exc, json_mode=json_mode, args=a)
     except Exception as exc:
         if a.debug:
             import traceback
 
             traceback.print_exc(file=sys.stderr)
-        return _report_error(a.cmd, exc, json_mode=json_mode, exit_code=1, args=a)
+        return _report_error(a.cmd, exc, json_mode=json_mode, args=a)
     print(rendered)
     return 0
 
