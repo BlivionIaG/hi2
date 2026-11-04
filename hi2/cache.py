@@ -11,17 +11,20 @@ a hash of a JSON key (kept in the entry's ``key.json``):
   exactly symmetric) and the 16x16 block moments (``colstats/``), plus ``layers.json``
   (which Linears share an input, token counts) and the MoE ``expert_tokens.json``.
   Sigma is taken in the *original* basis from the unquantized model, so it depends only
-  on the model weights, the calibration tokens and how they are run (dtype, device kind,
-  number of devices, the MoE token floor), never on the allocation target, error
-  ratio, rounding, smoothing, rotation, candidates or QAD. Key: :func:`stats_key`.
+  on the model weights (including auxiliary inputs), the calibration tokens and how
+  they are run (dtype, device kind, number of devices, the MoE token floor), never on
+  the allocation target, error ratio, rounding, smoothing, rotation, candidates or
+  QAD. Key: :func:`stats_key`.
 * ``tables``: the phase-1 tables, keyed by the stats key plus the phase-1 settings.
 * ``probe``: the sensitivity-probe result, keyed by the tables key plus the probe
   settings and probe tokens.
 
 An entry is built in ``<digest>.tmp-<pid>`` and renamed into place when complete, under
-a lock (``<digest>.lock``) so concurrent runs wait for one computation instead of
-repeating it. Bump the matching ``*_VERSION`` when the code that produces an entry
-changes its output; old entries are then simply never hit again (``hi2 cache prune``).
+a permanent lock file (``<digest>.lock``) so concurrent runs wait for one computation
+instead of repeating it. Pruning takes the same lock and never unlinks lock files:
+even an unlocked file may already have waiters with that inode open. Bump the matching
+``*_VERSION`` when the code that produces an entry changes its output; old entries
+are then simply never hit again (``hi2 cache prune``).
 """
 
 import contextlib
@@ -36,10 +39,11 @@ from pathlib import Path
 
 import torch
 
-STATS_VERSION = 1  # layerwise forward, hooks, ColumnStats / HessianStats, MoE floor
+STATS_VERSION = 3  # auxiliary model inputs; v2 hashed only the model directory
 TABLES_VERSION = 1  # build_table / shared_transform / encode_rows
 PROBE_VERSION = 1  # sensitivity.probe_sensitivity
 KINDS = ("stats", "tables", "probe")
+MODEL_IDENTITY = "sha256-content-v1"
 
 
 def default_root() -> Path:
@@ -52,13 +56,57 @@ def digest(obj) -> str:
 
 
 def model_fingerprint(src: Path) -> str:
-    """config.json and the weight files' names and sizes (not their paths or mtimes, so
-    a copied checkpoint still hits; a re-saved one with other sizes does not)."""
-    h = hashlib.sha256((src / "config.json").read_bytes())
-    for f in sorted(src.iterdir()):
-        if f.suffix == ".safetensors" or f.name == "model.safetensors.index.json":
-            h.update(f"{f.name}:{f.stat().st_size};".encode())
-    return h.hexdigest()[:24]
+    """Hash config, index and weight bytes, including index-referenced nested shards.
+
+    Identity includes relative filenames but not the checkpoint root, inode or
+    timestamps: an identical copy hits, a same-size edit misses. Each call streams
+    every file in full (O(checkpoint bytes) I/O and hashing, a reusable 1 MiB buffer).
+    There is deliberately no stat-based memoization for mutable local checkpoints.
+    The current run identity and stats key share this fingerprint; tables and probes
+    inherit it through their parent keys. External model inputs are identified
+    separately by auxiliary_model_inputs(), not folded into this directory hash.
+    As with model loading, the source must remain unchanged throughout the run.
+    """
+    names = {"config.json"}
+    names.update(f.name for f in src.iterdir() if f.suffix == ".safetensors")
+    index = src / "model.safetensors.index.json"
+    index_bytes = index.read_bytes() if index.exists() else None
+    if index_bytes is not None:
+        names.add(index.name)
+        names.update(json.loads(index_bytes)["weight_map"].values())
+    h = hashlib.sha256(MODEL_IDENTITY.encode())
+    buffer = bytearray(2**20)
+    view = memoryview(buffer)
+    for name in sorted(names):
+        content = hashlib.sha256()
+        if name == index.name and index_bytes is not None:
+            content.update(index_bytes)
+        else:
+            with (src / name).open("rb", buffering=0) as fh:
+                while n := fh.readinto(buffer):
+                    content.update(view[:n])
+        encoded = name.encode()
+        h.update(len(encoded).to_bytes(8, "big"))
+        h.update(encoded)
+        h.update(content.digest())
+    return h.hexdigest()
+
+
+def auxiliary_model_inputs() -> list[dict[str, str]]:
+    """Identify active external model inputs by canonical path and full SHA256.
+
+    Stream each file in bounded chunks, without timestamp/size memoization. Inputs
+    must remain unchanged throughout the run, just like the model directory.
+    """
+    from .runtime import file_digest
+
+    value = os.environ.get("HI2_NGRAM_MMAP")
+    if not value:
+        return []
+    path = Path(value).resolve(strict=True)
+    if not path.is_file():
+        raise ValueError(f"HI2_NGRAM_MMAP must be a regular file: {path}")
+    return [{"role": "ngram_mmap", "path": str(path), "sha256": file_digest(path)}]
 
 
 def ids_fingerprint(ids: torch.Tensor) -> str:
@@ -71,10 +119,20 @@ def ids_fingerprint(ids: torch.Tensor) -> str:
 
 
 def stats_key(rc, ids: torch.Tensor, devices) -> dict:
+    # resolve_config binds these inputs once for this invocation. Direct callers
+    # without that identity must read the current bytes, never reuse stat metadata.
+    source = (getattr(rc, "_identity", None) or {}).get("source", {})
+    fingerprint = source.get("fingerprint")
+    if fingerprint is None:
+        fingerprint = model_fingerprint(rc.src)
+    auxiliary = source.get("auxiliary_inputs")
+    if auxiliary is None:
+        auxiliary = auxiliary_model_inputs()
     return {
         "kind": "stats",
         "version": STATS_VERSION,
-        "model": model_fingerprint(rc.src),
+        "model": fingerprint,
+        "auxiliary_inputs": auxiliary,
         "ids": ids_fingerprint(ids),
         "samples_x_len": list(ids.shape),
         "compute_dtype": rc.compute_dtype,
@@ -88,6 +146,7 @@ def stats_key(rc, ids: torch.Tensor, devices) -> dict:
         # informational only (the content hashes above are what matter)
         "_src": str(rc.src),
         "_calib": str(rc.calib),
+        "_model_identity": MODEL_IDENTITY,
     }
 
 
@@ -124,6 +183,24 @@ def probe_key(tkey: dict, rc, probe_ids: torch.Tensor, ref_candidate) -> dict:
     }
 
 
+@contextmanager
+def _entry_lock(path: Path, *, blocking: bool = True):
+    """Coordinate builders/pruners on one permanent inode, including tmp siblings."""
+    lock = path.parent / f"{path.name.partition('.tmp-')[0]}.lock"
+    with lock.open("a+b") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError:
+            if blocking:
+                raise
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 class Entry:
     def __init__(self, root: Path, key: dict):
         self.key = key
@@ -146,16 +223,11 @@ class Entry:
 
     @contextmanager
     def building(self):
-        """Lock the entry; yields True if the caller must build it into ``self.work``
-        (then :meth:`finish`), False if another process finished it meanwhile."""
+        """Hold the entry's permanent lock through begin/finish/abort. The caller
+        must recheck completeness after acquiring it before deciding to build."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        lock = self.path.parent / f"{self.digest}.lock"
-        with open(lock, "w") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(fh, fcntl.LOCK_UN)
+        with _entry_lock(self.path):
+            yield
 
     def begin(self) -> None:
         self.work = self.path.parent / f"{self.digest}.tmp-{os.getpid()}"
@@ -292,43 +364,36 @@ def _size(p: Path) -> int:
     return total
 
 
-def entries(root: Path) -> list[dict]:
-    out = []
+def _entry_paths(root: Path):
     for kind in KINDS:
         base = root / kind
-        if not base.is_dir():
-            continue
-        for d in sorted(base.iterdir()):
-            if not d.is_dir():
-                continue
-            info_p = d / "complete.json"
-            key_p = d / "key.json"
-            out.append(
-                {
-                    "kind": kind,
-                    "digest": d.name,
-                    "path": str(d),
-                    "complete": info_p.exists(),
-                    "bytes": _size(d),
-                    "last_used": (info_p if info_p.exists() else d).stat().st_mtime,
-                    "key": json.loads(key_p.read_text()) if key_p.exists() else None,
-                }
-            )
+        if base.is_dir():
+            yield from (d for d in sorted(base.iterdir()) if d.is_dir())
+
+
+def _entry_info(d: Path) -> dict:
+    info_p = d / "complete.json"
+    key_p = d / "key.json"
+    # finish() writes the marker before the atomic rename; a tmp sibling is not
+    # published even if a crashed builder left a complete.json inside it.
+    complete = ".tmp-" not in d.name and info_p.exists()
+    return {
+        "kind": d.parent.name,
+        "digest": d.name,
+        "path": str(d),
+        "complete": complete,
+        "bytes": _size(d),
+        "last_used": (info_p if complete else d).stat().st_mtime,
+        "key": json.loads(key_p.read_text()) if key_p.exists() else None,
+    }
+
+
+def entries(root: Path) -> list[dict]:
+    out = []
+    for d in _entry_paths(root):
+        with contextlib.suppress(FileNotFoundError):  # concurrently published/pruned
+            out.append(_entry_info(d))
     return out
-
-
-def _building(e: dict) -> bool:
-    """An unfinished ``<digest>.tmp-<pid>`` whose process is still alive."""
-    name = e["digest"]
-    if ".tmp-" not in name:
-        return False
-    try:
-        os.kill(int(name.rsplit(".tmp-", 1)[1]), 0)
-    except (ValueError, ProcessLookupError):
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def prune(
@@ -340,9 +405,18 @@ def prune(
 ) -> list[dict]:
     """Remove incomplete leftovers (not builds in progress), entries unused for
     ``older_than_days``, named ``digests``, then the least recently used until at most
-    ``keep_gb`` remain."""
+    ``keep_gb`` remain. Busy entries are skipped, including published entries whose
+    builder still holds the lock. Lock files are permanent; stale tmp directories
+    are identified by lock availability, never by the liveness of a recorded PID.
+    A dry run also takes these locks but does not remove any products.
+    """
     now = time.time()
-    es = [e for e in entries(root) if not _building(e)]
+    es = []
+    for d in _entry_paths(root):
+        with _entry_lock(d, blocking=False) as held:
+            if held:
+                with contextlib.suppress(FileNotFoundError):
+                    es.append(_entry_info(d))
     drop = [
         e
         for e in es
@@ -360,13 +434,22 @@ def prune(
             e = rest.pop(0)
             drop.append(e)
             total -= e["bytes"]
-    if not dry_run:
-        for e in drop:
-            shutil.rmtree(e["path"], ignore_errors=True)
-        for lock in root.glob("*/*.lock"):
-            if not (lock.parent / lock.stem).exists():
-                lock.unlink(missing_ok=True)
-    return drop
+    removed = []
+    for e in drop:
+        d = Path(e["path"])
+        with _entry_lock(d, blocking=False) as held:
+            if not held:
+                continue
+            with contextlib.suppress(FileNotFoundError):
+                # A builder/pruner may have changed this entry since selection.
+                # Leave changed entries for a later prune rather than deleting
+                # a newly published or recently used product on a stale snapshot.
+                if _entry_info(d) != e:
+                    continue
+                if not dry_run:
+                    shutil.rmtree(d, ignore_errors=True)
+                removed.append(e)
+    return removed
 
 
 def estimate_stats_bytes(src: Path, include, exclude) -> int:

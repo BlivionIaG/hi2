@@ -4,7 +4,11 @@
 
 Everything here must be bit-identical to the uncached, per-tensor path."""
 
+import fcntl
 import json
+import multiprocessing
+import os
+import shutil
 
 import pytest
 import torch
@@ -29,6 +33,102 @@ def _save_sigma(d, name, sigma, n, fp16_above=0):
 
 
 QUIET = dict(log=lambda *_: None)
+
+
+@pytest.fixture
+def cache_process():
+    """Spawn rather than fork an already initialized Torch runtime."""
+    ctx = multiprocessing.get_context("spawn")
+    children = []
+
+    def start(target, *args):
+        parent, child = ctx.Pipe()
+        process = ctx.Process(target=target, args=(*args, child))
+        process.start()
+        child.close()
+        children.append((process, parent))
+        return process, parent
+
+    yield start
+    for process, pipe in children:
+        if process.is_alive():
+            process.terminate()
+        process.join(timeout=30)
+        pipe.close()
+
+
+def _cache_message(pipe):
+    assert pipe.poll(30), "timed out waiting for the cache worker"
+    return pipe.recv()
+
+
+def _join_cache_process(process):
+    process.join(timeout=30)
+    assert process.exitcode == 0
+
+
+def _held_cache_builder(root, key, pipe):
+    entry = C.Entry(root, key)
+    with entry.building():
+        pipe.send("locked")
+        assert pipe.recv() == "begin"
+        entry.begin()
+        (entry.work / "product").write_bytes(b"first builder")
+        pipe.send(("building", entry.work))
+        command = pipe.recv()
+        if command == "abandon-marked":
+            (entry.work / "complete.json").write_text("{}")
+            return  # simulate interruption between the marker and publication
+        if command == "abandon":
+            return  # leave an interrupted build, but release the kernel lock
+        assert command == "finish"
+        entry.finish({})
+        pipe.send("published")
+        assert pipe.recv() == "release"
+    pipe.send("released")
+
+
+def _competing_cache_builder(root, key, pipe):
+    entry = C.Entry(root, key)
+    # A real nonblocking acquisition gives a deterministic contention observation;
+    # no sleep or negative event timeout is used to infer whether a builder waited.
+    with entry.path.with_suffix(".lock").open("a+b") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pipe.send("blocked")
+        else:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+            pipe.send("unlocked")
+    with entry.building():
+        if entry.complete():
+            pipe.send("hit")
+        else:
+            entry.begin()
+            (entry.work / "product").write_bytes(b"second builder")
+            entry.finish({})
+            pipe.send("built")
+
+
+def _rewrite_same_size(path, content):
+    before = path.stat()
+    assert len(content) == before.st_size
+    path.write_bytes(content)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = path.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+
+
+def _same_size_weight_edit(path, pipe):
+    pipe.send("ready")
+    assert pipe.recv() == "edit"
+    content = path.read_bytes()
+    _rewrite_same_size(path, content[:-1] + bytes([content[-1] ^ 1]))
+    pipe.send("edited")
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +180,8 @@ def _files(dst):
     return {
         p.name: p.read_bytes()
         for p in sorted(dst.iterdir())
-        if p.suffix in (".safetensors", ".json") and p.name != "hi2_report.json"
+        if p.suffix == ".safetensors"
+        or p.name in ("config.json", "model.safetensors.index.json")
     }
 
 
@@ -100,6 +201,292 @@ def _no_forward(monkeypatch):
 
     monkeypatch.setattr(lw, "calibrate_layerwise", boom)
     monkeypatch.setattr(pl, "_load_model", boom)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "config.json",
+        "model.safetensors.index.json",
+        "model.safetensors",
+        "shards/extra.safetensors",
+    ],
+)
+def test_model_fingerprint_tracks_all_checkpoint_bytes(tmp_path, filename):
+    src = tmp_path / "source"
+    (src / "shards").mkdir(parents=True)
+    (src / "config.json").write_bytes(b'{"width":1}')
+    # The last byte lies beyond the hash buffer; sampling only a prefix is unsafe.
+    (src / "model.safetensors").write_bytes(b"x" * (2**20 + 31))
+    (src / "shards" / "extra.safetensors").write_bytes(b"extra weights")
+    (src / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "a.weight": "model.safetensors",
+                    "b.weight": "shards/extra.safetensors",
+                }
+            }
+        )
+    )
+    original = C.model_fingerprint(src)
+    copied = shutil.copytree(src, tmp_path / "copy")
+    os.utime(copied / "config.json", ns=(0, 0))
+    assert C.model_fingerprint(copied) == original
+    path = src / filename
+    content = path.read_bytes()
+    if filename == "config.json":
+        changed = content.replace(b"1", b"2")
+    elif filename == "model.safetensors.index.json":
+        changed = content.replace(b"a.weight", b"c.weight")
+    else:
+        changed = content[:-1] + bytes([content[-1] ^ 1])
+    _rewrite_same_size(path, changed)
+    assert C.model_fingerprint(src) != original
+    assert C.model_fingerprint(copied) == original
+
+
+def test_same_size_weight_edit_invalidates_cached_products(
+    tiny, tmp_path, cache_process
+):
+    src = shutil.copytree(tiny[0], tmp_path / "source")
+    root = tmp_path / "cache"
+
+    def products(source):
+        rc = _rc(tiny, tmp_path, "keys", src=source)
+        skey = C.stats_key(rc, tiny[1], [torch.device("cpu")])
+        tkey = C.tables_key(skey, rc.cfg)
+        pkey = C.probe_key(tkey, rc, tiny[1], (2, 32))
+        return [C.Entry(root, key) for key in (skey, tkey, pkey)]
+
+    original = products(src)
+    for entry in original:
+        with entry.building():
+            entry.begin()
+            (entry.work / "product").write_bytes(b"original model")
+            entry.finish({})
+    saved_key = json.loads((original[0].path / "key.json").read_text())
+    assert saved_key["_model_identity"] == "sha256-content-v1"
+    weight = src / "model.safetensors"
+    before = weight.stat()
+    editor, pipe = cache_process(_same_size_weight_edit, weight)
+    assert _cache_message(pipe) == "ready"
+    copied = shutil.copytree(src, tmp_path / "copy")
+    for old, copy in zip(original, products(copied)):
+        assert copy.digest == old.digest
+        assert copy.complete()
+    pipe.send("edit")
+    assert _cache_message(pipe) == "edited"
+    _join_cache_process(editor)
+    after = weight.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    for old, changed in zip(original, products(src)):
+        assert changed.digest != old.digest
+        assert not changed.complete(), changed.kind
+        assert old.complete()
+
+
+@pytest.mark.parametrize("change", ["bytes", "path", "unset"])
+def test_ngram_table_change_invalidates_cached_products(
+    tiny, tmp_path, monkeypatch, cache_process, change
+):
+    from safetensors.torch import save_file
+
+    table = tmp_path / "ngram.safetensors"
+    save_file(
+        {"model.layers.1.ple.ngram_embedding.weight": torch.ones(64, 8)},
+        table,
+    )
+    monkeypatch.setenv("HI2_NGRAM_MMAP", str(table))
+    rc = _rc(tiny, tmp_path, "ngram")
+    fingerprint = C.model_fingerprint(rc.src)
+
+    def products():
+        skey = C.stats_key(rc, tiny[1], [torch.device("cpu")])
+        tkey = C.tables_key(skey, rc.cfg)
+        pkey = C.probe_key(tkey, rc, tiny[1], (2, 32))
+        return [C.Entry(rc.cache_dir, key) for key in (skey, tkey, pkey)]
+
+    original = products()
+    for entry in original:
+        with entry.building():
+            entry.begin()
+            (entry.work / "product").write_bytes(b"original ngram table")
+            entry.finish({})
+    saved_key = json.loads((original[0].path / "key.json").read_text())
+    assert saved_key["auxiliary_inputs"] == C.auxiliary_model_inputs()
+    alias = tmp_path / "ngram-alias.safetensors"
+    alias.symlink_to(table)
+    monkeypatch.setenv("HI2_NGRAM_MMAP", str(alias))
+    for old, aliased in zip(original, products()):
+        assert aliased.digest == old.digest
+        assert aliased.complete()
+    monkeypatch.setenv("HI2_NGRAM_MMAP", str(table))
+
+    if change == "bytes":
+        before = table.stat()
+        editor, pipe = cache_process(_same_size_weight_edit, table)
+        assert _cache_message(pipe) == "ready"
+        pipe.send("edit")
+        assert _cache_message(pipe) == "edited"
+        _join_cache_process(editor)
+        after = table.stat()
+        assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+    elif change == "path":
+        selected = tmp_path / "other-ngram.safetensors"
+        shutil.copy2(table, selected)
+        monkeypatch.setenv("HI2_NGRAM_MMAP", str(selected))
+    else:
+        monkeypatch.delenv("HI2_NGRAM_MMAP")
+
+    # External inputs must not change the directory-only fingerprint API.
+    assert C.model_fingerprint(rc.src) == fingerprint
+    for old, changed in zip(original, products()):
+        assert changed.digest != old.digest, changed.kind
+        assert not changed.complete(), changed.kind
+        assert old.complete()
+
+
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize(
+    "known",
+    [
+        (),
+        ("fingerprint",),
+        ("auxiliary_inputs",),
+        ("fingerprint", "auxiliary_inputs"),
+    ],
+)
+def test_stats_key_reuses_available_current_run_identity(
+    tiny, tmp_path, monkeypatch, active, known
+):
+    from safetensors.torch import save_file
+
+    if active:
+        table = tmp_path / "ngram.safetensors"
+        save_file({"ngram_embedding.weight": torch.ones(64, 8)}, table)
+        monkeypatch.setenv("HI2_NGRAM_MMAP", str(table))
+    else:
+        monkeypatch.delenv("HI2_NGRAM_MMAP", raising=False)
+    rc = _rc(tiny, tmp_path, "identity")
+    devices = [torch.device("cpu")]
+    expected = C.stats_key(rc, tiny[1], devices)
+    source = {
+        "fingerprint": expected["model"],
+        "auxiliary_inputs": expected["auxiliary_inputs"],
+    }
+    rc._identity = {"source": {key: source[key] for key in known}}
+    snapshot = json.loads(json.dumps(rc._identity))
+    reads = []
+    fingerprint, auxiliary = C.model_fingerprint, C.auxiliary_model_inputs
+
+    def read_model(src):
+        reads.append("fingerprint")
+        return fingerprint(src)
+
+    def read_auxiliary():
+        reads.append("auxiliary_inputs")
+        return auxiliary()
+
+    monkeypatch.setattr(C, "model_fingerprint", read_model)
+    monkeypatch.setattr(C, "auxiliary_model_inputs", read_auxiliary)
+    assert C.stats_key(rc, tiny[1], devices) == expected
+    assert sorted(reads) == sorted(set(source) - set(known))
+    assert rc._identity == snapshot
+
+
+@pytest.mark.parametrize("phase", ["locked", "building", "published"])
+def test_prune_preserves_active_build_lock(tmp_path, cache_process, phase):
+    root = tmp_path / "cache"
+    key = {"kind": "stats", "version": C.STATS_VERSION, "test": "active"}
+    entry = C.Entry(root, key)
+    builder, pipe = cache_process(_held_cache_builder, root, key)
+    assert _cache_message(pipe) == "locked"
+    work = None
+    if phase != "locked":
+        pipe.send("begin")
+        state, work = _cache_message(pipe)
+        assert state == "building"
+    if phase == "published":
+        pipe.send("finish")
+        assert _cache_message(pipe) == "published"
+    lock = entry.path.with_suffix(".lock")
+    inode = lock.stat().st_ino
+    assert C.prune(root, older_than_days=0, keep_gb=0, digests=[entry.digest]) == []
+    if phase == "building":
+        assert work.is_dir()
+    if phase == "published":
+        assert entry.complete()
+    contender, contender_pipe = cache_process(_competing_cache_builder, root, key)
+    assert _cache_message(contender_pipe) == "blocked"
+    assert lock.stat().st_ino == inode
+    if phase == "locked":
+        pipe.send("begin")
+        state, work = _cache_message(pipe)
+        assert state == "building"
+    if phase != "published":
+        pipe.send("finish")
+        assert _cache_message(pipe) == "published"
+    pipe.send("release")
+    assert _cache_message(pipe) == "released"
+    assert _cache_message(contender_pipe) == "hit"
+    _join_cache_process(builder)
+    _join_cache_process(contender)
+    assert (entry.path / "product").read_bytes() == b"first builder"
+    gone = C.prune(root, keep_gb=0)
+    assert [e["digest"] for e in gone] == [entry.digest]
+    assert not entry.path.exists()
+    assert lock.stat().st_ino == inode
+    # Rebuilding a pruned digest must also reuse the permanent lock inode.
+    with entry.building():
+        entry.begin()
+        entry.finish({})
+    assert entry.complete()
+    assert lock.stat().st_ino == inode
+
+
+@pytest.mark.parametrize("marked", [False, True])
+def test_prune_reclaims_abandoned_process_build(tmp_path, cache_process, marked):
+    root = tmp_path / "cache"
+    key = {"kind": "stats", "version": C.STATS_VERSION, "test": "abandoned"}
+    entry = C.Entry(root, key)
+    builder, pipe = cache_process(_held_cache_builder, root, key)
+    assert _cache_message(pipe) == "locked"
+    pipe.send("begin")
+    state, work = _cache_message(pipe)
+    assert state == "building"
+    pipe.send("abandon-marked" if marked else "abandon")
+    _join_cache_process(builder)
+    lock = entry.path.with_suffix(".lock")
+    inode = lock.stat().st_ino
+    assert (
+        next(e for e in C.entries(root) if e["path"] == str(work))["complete"] is False
+    )
+    assert [e["digest"] for e in C.prune(root)] == [work.name]
+    assert not work.exists()
+    assert lock.stat().st_ino == inode
+
+
+def test_prune_reclaims_unlocked_build_despite_live_pid(tmp_path):
+    entry = C.Entry(tmp_path, {"kind": "stats", "test": "live-pid-leftover"})
+    with entry.building():
+        entry.begin()
+    work = entry.work
+    assert work.name.endswith(f".tmp-{os.getpid()}")
+    preview = C.prune(tmp_path, dry_run=True)
+    assert [e["digest"] for e in preview] == [work.name]
+    assert work.is_dir()
+    assert C.prune(tmp_path) == preview
+    assert not work.exists()
+    assert entry.path.with_suffix(".lock").exists()
 
 
 def test_sigma_triangle_roundtrip_is_exact(tmp_path):
@@ -274,13 +661,13 @@ def test_cache_list_and_prune(tiny, tmp_path):
         e["complete"] for e in es
     )
     (root / "stats" / "deadbeef.tmp-999999999").mkdir()  # an interrupted build
-    import os
-
-    (root / "stats" / f"cafe.tmp-{os.getpid()}").mkdir()  # a build in progress
-    gone = C.prune(root)
-    assert [e["digest"] for e in gone] == ["deadbeef.tmp-999999999"]
-    assert (root / "stats" / f"cafe.tmp-{os.getpid()}").exists()
-    (root / "stats" / f"cafe.tmp-{os.getpid()}").rmdir()
+    with (root / "stats" / "cafe.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        (root / "stats" / f"cafe.tmp-{os.getpid()}").mkdir()  # a build in progress
+        gone = C.prune(root)
+        assert [e["digest"] for e in gone] == ["deadbeef.tmp-999999999"]
+        assert (root / "stats" / f"cafe.tmp-{os.getpid()}").exists()
+        (root / "stats" / f"cafe.tmp-{os.getpid()}").rmdir()
     gone = C.prune(root, keep_gb=0)
     assert len(gone) == len(es) and C.entries(root) == []
 
