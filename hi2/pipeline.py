@@ -25,6 +25,7 @@ from .checkpoint import (
 )
 from .executor import Executor
 from .moe import expert_parts, expert_weights, group_key, probe_units
+from .runtime import RunSession, atomic_json, atomic_torch_save
 
 # Quality target when neither --max-error-ratio nor --target-bpw is given. Measured on
 # Qwen3.5-0.8B/4B and OLMoE (docs/results.md): ratio 6 with QAD gives about 3.4-3.5 bpw
@@ -63,7 +64,9 @@ class RunConfig:
     sens_len: int = 512
     sens_floor: float = 0.05
     sens_batch: int = 1  # probe sequences per forward (1 = the original probe, exact)
-    sens_dtype: str = "auto"  # probe dtype: auto (float32, else float16), float32, float16
+    sens_dtype: str = (
+        "auto"  # probe dtype: auto (float32, else float16), float32, float16
+    )
     # MoE: lower bound of an expert's routed-token share (relative to uniform routing)
     # in its allocation weight
     expert_share_floor: float = 0.05
@@ -263,6 +266,7 @@ def _load_model(rc: RunConfig, log=print):
         rc.src,
         dtype=getattr(torch, rc.compute_dtype),
         low_cpu_mem_usage=True,
+        trust_remote_code=False,
         ignore_mismatched_sizes=True,  # the source may omit the excluded n-gram table
     ).eval()
     _attach_mmap_ngram(model, log)
@@ -276,14 +280,14 @@ def _calib_ids(rc: RunConfig) -> torch.Tensor:
         return rc.calib_ids
     from transformers import AutoTokenizer
 
-    tok = AutoTokenizer.from_pretrained(rc.src)
+    tok = AutoTokenizer.from_pretrained(rc.src, trust_remote_code=False)
     return load_calibration_ids(rc.calib, tok, rc.calib_samples, rc.seq_len)
 
 
 def _save_tables(tables: dict, tdir: Path) -> None:
     tdir.mkdir(parents=True, exist_ok=True)
     for name, t in tables.items():
-        torch.save(t, tdir / (name.replace("/", "_") + ".pt"))
+        atomic_torch_save(t, tdir / (name.replace("/", "_") + ".pt"))
 
 
 def _load_tables(tdir: Path, names: list[str]) -> dict[str, TensorTable]:
@@ -330,7 +334,7 @@ def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTab
     if missing:
         raise SystemExit(f"module names not found in the checkpoint: {missing[:3]}")
     _save_tables(tables, tdir)
-    marker.write_text(json.dumps({"key": _phase1_key(rc), "tensors": list(tables)}))
+    atomic_json(marker, {"key": _phase1_key(rc), "tensors": list(tables)})
     return tables
 
 
@@ -428,6 +432,10 @@ def _tabulate_streaming(rc, ex, inc, exc, tdir, log) -> dict[str, TensorTable]:
     for shard in sorted(set(wmap.values())):
         with safe_open(rc.src / shard, "pt") as f:
             for name in [n for n, s in wmap.items() if s == shard]:
+                if rc.limit_layers is not None:
+                    layer = re.search(r"(?:^|\.)layers\.(\d+)\.", name)
+                    if layer and int(layer.group(1)) >= rc.limit_layers:
+                        continue
                 sl = f.get_slice(name)
                 if not is_eligible(
                     name, sl.get_shape(), _dtype(sl.get_dtype()), inc, exc
@@ -438,7 +446,7 @@ def _tabulate_streaming(rc, ex, inc, exc, tdir, log) -> dict[str, TensorTable]:
                     tables[name] = torch.load(path, weights_only=False)
                     continue
                 t = build_table(name, f.get_tensor(name), None, rc.cfg, ex)
-                torch.save(t, path)
+                atomic_torch_save(t, path)
                 tables[name] = t
                 log(f"tabulated {name} {t.shape}")
     return tables
@@ -452,7 +460,10 @@ def _probe_ids(rc) -> torch.Tensor:
         ids = rc.calib_ids
     else:
         ids = load_calibration_ids(
-            rc.calib, AutoTokenizer.from_pretrained(rc.src), rc.sens_seqs, rc.seq_len
+            rc.calib,
+            AutoTokenizer.from_pretrained(rc.src, trust_remote_code=False),
+            rc.sens_seqs,
+            rc.seq_len,
         )
     return ids[: rc.sens_seqs, : rc.sens_len]
 
@@ -467,7 +478,7 @@ def _sequential_encode(rc, ex, tables, picks, log) -> dict:
     else:
         ids = load_calibration_ids(
             rc.calib,
-            AutoTokenizer.from_pretrained(rc.src),
+            AutoTokenizer.from_pretrained(rc.src, trust_remote_code=False),
             rc.calib_samples,
             rc.seq_len,
         )
@@ -509,13 +520,16 @@ def _qad_encode(
         ids = ids[:n_seq]
     elif qc.sampling == "head":
         ids = load_calibration_ids(
-            rc.calib, AutoTokenizer.from_pretrained(rc.src), n_seq, rc.seq_len
+            rc.calib,
+            AutoTokenizer.from_pretrained(rc.src, trust_remote_code=False),
+            n_seq,
+            rc.seq_len,
         )
     else:
         bal = qc.sampling == "balanced"
         ids = sample_calibration_windows(
             rc.calib,
-            AutoTokenizer.from_pretrained(rc.src),
+            AutoTokenizer.from_pretrained(rc.src, trust_remote_code=False),
             n_seq,
             rc.seq_len,
             qc.seed,
@@ -556,13 +570,18 @@ def _qad_encode(
         log,
         qdir=rc.workdir / f"qad{tag}",
     )
-    (rc.workdir / f"qad_report{tag}.json").write_text(json.dumps(out.layers, indent=1))
+    atomic_json(rc.workdir / f"qad_report{tag}.json", out.layers)
     tensors, dense = out.tensors, out.dense
     head = _saved_head_inputs(rc, tag, fp)
-    if qc.final_kl > 0 and _final_kl_fits(rc, ex, model, tensors, head is not None, log):
-        tensors, dense = _final_kl(
-            rc, ex, model, ids, tensors, dense, fp, log, tag, head
-        )
+    if qc.final_kl > 0:
+        if _final_kl_fits(rc, ex, model, tensors, head is not None, log):
+            log.event("final_kl", "running", epochs=qc.final_kl)
+            tensors, dense = _final_kl(
+                rc, ex, model, ids, tensors, dense, fp, log, tag, head
+            )
+            log.event("final_kl", "completed")
+        else:
+            log.event("final_kl", "skipped", reason="full-model fit check failed")
     return tensors, dense
 
 
@@ -656,10 +675,8 @@ def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag="", head_inputs=N
         log,
         head_inputs=head_inputs,
     )
-    torch.save({"fingerprint": ffp, "tensors": t, "dense": d, "info": info}, art)
-    (rc.workdir / f"final_kl{tag}.json").write_text(
-        json.dumps(dict(info.items()), indent=1)
-    )
+    atomic_torch_save({"fingerprint": ffp, "tensors": t, "dense": d, "info": info}, art)
+    atomic_json(rc.workdir / f"final_kl{tag}.json", dict(info.items()))
     return t, d
 
 
@@ -695,7 +712,7 @@ def check_inputs(rc: RunConfig, log=print) -> dict:
                 raise SystemExit(f"calibration file {p} does not exist")
         from transformers import AutoTokenizer
 
-        tok = AutoTokenizer.from_pretrained(rc.src)
+        tok = AutoTokenizer.from_pretrained(rc.src, trust_remote_code=False)
         have = tok(
             read_calibration_text(rc.calib),
             return_tensors="pt",
@@ -743,9 +760,17 @@ def _log_qad_plan(rc: RunConfig, ex: Executor, log) -> None:
 
 def plan(rc: RunConfig, log=print) -> dict:
     """``--dry-run``: validate and describe the run without doing it."""
+    from .service import resolve_config
+
+    return _plan_resolved(resolve_config(rc, log), log)
+
+
+def _plan_resolved(rc: RunConfig, log=print) -> dict:
     from dataclasses import asdict
 
-    facts = check_inputs(rc, log)
+    from .service import config_dict, output_paths
+
+    facts = rc._input_facts
     tc = _text_config(rc.src)
     hidden, n_layers = tc.get("hidden_size"), tc.get("num_hidden_layers")
     if rc.limit_layers is not None and n_layers:
@@ -762,6 +787,25 @@ def plan(rc: RunConfig, log=print) -> dict:
         "layers": n_layers,
         "moe_layout": rc.moe_layout,
         **facts,
+        "schema_version": 1,
+        "config": config_dict(rc),
+        "outputs": [str(p) for p in output_paths(rc)],
+        "checkpoint": rc._checkpoint_info,
+        "phases": ["calibration" if facts["calibrated"] else "data_free_tables"]
+        + (["sensitivity"] if rc.sensitivity == "probe" else [])
+        + ["allocation"]
+        + (["qad"] if rc.qad is not None else [])
+        + (["final_kl"] if rc.qad is not None and rc.qad.final_kl else [])
+        + ["encode", "validation"],
+        "phase_repetitions": {
+            "qad": len(output_paths(rc)) if rc.qad is not None else 0,
+            "final_kl": len(output_paths(rc))
+            if rc.qad is not None and rc.qad.final_kl
+            else 0,
+            "validation": len(output_paths(rc)),
+        },
+        "native_runtime": "not_measured",
+        "resource_estimates": rc._resource_estimates,
     }
     if rc.qad is not None and hidden:
         from .qad import parse_layers
@@ -916,7 +960,7 @@ def _probe(rc: RunConfig, ex: Executor, tables, weights, log) -> dict | None:
                 log("phase 2a: probing per-tensor sensitivity")
                 sens = compute()
                 pent.begin()
-                (pent.work / "sensitivity.json").write_text(json.dumps(sens, indent=1))
+                atomic_json(pent.work / "sensitivity.json", sens)
                 pent.finish({})
         C.write_ref(rc.workdir, probe=pent.path)
     elif spath.exists() and kpath.exists() and json.loads(kpath.read_text()) == skey:
@@ -925,8 +969,8 @@ def _probe(rc: RunConfig, ex: Executor, tables, weights, log) -> dict | None:
     else:
         log("phase 2a: probing per-tensor sensitivity")
         sens = compute()
-    spath.write_text(json.dumps(sens, indent=1))
-    kpath.write_text(json.dumps(skey))
+    atomic_json(spath, sens)
+    atomic_json(kpath, skey)
     return sens
 
 
@@ -978,17 +1022,73 @@ def staging_dir(rc: RunConfig, dst: Path) -> Path:
 
 
 def run(rc: RunConfig, log=print) -> dict:
-    """Quantize. With ``rc.max_error_ratios`` (several values) phase 1 and the probe
-    run once and every ratio is allocated and written to ``<dst>-r<ratio>`` in one
-    encode pass; the return value is then ``{"outputs": {dir: summary}}``."""
+    """Execute an identity-bound run; unchanged interrupted runs remain resumable."""
+    from .checkpoint import validate_checkpoint
+    from .service import output_paths, resolve_config, run_identity
+
+    rc = resolve_config(rc, log)
+    outputs = output_paths(rc)
+    identity = rc._identity or run_identity(rc)
+    rc._identity = identity
+    log(f"model identity: sha256-content-v1 {identity['source']['fingerprint']}")
+    with RunSession(rc.workdir, identity, outputs) as session:
+
+        class RunLog:
+            def __call__(self, message):
+                log(message)
+
+            def event(self, phase, status, **details):
+                session.phase(phase, status, **details)
+                callback = getattr(log, "event", None)
+                if callback is not None:
+                    callback(phase, status, **details)
+
+        progress = RunLog()
+        if (
+            session.previous
+            and session.previous.get("state") == "succeeded"
+            and all((p / "hi2_run.json").exists() for p in outputs)
+        ):
+            for output in outputs:
+                validate_checkpoint(output, log=log)
+            result = session.previous["result"]
+            for summary in result.get("outputs", {"single": result}).values():
+                if "frac_rows_by_bits" in summary:
+                    summary["frac_rows_by_bits"] = {
+                        int(bits): share
+                        for bits, share in summary["frac_rows_by_bits"].items()
+                    }
+            progress.event(
+                "run",
+                "reused",
+                run_id=session.run_id,
+                attempt_id=session.attempt_id,
+                workdir=str(rc.workdir),
+            )
+            session.complete(result)
+            return result
+        progress.event(
+            "run",
+            "running",
+            run_id=session.run_id,
+            attempt_id=session.attempt_id,
+            workdir=str(rc.workdir),
+        )
+        result = _run_resolved(rc, progress)
+        progress.event("validation", "running")
+        for output in outputs:
+            validate_checkpoint(output, log=log)
+        progress.event("validation", "completed")
+        progress.event("run", "completed")
+        session.complete(result)
+        return result
+
+
+def _run_resolved(rc: RunConfig, log) -> dict:
+    """Numerical pipeline, called only after shared preflight and ownership checks."""
     t_start = time.time()
-    if rc.moe_layout not in ("per-expert", "stacked"):
-        raise ValueError(f"moe_layout {rc.moe_layout!r}: per-expert or stacked")
-    rc.workdir.mkdir(parents=True, exist_ok=True)
     ex = Executor(rc.devices)
     calibrated = rc.calib is not None or rc.calib_ids is not None
-    if rc.qad is not None:
-        check_inputs(rc, log)  # fails early, or drops QAD for a data-free run
     if rc.qad is not None:
         _log_qad_plan(rc, ex, log)
         if rc.max_error_ratios is not None and len(rc.max_error_ratios) > 1:
@@ -997,18 +1097,22 @@ def run(rc: RunConfig, log=print) -> dict:
                 f"{len(rc.max_error_ratios)} QAD passes in sequence (the estimate above "
                 "is per pass); pass --no-qad for a quick PTQ sweep"
             )
-    if rc.cfg.rounding == "gptq" and not calibrated:
-        log("no calibration data: using nearest rounding")
-        rc.cfg.rounding = "nearest"
-        rc.cfg.sequential = False
     multi = rc.max_error_ratios is not None and len(rc.max_error_ratios) > 1
-    if rc.target_bpw is not None and (rc.max_error_ratio is not None or multi):
-        raise ValueError("give either target_bpw or max_error_ratio, not both")
     log(
         f"phase 1: tabulating on {[str(d) for d in ex.devices]}"
         f"{'' if calibrated else ' (data-free)'}"
     )
+    log.event("calibration" if calibrated else "data_free_tables", "running")
     tables = phase1_tables(rc, ex, log)
+    log.event(
+        "calibration" if calibrated else "data_free_tables",
+        "completed",
+        tensors=len(tables),
+    )
+    if not tables:
+        raise ValueError(
+            "no eligible tensors; check model layout and include/exclude settings"
+        )
     t_phase1 = time.time()
     # MoE: all experts of a layer and projection weigh as one dense tensor, split by
     # routed-token share (empty for dense models)
@@ -1022,7 +1126,9 @@ def run(rc: RunConfig, log=print) -> dict:
     if rc.sensitivity == "probe":
         if not calibrated:
             raise SystemExit("--sensitivity probe needs calibration data (--calib)")
+        log.event("sensitivity", "running")
         sens = _probe(rc, ex, tables, weights, log)
+        log.event("sensitivity", "completed")
     t_probe = time.time()
     if rc.int8_force > 0:
         from .allocate import force_int8
@@ -1042,7 +1148,9 @@ def run(rc: RunConfig, log=print) -> dict:
     outs, allocs = [], []
     t_qad = 0.0  # QAD passes (spec 13), reported apart from the allocation
     for target_bpw, ratio, dst in targets:
+        log.event("allocation", "running", output=str(dst))
         alloc = _allocate(rc, tables, sens, target_bpw, ratio, log)
+        log.event("allocation", "completed", output=str(dst), bpw=alloc.bpw)
         pre, dense = None, None
         if rc.qad is not None:
             what = (
@@ -1053,9 +1161,11 @@ def run(rc: RunConfig, log=print) -> dict:
             log(f"phase 3q: layer-wise quantization-aware distillation (spec 13){what}")
             tag = f"-r{ratio:g}" if multi else ""
             tq = time.time()
+            log.event("qad", "running", output=str(dst))
             pre, dense = _qad_encode(
                 rc, ex, tables, alloc.picks, sens, log, target_bpw, ratio, tag
             )
+            log.event("qad", "completed", output=str(dst))
             t_qad += time.time() - tq
         elif rc.cfg.rounding == "gptq" and rc.cfg.sequential:
             log("phase 3a: sequential encode pass (spec 8.4)")
@@ -1097,7 +1207,9 @@ def run(rc: RunConfig, log=print) -> dict:
     dst_of = {id(o): t[2] for o, t in zip(outs, targets)}
     t_alloc = time.time()
     log(f"phase 3: encoding and writing {len(outs)} checkpoint(s)")
+    log.event("encode", "running", outputs=len(outs))
     write_checkpoints(rc.src, outs, rc.workdir, tables, rc.cfg, ex, log)
+    log.event("encode", "completed")
     t_end = time.time()
     tok = StatsView(rc.workdir).expert_tokens_path()
     summaries = {}
@@ -1125,9 +1237,7 @@ def run(rc: RunConfig, log=print) -> dict:
                 cov = json.loads(tok.read_text())
                 summary["experts"]["fallback_tensors"] = len(cov["fallback"])
                 summary["experts"]["coverage"] = cov["coverage"]
-        (o.dst / "hi2_report.json").write_text(
-            json.dumps({"summary": summary, "tensors": report}, indent=2)
-        )
+        atomic_json(o.dst / "hi2_report.json", {"summary": summary, "tensors": report})
         final = dst_of[id(o)]
         if final != o.dst:
             from .stack import restack

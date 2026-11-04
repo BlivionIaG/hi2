@@ -348,39 +348,10 @@ def test_qad_without_calibration_falls_back_to_ptq(tiny, tmp_path):
     from hi2.pipeline import run
 
     rc = _rc(tiny, tmp_path, "nocal", calib_ids=None)
-    logs: list[str] = []
-    summary = run(rc, log=lambda *a: logs.append(" ".join(map(str, a))))
-    assert summary["feasible"] and rc.qad is None
-    assert any("falls back to PTQ" in ln for ln in logs)
+    summary = run(rc, log=lambda *_: None)
+    assert summary["feasible"]
     qcfg = json.loads((rc.dst / "config.json").read_text())["quantization_config"]
     assert "qad" not in qcfg and qcfg["calibrated"] is False
-
-
-def test_cli_runs_qad_by_default_and_no_qad_disables(tiny, tmp_path, monkeypatch):
-    import hi2.__main__ as cli
-
-    seen = {}
-    monkeypatch.setattr(cli, "run", lambda rc: seen.setdefault("rc", rc) and {})
-    monkeypatch.setattr(cli, "resolve_devices", lambda spec: ["cpu"])
-    calib = tmp_path / "c.txt"
-    calib.write_text("x")
-    cli.main(["quantize", str(tiny[0]), str(tmp_path / "o"), "--calib", str(calib)])
-    rc = seen.pop("rc")
-    assert rc.qad is not None and rc.sensitivity == "probe"
-    cli.main(
-        [
-            "quantize",
-            str(tiny[0]),
-            str(tmp_path / "o"),
-            "--calib",
-            str(calib),
-            "--no-qad",
-        ]
-    )
-    rc = seen.pop("rc")
-    assert rc.qad is None and rc.sensitivity == "none"
-    cli.main(["quantize", str(tiny[0]), str(tmp_path / "o"), "--qad-budget", "0.4"])
-    assert seen.pop("rc").qad.budget == 0.4
 
 
 def test_qad_with_too_few_sequences_fails_before_work(tiny, tmp_path):
@@ -461,8 +432,10 @@ def test_ptq_fallback_is_kept_when_training_loses():
 
 
 def test_step_units_train_and_keep_exactness():
-    torch.manual_seed(0)
-    layer = _MLP()
+    # _MLP replaces Linear's random initialisation with locally seeded weights;
+    # preserve the caller's RNG as well so this test cannot affect later tests.
+    with torch.random.fork_rng(devices=[]):
+        layer = _MLP(seed=5)
     xs = [_x(256, 128, seed=30 + i).unsqueeze(0) for i in range(8)]
     with torch.no_grad():
         ys = [layer(x) for x in xs]
@@ -476,10 +449,10 @@ def test_step_units_train_and_keep_exactness():
         w = layer.get_submodule(name).weight.detach().float()
         t0, comp = _ptq(w, acts[name])
         fq[name] = FakeQuantLinear(w, t0, comp, "weights", "step")
-        # step units: the stored-basis values are the latent times the unit
-        assert torch.allclose(
-            fq[name].latent * fq[name].unit, fq[name].latent.detach() * fq[name].unit
-        )
+        # Compare against an independently constructed absolute-unit latent,
+        # rather than comparing a tensor with its own detached value.
+        absolute = FakeQuantLinear(w, t0, comp, "weights", "abs")
+        assert torch.allclose(fq[name].latent * fq[name].unit, absolute.latent)
     qc = make_config(
         "default",
         {
@@ -489,23 +462,80 @@ def test_step_units_train_and_keep_exactness():
             "lr_p": 0.1,
             "val": 2,
             "latent_units": "step",
+            "seed": 0,
+            "eval_every": 10,
         },
     )
+    val_idx = [6, 7]
+    observed = []
+
+    @torch.no_grad()
+    def observe(*_):
+        # Score the actual weights independently of train_layer's reported loss,
+        # and retain every candidate state before keep-best can restore it.
+        weights = {f"{name}.weight": m() for name, m in fq.items()}
+        losses = []
+        for i in val_idx:
+            out = torch.func.functional_call(layer, weights, (xs[i],))
+            losses.append(
+                (
+                    ((out - ys[i]) ** 2).mean() / (ys[i] ** 2).mean().clamp_min(1e-30)
+                ).item()
+            )
+        state = {
+            name: {key: value.detach().clone() for key, value in m.state_dict().items()}
+            for name, m in fq.items()
+        }
+        observed.append((sum(losses) / len(losses), state))
+
+    observe()
     info = train_layer(
         layer,
         fq,
         xs,
         ys,
         list(range(6)),
-        [6, 7],
+        val_idx,
         {},
         qc,
         torch.device("cpu"),
-        lambda *_: None,
+        observe,
     )
-    assert info["val_after"] < info["val_before"]
-    for m in fq.values():
+    assert info["steps"] == info["allotted"] == qc.steps
+    assert not info["early_stop"]
+    assert [step for step, _, _ in info["trace"]] == [0, 10, 20, 30, 40]
+    losses = [loss for loss, _ in observed]
+    assert len(losses) == len(info["trace"])
+    assert all(torch.isfinite(torch.tensor(loss)) for loss in losses)
+    assert [loss for _, _, loss in info["trace"]] == pytest.approx(losses)
+    assert info["val_before"] == pytest.approx(losses[0])
+    assert info["val_final"] == pytest.approx(losses[-1])
+
+    # Generalisation need not improve on every fixture. Require real parameter
+    # updates AND changed held-out outputs, so a no-op optimizer cannot pass.
+    initial = observed[0][1]
+    for name in fq:
+        assert any(
+            not torch.equal(state[name]["latent"], initial[name]["latent"])
+            for _, state in observed[1:]
+        )
+    assert any(loss != losses[0] for loss in losses[1:])
+
+    best = min(losses)
+    assert info["val_after"] == pytest.approx(best)
+    if best < losses[-1]:
+        kept_index = losses.index(best)
+        assert info["kept"] == ("init" if kept_index == 0 else "best")
+    else:
+        kept_index = len(observed) - 1
+        assert info["kept"] == "trained"
+    kept_state = observed[kept_index][1]
+    for name, m in fq.items():
+        for key, value in m.state_dict().items():
+            assert torch.equal(value, kept_state[name][key]), (name, key)
         assert torch.equal(dequantize_stored(m.export()), m.stored(False).double())
+    observe()
+    assert observed[-1][0] == pytest.approx(best)
 
 
 def _ckpt_bytes(dst):

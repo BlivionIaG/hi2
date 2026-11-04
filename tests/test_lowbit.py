@@ -216,14 +216,10 @@ def test_final_kl_phase_writes_a_normal_checkpoint_and_resumes(tiny, tmp_path):
     base = _rc(tiny, tmp_path, "base")
     run(base, log=lambda *_: None)
     rc = _rc(tiny, tmp_path, "fkl", qad={"final_kl": 4, "final_lr_p": 0.5})
-    # share the layer-wise artifacts: the final phase must not invalidate them
+    # Different recipes use fresh owned workdirs; shared cache products are separate.
     import shutil
 
-    rc.workdir.mkdir(parents=True)
-    shutil.copytree(base.workdir / "qad", rc.workdir / "qad")
-    logs: list[str] = []
-    run(rc, log=lambda *a: logs.append(" ".join(map(str, a))))
-    assert sum("QAD layer" in ln and "reusing" in ln for ln in logs) == 2
+    run(rc, log=lambda *_: None)
     info = json.loads((rc.workdir / "final_kl.json").read_text())
     assert info["val_after"] <= info["val_before"]
     a, b = _hi2(base.dst), _hi2(rc.dst)
@@ -236,13 +232,21 @@ def test_final_kl_phase_writes_a_normal_checkpoint_and_resumes(tiny, tmp_path):
         assert qcfg["qad"]["dense_trained"] > 0
         assert _dense(rc.dst, "model.norm.weight").dtype == torch.float16
     assert verify_checkpoint(rc.src, rc.dst, 3, log=lambda *_: None)["checked"] == 3
-    logs.clear()
+    report = json.loads((rc.dst / "hi2_report.json").read_text())
+    final_artifact = rc.workdir / "qad" / "final_kl.pt"
+    modified = final_artifact.stat().st_mtime_ns
     shutil.rmtree(rc.dst)
-    run(rc, log=lambda *a: logs.append(" ".join(map(str, a))))
-    assert any("final KL: reusing" in ln for ln in logs)
+    run(rc, log=lambda *_: None)
+    assert final_artifact.stat().st_mtime_ns == modified
+    assert (
+        json.loads((rc.dst / "hi2_report.json").read_text())["tensors"]
+        == report["tensors"]
+    )
 
 
-def test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves(tiny, tmp_path):
+def test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves(
+    tiny, tmp_path
+):
     from hi2.finalkl import _head_input
     from hi2.pipeline import run
 

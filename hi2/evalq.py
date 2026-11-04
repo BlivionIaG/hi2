@@ -8,7 +8,7 @@ original architecture (a numerical check of the format, not a kernel test).
 """
 
 import os
-import shutil
+import tempfile
 from pathlib import Path
 
 import torch
@@ -50,12 +50,14 @@ def evaluate(
     from .pipeline import _attach_mmap_ngram, _shrink_ngram_embedding
 
     devices = [d for d in device.split(",") if d]
-    tok = AutoTokenizer.from_pretrained(src)
+    tok = AutoTokenizer.from_pretrained(src, trust_remote_code=False)
     ids = load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens)
     if os.environ.get("HI2_NGRAM_MMAP"):
         _shrink_ngram_embedding(log)
     model, first = _place(
-        AutoModelForCausalLM.from_pretrained(src, dtype=getattr(torch, dtype)).eval(),
+        AutoModelForCausalLM.from_pretrained(
+            src, dtype=getattr(torch, dtype), trust_remote_code=False
+        ).eval(),
         devices,
     )
     _attach_mmap_ngram(model, log)
@@ -69,18 +71,20 @@ def evaluate(
     # Load the quantised model through the same class and loader as the original, from
     # an exported fp16 copy, so checkpoint/module name differences are handled by
     # transformers rather than by us.
-    dense = dst.parent / (dst.name + ".eval-dense")
-    export_dense(src, dst, dense)
-    try:
+    # Only this invocation owns the temporary tree; even a failed export is covered
+    # by cleanup. The child does not exist yet, as required by export_dense.
+    with tempfile.TemporaryDirectory(
+        prefix=f".{dst.name}.eval-", dir=dst.parent
+    ) as tmp:
+        dense = Path(tmp) / "dense"
+        export_dense(src, dst, dense)
         model, first = _place(
             AutoModelForCausalLM.from_pretrained(
-                dense, dtype=getattr(torch, dtype)
+                dense, dtype=getattr(torch, dtype), trust_remote_code=False
             ).eval(),
             devices,
         )
         _attach_mmap_ngram(model, log)
-    finally:
-        shutil.rmtree(dense, ignore_errors=True)
     nll_ref = nll_q = kl = agree = acc = 0.0
     n = 0
     for i in range(ids.shape[0]):

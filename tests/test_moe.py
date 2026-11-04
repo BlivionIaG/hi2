@@ -403,7 +403,7 @@ def test_olmoe_stacked_layout_is_bit_identical(olmoe, tmp_path):
             RunConfig(
                 src=d,
                 dst=dst,
-                workdir=tmp_path / "w",  # the second run reuses phase 1
+                workdir=tmp_path / f"w-{layout}",
                 calib_ids=ids,
                 calib_samples=8,
                 seq_len=64,
@@ -418,7 +418,7 @@ def test_olmoe_stacked_layout_is_bit_identical(olmoe, tmp_path):
     quantize(pe, "per-expert")
     summary = quantize(st, "stacked")
     assert summary["moe_layout"] == "stacked"
-    assert not (tmp_path / "w" / "per-expert" / "st").exists()  # staging removed
+    assert not (tmp_path / "w-stacked" / "per-expert" / "st").exists()
     wpe, wst = weight_map(pe), weight_map(st)
     stacks = [k for k in wst if k.endswith(".hi2_part_off")]
     assert len(stacks) == 2 * 2  # gate_up and down per layer

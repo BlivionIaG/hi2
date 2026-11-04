@@ -393,6 +393,15 @@ def final_kl(
                     f"  final KL step {step + 1}/{steps} train {tot:.4f} held-out {vl:.4f} "
                     f"({(time.time() - t0) / 60:.1f} min)"
                 )
+                if event := getattr(log, "event", None):
+                    event(
+                        "final_kl",
+                        "running",
+                        step=step + 1,
+                        total_steps=steps,
+                        elapsed_s=time.time() - t0,
+                        validation_kld=vl,
+                    )
     restore(best_state)
     out_t = dict(tensors)
     for ckpt, m in mods.items():

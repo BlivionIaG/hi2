@@ -47,6 +47,7 @@ from .format import (
     ladder_dequantize,
 )
 from .pinned import PinnedWindow, module_to_device
+from .runtime import atomic_torch_save
 
 # ---- configuration -----------------------------------------------------------
 
@@ -493,7 +494,9 @@ def _parallel_step(w, wd, batch, xs, ys, workers, dtype=torch.float32):
 
     def work(k):
         dev, lay, kw = workers[k]
-        wk = wd if k == 0 else {a: v.detach().to(dev, dtype=dtype) for a, v in w.items()}
+        wk = (
+            wd if k == 0 else {a: v.detach().to(dev, dtype=dtype) for a, v in w.items()}
+        )
         if k:
             for v in wk.values():
                 v.requires_grad_(True)
@@ -630,7 +633,9 @@ def train_layer(
         return {f"{n}.weight": m() for n, m in (mods or fq).items()}
 
     def run(wd, i):
-        return _out(functional_call(layer, wd, (stager.to_device(xs[i], dev, dtype=dt),), kw))
+        return _out(
+            functional_call(layer, wd, (stager.to_device(xs[i], dev, dtype=dt),), kw)
+        )
 
     @torch.no_grad()
     def val_loss(mods=None) -> float:
@@ -700,18 +705,14 @@ def train_layer(
         # the detached copies are the leaves the backward writes into: the rounding of the
         # math dtype is a straight-through (the gradient of the rounded weight goes to the
         # float32 latent unchanged)
-        wd = {
-            k: v.detach().to(dt).detach().requires_grad_(True) for k, v in w.items()
-        }
+        wd = {k: v.detach().to(dt).detach().requires_grad_(True) for k, v in w.items()}
         tot = 0.0
         if not reps:
             for i in batch:
                 loss = loss_fn(run(wd, i), i) / len(batch)
                 loss.backward()
                 tot += loss.item()
-            grads = [
-                wd[k].grad.float() if wd[k].grad is not None else None for k in w
-            ]
+            grads = [wd[k].grad.float() if wd[k].grad is not None else None for k in w]
         else:
             tot, grads = _parallel_step(
                 w, wd, batch, xs, ys, [(dev, layer, kw)] + reps, dtype=dt
@@ -730,6 +731,16 @@ def train_layer(
             if qc.keep_best and vl < best:
                 best, best_state = vl, snapshot()
             log(f"  {tag} step {step + 1}/{n_steps} train {tot:.4e} val {vl:.4e}")
+            if event := getattr(log, "event", None):
+                event(
+                    "qad",
+                    "running",
+                    layer=tag,
+                    step=step + 1,
+                    total_steps=n_steps,
+                    elapsed_s=time.time() - t0,
+                    validation_nmse=vl,
+                )
             if (
                 qc.min_gain > 0
                 and step + 1 >= qc.min_steps
@@ -1038,8 +1049,10 @@ def qad_layerwise(
             trained.add(li)
     propagate = bool(trained)
     if todo and not propagate:
-        log(f"QAD: every layer comes from its artifact; the propagation is skipped")
+        log("QAD: every layer comes from its artifact; the propagation is skipped")
     for li in range(n_layers):
+        if event := getattr(log, "event", None):
+            event("qad", "running", layer=li + 1, total_layers=n_layers)
         layer = layers[li]
         linears = {}
         for name, mod in layer.named_modules():
@@ -1059,6 +1072,14 @@ def qad_layerwise(
             tensors, info = rec["tensors"], rec["info"]
             norms = rec.get("norms", {})
             log(f"QAD layer {li}: reusing {art.name}")
+            if event := getattr(log, "event", None):
+                event(
+                    "qad",
+                    "reused",
+                    layer=li + 1,
+                    total_layers=n_layers,
+                    artifact=str(art),
+                )
             if li in todo:
                 budget.record(info)
         else:
@@ -1088,7 +1109,9 @@ def qad_layerwise(
             if li in train_set and linears:
                 fq = {
                     name: FakeQuantLinear(
-                        wstager.to_host(layer.get_submodule(name).weight.detach().float()),
+                        wstager.to_host(
+                            layer.get_submodule(name).weight.detach().float()
+                        ),
                         inits[name],
                         comps[name],
                         qc.init,
@@ -1102,7 +1125,9 @@ def qad_layerwise(
                 ):  # also score the PTQ encoding; kept if training loses
                     fb = {
                         name: FakeQuantLinear(
-                            wstager.to_host(layer.get_submodule(name).weight.detach().float()),
+                            wstager.to_host(
+                                layer.get_submodule(name).weight.detach().float()
+                            ),
                             inits[name],
                             comps[name],
                             "ptq",
@@ -1140,9 +1165,22 @@ def qad_layerwise(
             rec = {"fingerprint": fp, "tensors": tensors, "info": info}
             if norms:
                 rec["norms"] = norms
-            torch.save(rec, art)
+            atomic_torch_save(rec, art)
             left = len([i for i in todo if i > li])
             eta = (trained_time / max(trained_n, 1)) * left
+            if event := getattr(log, "event", None):
+                event(
+                    "qad",
+                    "completed" if li in train_set else "skipped",
+                    layer=li + 1,
+                    total_layers=n_layers,
+                    step=info.get("steps", 0),
+                    total_steps=info.get("allotted", 0),
+                    eta_s=eta,
+                    eta_scope="remaining selected layers",
+                    artifact=str(art),
+                    gpu_peak_gib=info.get("gpu_peak_gib"),
+                )
             if "val_before" in info:
                 gain = 1 - info["val_after"] / max(info["val_before"], 1e-30)
                 log(
@@ -1198,7 +1236,9 @@ def qad_layerwise(
         with torch.no_grad():
             for i, x in enumerate(xt):
                 out[i].copy_(norm(x.float())[0])
-        torch.save({"fingerprint": fp, "head_inputs": out}, qdir / "head_inputs.pt")
+        atomic_torch_save(
+            {"fingerprint": fp, "head_inputs": out}, qdir / "head_inputs.pt"
+        )
         log(
             f"QAD: saved the teacher's head inputs ({out.numel() * 4 / 2**30:.1f} GiB) "
             "for the final logit-KL phase"
