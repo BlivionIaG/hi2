@@ -22,7 +22,7 @@ from typing import Annotated, Any, Literal, get_type_hints
 SDK_VERSION = "2.3.0"
 MAX_RESOURCE_BYTES = 32768
 MAX_PAGE_BYTES = 16384
-MAX_EVENTS = 16
+MAX_EVENTS_PER_PAGE = 16
 MAX_CURSOR = 2**53 - 1
 _JOB_ID = re.compile(r"job_[0-9a-f]{32}\Z")
 _ARTIFACT_ID = re.compile(r"artifact:[0-9a-f]{32}\Z")
@@ -567,9 +567,11 @@ def create_server(policy, jobs, *, enable_tasks=False):
         return _json_resource(dataclasses.asdict(job_handle(snapshot(job_id, limit=1))))
 
     @resource("hi2://jobs/{job_id}/events{?cursor,limit}")
-    def job_events(job_id: str, cursor: int = 0, limit: int = MAX_EVENTS) -> str:
+    def job_events(
+        job_id: str, cursor: int = 0, limit: int = MAX_EVENTS_PER_PAGE
+    ) -> str:
         """Page retained events by monotonic event cursor (at most 16 per page)."""
-        _page_bounds(cursor, limit, MAX_EVENTS)
+        _page_bounds(cursor, limit, MAX_EVENTS_PER_PAGE)
         record = snapshot(job_id, cursor=cursor, limit=limit)
         page = {
             "schema_version": 1,

@@ -24,7 +24,7 @@ from mcp.types import CallToolResult
 from hi2.jobs import MAX_EVENT_BYTES, JobStore
 from hi2.mcp_server import (
     MAX_CURSOR,
-    MAX_EVENTS,
+    MAX_EVENTS_PER_PAGE,
     MAX_PAGE_BYTES,
     MAX_RESOURCE_BYTES,
     _file_page,
@@ -540,7 +540,7 @@ def test_resources_are_bounded_pageable_and_named_only(workspace, tmp_path):
             # are persisted events on the real completed job, not a fake store.
             registry = JobStore(workspace["state"] / "jobs")
             with registry._transaction() as db:
-                for index in range(MAX_EVENTS):
+                for index in range(MAX_EVENTS_PER_PAGE):
                     registry._event(
                         db,
                         handle["job_id"],
@@ -568,15 +568,18 @@ def test_resources_are_bounded_pageable_and_named_only(workspace, tmp_path):
             page_count = 0
             while cursor < seen[-1]:
                 page = await resource(
-                    client, f"{event_uri}?cursor={cursor}&limit={MAX_EVENTS}"
+                    client, f"{event_uri}?cursor={cursor}&limit={MAX_EVENTS_PER_PAGE}"
                 )
-                assert 1 <= len(page["events"]) <= MAX_EVENTS
+                assert 1 <= len(page["events"]) <= MAX_EVENTS_PER_PAGE
                 assert page["next_cursor"] > cursor
                 capped_seen.extend(event["cursor"] for event in page["events"])
                 cursor = page["next_cursor"]
                 page_count += 1
             assert capped_seen == seen
-            assert page_count > (len(seen) + MAX_EVENTS - 1) // MAX_EVENTS
+            assert (
+                page_count
+                > (len(seen) + MAX_EVENTS_PER_PAGE - 1) // MAX_EVENTS_PER_PAGE
+            )
             inspected = await call(
                 client,
                 "hi2_inspect",
@@ -587,7 +590,7 @@ def test_resources_are_bounded_pageable_and_named_only(workspace, tmp_path):
                 f"{uri}?limit={MAX_PAGE_BYTES + 1}",
                 f"{uri}?cursor=-1",
                 f"{uri}?limit=0",
-                f"{event_uri}?limit={MAX_EVENTS + 1}",
+                f"{event_uri}?limit={MAX_EVENTS_PER_PAGE + 1}",
                 f"hi2://artifacts/{artifact}/config.json",
                 f"hi2://artifacts/{artifact}/worker.log",
                 f"hi2://artifacts/{artifact}/%2e%2e%2fsecret.txt",
