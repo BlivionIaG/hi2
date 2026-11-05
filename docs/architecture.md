@@ -7,6 +7,10 @@ layer before training. The final streaming writer publishes the trained
 tensors afterwards; it does not first publish a complete PTQ checkpoint.
 PTQ-only runs skip distillation.
 
+For the dated assessment and proposed work, see the
+[architecture and evaluation roadmap](architecture-evaluation-roadmap.md).
+Its evaluation command and format experiments are proposals, not current behavior.
+
 ```mermaid
 flowchart TD
     M[HF checkpoint] --> P1
@@ -102,7 +106,10 @@ to measure and accept or reject the published artifact.
 
 | Module | Job |
 | --- | --- |
-| `__main__.py` | Command line: `quantize`, `verify`, `eval`, `export-dense`, `restack`, `calib`, `size`, `cache`. |
+| `__main__.py` | CLI adapters and command presentation. |
+| `service.py`, `workspace.py` | Shared resolution and finite operations; rooted paths and operator-owned capabilities. |
+| `runtime.py`, `jobs.py`, `job_worker.py` | Run/attempt identity, ownership, durable job state and process supervision. |
+| `mcp_server.py`, `mcp_tasks.py` | MCP transport and negotiated task projection over the existing jobs. |
 | `pipeline.py` | The phases, `RunConfig`, resume logic. |
 | `format.py` | The storage format, decode, and reference semantics. |
 | `encode.py` | Block encoder: least-squares fit of `lo` and `step`, 8-bit parameters, code assignment. |
@@ -115,7 +122,8 @@ to measure and accept or reject the published artifact.
 | `checkpoint.py` | Shard enumeration, the streaming writer, verification. |
 | `cache.py` | The persistent cache. |
 | `executor.py` | Compute placement on one or more devices. |
-| `evalq.py` | Perplexity, KLD, and top-1 agreement on held-out text. |
+| `evalq.py`, `quality.py` | Dense held-out fidelity and explicit acceptance thresholds. |
+| `tune.py` | Target-KLD search; predictions are distinct from measured final quality. |
 | `size.py` | Byte accounting of a checkpoint (`hi2 size`). |
 | `calib.py` | Mixed-domain calibration text (`hi2 calib`). |
 

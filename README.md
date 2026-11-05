@@ -65,6 +65,7 @@ not fit; check the phase messages.
 | Quantize a mixture-of-experts model | [docs/moe.md](docs/moe.md) |
 | Learn about QAD | [docs/qad.md](docs/qad.md) |
 | Learn about the cache and speed | [docs/speed.md](docs/speed.md) |
+| Review architecture and evaluation work candidates | [docs/architecture-evaluation-roadmap.md](docs/architecture-evaluation-roadmap.md) |
 | See the INT8 and final-KL study | [docs/lowbit.md](docs/lowbit.md) |
 | Find a script that made a number | [experiments/README.md](experiments/README.md) |
 

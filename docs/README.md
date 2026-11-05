@@ -31,6 +31,7 @@ they do not replace current help or guarantee installation compatibility.
 | Document | Content |
 | --- | --- |
 | [architecture.md](architecture.md) | Phases, module map, execution boundaries |
+| [architecture-evaluation-roadmap.md](architecture-evaluation-roadmap.md) | Dated architecture assessment, proposed integrated evaluation workflow, ranked tickets and format research gates; not implemented-feature documentation |
 | [overview.html](overview.html) | Interactive orientation, format anatomy and educational size estimate; not a quantization result |
 | [format-spec.md](format-spec.md) | Published v3.2 serialization reference: section 2 is normative for the tensor representation; experimental/runtime discussion is separately scoped |
 | [moe.md](moe.md) | Mixture-of-experts (MoE) eligibility, current stacked layout, dated OLMoE measurements |
