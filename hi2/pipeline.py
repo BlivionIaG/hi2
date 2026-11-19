@@ -174,6 +174,18 @@ def _phase1_key(rc: RunConfig) -> dict:
         "sequential": c.sequential,
         "effort": c.effort,
         "expert_min_tokens": c.expert_min_tokens,
+        **(
+            {
+                "cptc": {
+                    "depth": c.cptc_depth,
+                    "table_rounds": c.cptc_table_rounds,
+                    "table_samples": c.cptc_table_samples,
+                    "sweeps": c.cptc_sweeps,
+                }
+            }
+            if c.cptc
+            else {}
+        ),
     }
 
 
@@ -615,13 +627,18 @@ def _final_kl_fits(rc, ex, model, tensors, have_head_inputs, log) -> bool:
         return True
     resolve = make_resolver(weight_map(rc.src))
     quant, rest, teacher = 0, 0, 0
+    largest_quant = 0
     for name, p in model.named_parameters():
         teacher += p.numel() * p.element_size()
         if name.endswith(".weight") and resolve(name) in tensors:
             quant += p.numel()
+            # finalkl materializes one fp32 decoded layer and its STE copy at a time
+            largest_quant = max(largest_quant, p.numel() * 4)
         else:
-            rest += p.numel()
-    student = 1.1 * quant + 2 * rest
+            # Dense parameters keep the model's compute dtype (float32 by default), not
+            # an assumed 2 bytes; the old 2 * rest estimate under-counted a 4B model.
+            rest += p.numel() * p.element_size()
+    student = 1.1 * quant + rest + 2 * largest_quant
     n = len(devs)
     need = (
         student if have_head_inputs else max(student, teacher)
@@ -1170,6 +1187,23 @@ def _run_resolved(rc: RunConfig, log) -> dict:
         elif rc.cfg.rounding == "gptq" and rc.cfg.sequential:
             log("phase 3a: sequential encode pass (spec 8.4)")
             pre = _sequential_encode(rc, ex, tables, alloc.picks, log)
+        cptc_meta = None
+        if rc.cfg.cptc:
+            from .cptc import checkpoint_config, get_codec
+
+            codecs = {
+                k: get_codec(
+                    rc.cfg.cptc_depth,
+                    k,
+                    rounds=rc.cfg.cptc_table_rounds,
+                    samples=rc.cfg.cptc_table_samples,
+                )
+                for k in (2, 4)
+            }
+            cptc_meta = checkpoint_config(codecs)
+            meta = {}
+        else:
+            meta = {}
         meta = {
             "mode": "flex",
             "target_bpw": target_bpw,
@@ -1202,7 +1236,17 @@ def _run_resolved(rc: RunConfig, log) -> dict:
         # stacked: write per expert to a staging dir in the workdir, then restack
         # (byte-level, hi2.stack.restack) into dst
         write_to = dst if rc.moe_layout == "per-expert" else staging_dir(rc, dst)
-        outs.append(Output(write_to, alloc.picks, meta, done, pre, dense=dense or None))
+        outs.append(
+            Output(
+                write_to,
+                alloc.picks,
+                meta,
+                done,
+                pre,
+                dense=dense or None,
+                cptc=cptc_meta,
+            )
+        )
         allocs.append(alloc)
     dst_of = {id(o): t[2] for o, t in zip(outs, targets)}
     t_alloc = time.time()

@@ -5,7 +5,13 @@
 import torch
 
 from hi2.allocate import allocate_global
-from hi2.calibrate import ALL_CANDIDATES, Config, build_table, encode_with_picks
+from hi2.calibrate import (
+    ALL_CANDIDATES,
+    Config,
+    build_table,
+    encode_with_picks,
+    smoothing_scale,
+)
 from hi2.encode import encode_rows, fit_ladder
 from hi2.executor import Executor
 from hi2.format import dequantize, fwht_groups, tensor_bpw
@@ -20,6 +26,17 @@ def _w(r=64, k=256, seed=0):
     w *= torch.exp(0.6 * torch.randn(1, k, generator=g))
     w[:, [c for c in (5, 70, 133, 200) if c < k]] *= 10
     return w
+
+
+def _probe_errors(st, w, alphas, had, encode):
+    """Relative weighted probe error per smoothing exponent, computed directly."""
+    errs = {}
+    for a in alphas:
+        s16 = smoothing_scale(st, a)
+        wt = fwht_groups(w.float() * s16.float(), had)
+        d = st.diag(had, 1.0 / s16.float())
+        errs[a] = float(encode(wt, d).sum()) / max(float((d * wt**2).sum()), 1e-30)
+    return errs
 
 
 def test_weighted_fit_beats_minmax_and_respects_weights():
@@ -199,3 +216,63 @@ def test_smooth_search_keeps_the_lowest_error_exponent():
 
     assert tables_key({"a": 1}, cfg) != tables_key({"a": 1}, base)
     assert tables_key({"a": 1}, base) == tables_key({"a": 1}, Config(smooth=0.5))
+
+
+def test_smooth_search_probe_is_effort_independent_on_the_ladder():
+    from hi2.calibrate import shared_transform
+
+    torch.manual_seed(5)
+    k, r = 128, 64
+    x = torch.randn(600, k) * torch.exp(torch.randn(k))
+    st = ColumnStats(k)
+    st.update(x)
+    w = torch.randn(r, k) * 0.3
+    ex = Executor(["cpu"])
+    alphas = (0.25, 0.5, 0.75, 1.0)
+    had = torch.ones(k // 16, dtype=torch.uint8)
+    errs = _probe_errors(
+        st, w, alphas, had, lambda wt, d: encode_rows(wt, d, 2, 32, "fast").sse
+    )
+    expected = min(dict.fromkeys((0.5, *alphas)), key=errs.__getitem__)
+    # the probe stays on the fixed fast ladder candidate whatever the encoding effort
+    for effort in ("fast", "normal", "max"):
+        cfg = Config(rotation="on", smooth=0.5, smooth_search=alphas, effort=effort)
+        s16, _ = shared_transform([w], st, cfg, ex)
+        assert torch.equal(s16, smoothing_scale(st, expected))
+
+
+def test_cptc_smooth_search_runs_its_codec_and_keeps_the_lowest_error_exponent():
+    from hi2.calibrate import shared_transform
+    from hi2.cptc import encode_rows_cptc, get_codec
+
+    torch.manual_seed(5)
+    k, r = 64, 8
+    x = torch.randn(600, k) * torch.exp(torch.randn(k))
+    st = ColumnStats(k)
+    st.update(x)
+    w = torch.randn(r, k) * 0.3
+    ex = Executor(["cpu"])
+    alphas = (0.25, 0.5, 0.75, 1.0)
+    had = torch.ones(k // 16, dtype=torch.uint8)
+    cfg = Config(rotation="on", smooth=0.5, smooth_search=alphas, cptc=True, cptc_depth=8)
+    # the CPTC probe runs the Viterbi codec for each exponent (no ladder probe here)
+    s16, _ = shared_transform([w], st, cfg, ex)
+    codec = get_codec(
+        cfg.cptc_depth,
+        2,
+        rounds=cfg.cptc_table_rounds,
+        samples=cfg.cptc_table_samples,
+    )
+    errs = _probe_errors(
+        st,
+        w,
+        alphas,
+        had,
+        lambda wt, d: encode_rows_cptc(
+            wt, d, 2, 32, codec, effort=cfg.effort, method="viterbi",
+            sweeps=cfg.cptc_sweeps,
+        )[2],
+    )
+    order = dict.fromkeys((cfg.smooth, *cfg.smooth_search))
+    expected = min(order, key=errs.__getitem__)
+    assert torch.equal(s16, smoothing_scale(st, expected))

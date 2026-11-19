@@ -139,15 +139,28 @@ def is_eligible(name: str, shape, dtype, include, exclude) -> bool:
     )
 
 
-def to_tensors(t: HI2Tensor, base: str) -> dict[str, torch.Tensor]:
-    out = {f"{base}.hi2_{f}": getattr(t, f) for f in FIELDS if f != "had"}
+def to_tensors(t, base: str) -> dict[str, torch.Tensor]:
+    from .cptc import CPTC_FIELDS, CptcTensor
+
+    fields = CPTC_FIELDS if isinstance(t, CptcTensor) else FIELDS
+    out = {f"{base}.hi2_{f}": getattr(t, f) for f in fields if f != "had"}
     out[f"{base}.hi2_had"] = t.had
     if t.col_scale is not None:
         out[f"{base}.hi2_col_scale"] = t.col_scale
     return out
 
 
-def from_tensors(d: dict[str, torch.Tensor], base: str) -> HI2Tensor:
+def from_tensors(d: dict[str, torch.Tensor], base: str, codecs=None):
+    from .cptc import CPTC_FIELDS, CptcTensor
+
+    if codecs is not None:
+        g = {f: d[f"{base}.hi2_{f}"] for f in CPTC_FIELDS}
+        return CptcTensor(
+            **g,
+            shape=(g["row_nbits"].numel(), g["had"].numel() * 16),
+            codecs=codecs,
+            col_scale=d.get(f"{base}.hi2_col_scale"),
+        )
     g = {f: d[f"{base}.hi2_{f}"] for f in FIELDS}
     return HI2Tensor(
         **g,
@@ -159,9 +172,16 @@ def from_tensors(d: dict[str, torch.Tensor], base: str) -> HI2Tensor:
 def read_tensors(f, base: str) -> dict[str, torch.Tensor]:
     """The ``<base>.hi2_*`` tensors (including the optional smoothing vector) from an
     open safetensors file."""
-    names = [f"{base}.hi2_{fld}" for fld in FIELDS]
+    from .cptc import CPTC_FIELDS
+
+    keys = set(f.keys())
+    names = [
+        f"{base}.hi2_{fld}"
+        for fld in dict.fromkeys((*FIELDS, *CPTC_FIELDS))
+        if f"{base}.hi2_{fld}" in keys
+    ]
     cs = f"{base}.hi2_col_scale"
-    if cs in f.keys():  # noqa: SIM118
+    if cs in keys:
         names.append(cs)
     return {n: f.get_tensor(n) for n in names}
 
@@ -189,6 +209,7 @@ class Output:
     pre_encoded: dict | None = None
     report: dict = field(default_factory=dict)
     new_map: dict = field(default_factory=dict)
+    cptc: dict | None = None  # global revision-1 CPTC codebook config (v3.3)
     # trained dense tensors (QAD norms) written instead of the source's
     dense: dict | None = None
 
@@ -513,7 +534,8 @@ def _finish_output(src: Path, o: Output, shards) -> None:
     cfgj = _read_json(src / "config.json")
     cfgj["quantization_config"] = {
         "quant_method": "rdna_hint_flex",
-        "version": SPEC_VERSION,
+        "version": "3.3" if o.cptc is not None else SPEC_VERSION,
+        **({"cptc": o.cptc} if o.cptc is not None else {}),
         **o.meta,
     }
     atomic_json(o.dst / "config.json", cfgj)
@@ -526,14 +548,16 @@ def _finish_output(src: Path, o: Output, shards) -> None:
             os.symlink(entry.resolve(), link)
 
 
-def _tensor_report(table: TensorTable, picks: torch.Tensor, t: HI2Tensor) -> dict:
+def _tensor_report(table: TensorTable, picks: torch.Tensor, t) -> dict:
+    from .cptc import CptcTensor, tensor_bpw_cptc
+
     r = table.shape[0]
     chosen = table.sse[picks, torch.arange(r)].sum().item()
     nb = t.row_nbits.to(torch.int64)
     bl = t.row_block.to(torch.int64)
     return {
         "shape": list(table.shape),
-        "bpw": tensor_bpw(t),
+        "bpw": tensor_bpw_cptc(t) if isinstance(t, CptcTensor) else tensor_bpw(t),
         "pred_rel_err": chosen / max(table.energy, 1e-30),
         "frac_int4": float((nb == 4).float().mean()),
         "frac_int8": float((nb == 8).float().mean()),
@@ -635,6 +659,102 @@ def _validate_fields(label: str, d: dict, parts: tuple[str, ...] | None = None) 
     _validate_ladders(label, d, k, nb, block)
 
 
+def _validate_cptc_fields(label: str, d: dict, codecs) -> None:
+    """Validate a flat CPTC container (same buffers, block scales, no ladder params)."""
+    from .cptc import CPTC_FIELDS, check_format_block, decode_index, index_table_value
+
+    expected = set(CPTC_FIELDS)
+    if not expected.issubset(d) or set(d) - expected - {"col_scale"}:
+        raise ValueError(f"{label}: missing or unsupported CPTC fields")
+    dtypes = {
+        "codes": torch.int32,
+        "code_off": torch.int32,
+        "scale": torch.float16,
+        "param_off": torch.int32,
+        "row_nbits": torch.uint8,
+        "row_block": torch.uint8,
+        "had": torch.uint8,
+        "col_scale": torch.float16,
+    }
+    for name, tensor in d.items():
+        if tensor.dtype != dtypes[name]:
+            raise ValueError(
+                f"{label}.hi2_{name}: expected {dtypes[name]}, got {tensor.dtype}"
+            )
+        _finite(f"{label}.hi2_{name}", tensor)
+    had, r = d["had"], d["row_nbits"].numel()
+    if had.ndim != 1 or not had.numel() or bool((had > 1).any()):
+        raise ValueError(f"{label}.hi2_had: invalid CPTC rotation flags")
+    k = had.numel() * 16
+    if not r:
+        raise ValueError(f"{label}: zero rows")
+    shapes = {
+        "codes": (d["codes"].numel(),),
+        "code_off": (r + 1,),
+        "scale": (d["scale"].numel(),),
+        "param_off": (r + 1,),
+        "row_nbits": (r,),
+        "row_block": (r,),
+    }
+    if "col_scale" in d:
+        shapes["col_scale"] = (k,)
+        if bool((d["col_scale"] <= 0).any()):
+            raise ValueError(f"{label}.hi2_col_scale: smoothing scales must be positive")
+    for name, shape in shapes.items():
+        if tuple(d[name].shape) != shape:
+            raise ValueError(
+                f"{label}.hi2_{name}: shape {tuple(d[name].shape)}, expected {shape}"
+            )
+    nb, block = d["row_nbits"].long(), d["row_block"].long()
+    if not bool(((nb == 2) | (nb == 4)).all()):
+        raise ValueError(f"{label}.hi2_row_nbits: CPTC supports only K=2 and K=4")
+    if bool((k % block != 0).any()) or bool((k * nb % 32 != 0).any()):
+        raise ValueError(f"{label}: row width is not divisible by block/packing widths")
+    for n_bits, b in set(zip(nb.tolist(), block.tolist())):
+        check_format_block(int(n_bits), int(b))
+        codec = codecs.get(int(n_bits))
+        if codec is None:
+            raise ValueError(f"{label}: no CPTC codec for K={n_bits}")
+        if codec.depth != codecs[2].depth:
+            raise ValueError(f"{label}: CPTC codecs disagree on depth")
+    for name, sizes, total in (
+        ("code_off", k * nb // 32, d["codes"].numel()),
+        ("param_off", k // block, d["scale"].numel()),
+    ):
+        off = d[name].long()
+        if (
+            int(off[0]) != 0
+            or int(off[-1]) != total
+            or not torch.equal(off[1:] - off[:-1], sizes)
+        ):
+            raise ValueError(
+                f"{label}.hi2_{name}: invalid row offsets or buffer bounds"
+            )
+    if bool((d["scale"] < 0).any()):
+        raise ValueError(f"{label}.hi2_scale: negative block scale")
+    # Bounded numerics: decode the alphabet extrema at every block scale. No dense
+    # reconstruction and no per-token work, so a 4B checkpoint stays a stream.
+    batch_rows = max(1, (1024 * 1024) // k)
+    for n_bits in sorted(set(nb.tolist())):
+        codec = codecs[int(n_bits)]
+        q = torch.arange(1 << codec.depth, dtype=torch.int64)
+        vals = index_table_value(
+            decode_index(q, codec.a0, codec.a1, codec.tap_q),
+            codec.table,
+            float(codec.table_scale),
+        ).float()
+        lo, hi = vals.min(), vals.max()
+        for size in (16, 32, 64):
+            rows = ((nb == n_bits) & (block == size)).nonzero().flatten()
+            for batch in rows.split(batch_rows):
+                if not batch.numel():
+                    continue
+                pi = d["param_off"][batch].long()[:, None] + torch.arange(k // size)
+                scale = d["scale"][pi].float()
+                _finite(f"{label}: decoded low", (scale * lo).half())
+                _finite(f"{label}: decoded high", (scale * hi).half())
+
+
 def _validate_ladders(label, d, k, nb, block):
     """Finite stored parameters are insufficient if their fp16 decode overflows.
 
@@ -702,14 +822,34 @@ def _container_members(base, d, parts=None):
             )
 
 
-def _check_report_entry(name: str, info, tensor: HI2Tensor) -> None:
+def _container_members_cptc(base, d, codecs):
+    """CPTC logical views (single tensor; stacked MoE is not emitted by v3.3)."""
+    from .cptc import CPTC_FIELDS, CptcTensor
+
+    if "part_off" in d:
+        raise ValueError(f"{base}: stacked CPTC containers are not supported")
+    yield (
+        base + ".weight",
+        CptcTensor(
+            **{f: d[f] for f in CPTC_FIELDS},
+            shape=(d["row_nbits"].numel(), d["had"].numel() * 16),
+            codecs=codecs,
+            col_scale=d.get("col_scale"),
+        ),
+    )
+
+
+def _check_report_entry(name: str, info, tensor) -> None:
+    from .cptc import CptcTensor, tensor_bpw_cptc
+
     if not isinstance(info, dict) or info.get("shape") != list(tensor.shape):
         raise ValueError(f"{name}: report shape does not match artifact")
     bpw = info.get("bpw")
+    actual = tensor_bpw_cptc(tensor) if isinstance(tensor, CptcTensor) else tensor_bpw(tensor)
     if (
         not isinstance(bpw, (int, float))
         or not math.isfinite(bpw)
-        or abs(tensor_bpw(tensor) - bpw) > 1e-6
+        or abs(actual - bpw) > 1e-6
     ):
         raise ValueError(f"{name}: report bpw does not match artifact")
 
@@ -735,10 +875,15 @@ def validate_checkpoint(
     dst = Path(dst)
     cfg = _read_json(_local_path(dst, "config.json"))
     qc = cfg.get("quantization_config")
+    from .cptc import codecs_from_checkpoint_config
+
+    cptc_cfg = qc.get("cptc") if isinstance(qc, dict) else None
+    codecs = codecs_from_checkpoint_config(cptc_cfg) if cptc_cfg is not None else None
+    expected_version = "3.3" if codecs is not None else SPEC_VERSION
     if (
         not isinstance(qc, dict)
         or qc.get("quant_method") != "rdna_hint_flex"
-        or qc.get("version") != SPEC_VERSION
+        or qc.get("version") != expected_version
     ):
         raise ValueError(
             f"{dst}/config.json: unsupported HI2 quantization config/version"
@@ -826,9 +971,14 @@ def validate_checkpoint(
                         parts = GROUPS[group]
                         stack_groups.add(group)
                     d = {fld: f.get_tensor(f"{base}.hi2_{fld}") for fld in fields}
-                    _validate_fields(f"{path}:{base}", d, parts)
+                    if codecs is not None:
+                        _validate_cptc_fields(f"{path}:{base}", d, codecs)
+                        members = _container_members_cptc(base, d, codecs)
+                    else:
+                        _validate_fields(f"{path}:{base}", d, parts)
+                        members = _container_members(base, d, parts)
                     data_bytes += sum(t.numel() * t.element_size() for t in d.values())
-                    for name, tensor in _container_members(base, d, parts):
+                    for name, tensor in members:
                         if name in logical or name in dense_names:
                             raise ValueError(f"{path}:{name}: duplicate logical tensor")
                         logical.add(name)
@@ -884,6 +1034,57 @@ def validate_checkpoint(
     return result
 
 
+def _verify_cptc(src, dst, report, codecs, max_tensors, log):
+    """Sampled source-vs-dequantized diagnostics for a CPTC checkpoint."""
+    from safetensors import safe_open
+
+    from .cptc import dequantize_cptc
+
+    tensors = dict(_iter_cptc(dst, codecs))
+    logical = {b + ".weight" for b in tensors}
+    if not logical or set(report) != logical:
+        raise ValueError(
+            f"{dst}/hi2_report.json: tensor coverage mismatch with checkpoint"
+        )
+    wsrc = weight_map(src)
+    missing = set(report) - set(wsrc)
+    if missing:
+        raise ValueError(f"{src}: missing expected source tensors {sorted(missing)}")
+    worst, checked = 0.0, 0
+    for name in list(report)[:max_tensors]:
+        t = tensors[name.removesuffix(".weight")]
+        _check_report_entry(name, report[name], t)
+        with safe_open(src / wsrc[name], "pt") as f:
+            w = f.get_tensor(name).double()
+        if tuple(w.shape) != t.shape:
+            raise ValueError(
+                f"{name}: source shape {tuple(w.shape)} != checkpoint {t.shape}"
+            )
+        decoded = dequantize_cptc(t)
+        _finite(f"{dst}:{name}: dequantized", decoded)
+        loss = ((decoded - w) ** 2).sum().item()
+        energy = (w**2).sum().item()
+        if energy == 0 and loss != 0:
+            raise ValueError(f"{name}: nonzero reconstruction of a zero-energy source")
+        rel = loss / energy if energy else 0.0
+        if not math.isfinite(rel):
+            raise ValueError(f"{name}: nonfinite numerical diagnostic")
+        from .cptc import tensor_bpw_cptc
+
+        worst = max(worst, rel)
+        checked += 1
+        log(f"verify {name}: weight energy loss {rel:.4f} bpw {tensor_bpw_cptc(t):.3f}")
+    log(
+        f"verify sampled_numerical: {checked}/{len(report)} tensors; native runtime not run"
+    )
+    return {
+        "checked": checked,
+        "expected": len(report),
+        "worst_rel_err": worst,
+        "native_runtime": "not_run",
+    }
+
+
 def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> dict:
     """Cheap sampled diagnostics with exact logical report coverage, not a full scan."""
     from safetensors import safe_open
@@ -895,9 +1096,14 @@ def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> 
             "max_tensors must be positive; zero-coverage verification is not valid"
         )
     qc = _read_json(_local_path(dst, "config.json")).get("quantization_config", {})
+    from .cptc import codecs_from_checkpoint_config, dequantize_cptc
+
+    cptc_cfg = qc.get("cptc") if isinstance(qc, dict) else None
+    codecs = codecs_from_checkpoint_config(cptc_cfg) if cptc_cfg is not None else None
+    expected_version = "3.3" if codecs is not None else SPEC_VERSION
     if (
         not isinstance(qc, dict)
-        or qc.get("version") != SPEC_VERSION
+        or qc.get("version") != expected_version
         or qc.get("quant_method") != "rdna_hint_flex"
     ):
         raise ValueError(
@@ -906,6 +1112,8 @@ def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> 
     report = _read_json(_local_path(dst, "hi2_report.json")).get("tensors")
     if not isinstance(report, dict) or not report:
         raise ValueError(f"{dst}/hi2_report.json: empty or invalid tensor coverage")
+    if codecs is not None:
+        return _verify_cptc(src, dst, report, codecs, max_tensors, log)
     ck = Hi2Checkpoint(dst)
     fields = {}
     for name in ck.wmap:
@@ -966,6 +1174,28 @@ def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> 
     }
 
 
+def dequantize_any(t):
+    from .cptc import CptcTensor, dequantize_cptc
+
+    return dequantize_cptc(t) if isinstance(t, CptcTensor) else dequantize(t)
+
+
+def _iter_cptc(dst: Path, codecs):
+    """``(base, CptcTensor)`` for every single CPTC container in a checkpoint."""
+    from safetensors import safe_open
+
+    wmap = weight_map(dst)
+    bases = {}
+    for name, shard in wmap.items():
+        if ".hi2_" in name:
+            base = name.rsplit(".hi2_", 1)[0]
+            bases.setdefault(shard, set()).add(base)
+    for shard, names in bases.items():
+        with safe_open(dst / shard, "pt") as f:
+            for base in sorted(names):
+                yield base, from_tensors(read_tensors(f, base), base, codecs)
+
+
 def load_dequantized(dst: Path) -> dict[str, torch.Tensor]:
     """Dense fp32 state dict of an HI2 checkpoint (either MoE layout): quantised
     tensors are dequantised back to ``<name>.weight`` (original basis); the rest are
@@ -974,6 +1204,21 @@ def load_dequantized(dst: Path) -> dict[str, torch.Tensor]:
 
     from .stack import Hi2Checkpoint
 
+    qc = _read_json(_local_path(dst, "config.json")).get("quantization_config", {})
+    cptc_cfg = qc.get("cptc") if isinstance(qc, dict) else None
+    if cptc_cfg is not None:
+        from .cptc import codecs_from_checkpoint_config
+
+        codecs = codecs_from_checkpoint_config(cptc_cfg)
+        out: dict[str, torch.Tensor] = {}
+        for shard in sorted(set(weight_map(dst).values())):
+            with safe_open(dst / shard, "pt") as f:
+                for name in f.keys():  # noqa: SIM118
+                    if ".hi2_" not in name:
+                        out[name] = f.get_tensor(name)
+        for base, t in _iter_cptc(dst, codecs):
+            out[f"{base}.weight"] = dequantize_any(t).float()
+        return out
     ck = Hi2Checkpoint(dst)
     out: dict[str, torch.Tensor] = {}
     for shard in sorted(set(ck.wmap.values())):

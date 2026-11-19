@@ -35,6 +35,7 @@ DTYPE_BYTES = {
 FIELD_GROUP = {
     "codes": "codes",
     "blk_params": "block parameters",
+    "scale": "block parameters",
     "row_consts": "row constants",
     "col_scale": "smoothing vector",
     "code_off": "row index",

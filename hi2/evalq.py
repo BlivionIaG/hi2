@@ -7,6 +7,8 @@ The quantised weights are dequantised back to dense tensors and run through the
 original architecture (a numerical check of the format, not a kernel test).
 """
 
+import hashlib
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -51,6 +53,7 @@ def evaluate(
 
     devices = [d for d in device.split(",") if d]
     tok = AutoTokenizer.from_pretrained(src, trust_remote_code=False)
+    eval_id = hashlib.sha256(Path(text).read_bytes()).hexdigest()
     ids = load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens)
     if os.environ.get("HI2_NGRAM_MMAP"):
         _shrink_ngram_embedding(log)
@@ -87,18 +90,42 @@ def evaluate(
         _attach_mmap_ngram(model, log)
     nll_ref = nll_q = kl = agree = acc = 0.0
     n = 0
+    sequences = []
     for i in range(ids.shape[0]):
         lg = model(ids[i : i + 1].to(first)).logits[0].float()
         lp_q = torch.log_softmax(lg, -1).cpu()
         lp_r = ref_logp[i]
         tgt = ids[i, 1:]
-        nll_ref += -lp_r[:-1].gather(1, tgt[:, None]).sum().item()
-        nll_q += -lp_q[:-1].gather(1, tgt[:, None]).sum().item()
-        kl += (lp_r.exp() * (lp_r - lp_q)).sum(-1)[:-1].sum().item()
-        agree += (lp_r.argmax(-1) == lp_q.argmax(-1))[:-1].sum().item()
+        s_ref = -lp_r[:-1].gather(1, tgt[:, None]).sum().item()
+        s_q = -lp_q[:-1].gather(1, tgt[:, None]).sum().item()
+        s_kl = (lp_r.exp() * (lp_r - lp_q)).sum(-1)[:-1].sum().item()
+        s_top1 = int((lp_r.argmax(-1) == lp_q.argmax(-1))[:-1].sum().item())
         # expected acceptance rate of speculative sampling: sum_x min(p, q) per token
-        acc += torch.minimum(lp_r.exp(), lp_q.exp()).sum(-1)[:-1].sum().item()
-        n += tgt.numel()
+        s_ear = torch.minimum(lp_r.exp(), lp_q.exp()).sum(-1)[:-1].sum().item()
+        seq_tokens = tgt.numel()
+        def finite_or_none(value):
+            return float(value) if math.isfinite(value) else None
+
+        sequences.append(
+            {
+                "index": i,
+                "tokens": seq_tokens,
+                "sum_nll_original": finite_or_none(s_ref),
+                "sum_nll_quantized": finite_or_none(s_q),
+                "sum_kl": finite_or_none(s_kl),
+                "top1_count": s_top1,
+                "ear_sum": finite_or_none(s_ear),
+                "ids_sha256": hashlib.sha256(
+                    ids[i].to(torch.int64).numpy().tobytes()
+                ).hexdigest(),
+            }
+        )
+        nll_ref += s_ref
+        nll_q += s_q
+        kl += s_kl
+        agree += s_top1
+        acc += s_ear
+        n += seq_tokens
         log(f"seq {i + 1}/{ids.shape[0]}")
     return {
         "tokens": n,
@@ -109,6 +136,8 @@ def evaluate(
         "ear": acc / n,
         "lossless": kl / n < LOSSLESS_KLD,
         "dtype": dtype,
+        "eval_id": eval_id,
+        "sequences": sequences,
     }
 
 

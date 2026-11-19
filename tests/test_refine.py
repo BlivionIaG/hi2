@@ -163,7 +163,7 @@ def test_refine_passes_default_is_on_without_qad_only():
     from hi2.__main__ import _refine_passes
 
     def args(**kw):
-        base = dict(refine_passes=None, calib="c.txt", rounding="gptq", act_order=False)
+        base = dict(refine_passes=None, calib="c.txt", rounding="gptq", act_order=False, cptc=False)
         return SimpleNamespace(**(base | kw))
 
     qad = lambda init: SimpleNamespace(init=init)  # noqa: E731

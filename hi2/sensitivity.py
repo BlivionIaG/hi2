@@ -330,7 +330,15 @@ def probe_sensitivity(
             )
             rel += wt * table.sse[ci].sum().item() / max(table.energy, 1e-30)
             saved.append((p, p.data.clone()))
-            p.data.copy_(dequantize(t, p.device).to(p.dtype))
+            from .cptc import CptcTensor, dequantize_cptc
+
+            p.data.copy_(
+                (
+                    dequantize_cptc(t, p.device)
+                    if isinstance(t, CptcTensor)
+                    else dequantize(t, p.device)
+                ).to(p.dtype)
+            )
         first = min((_layer_index(n) for n, _ in members), default=0)
         dkl = max(kl(first), 0.0)
         for p, orig in saved:

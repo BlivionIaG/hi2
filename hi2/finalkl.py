@@ -7,10 +7,10 @@ whole network's output distribution instead: ``KL(teacher || student)`` of the n
 logits on calibration windows, with the full student on one GPU. To fit a 29 GiB V620
 with a 4B model it trains only
 
-* the per-block ladder bytes ``(lo_u8, step_u8)`` of every quantized Linear (continuous
-  values, rounded with a straight-through estimator, as in the layer-wise phase), with
-  the **codes frozen** at the layer-wise result (1 byte per weight on the GPU, no fp32
-  latents), and
+* the per-block ladder bytes ``(lo_u8, step_u8)`` or CPTC block scales of every
+  quantized Linear (continuous values, rounded with a straight-through estimator, as in
+  the layer-wise phase), with the **codes frozen** at the layer-wise result (1 byte per
+  weight on the GPU, no fp32 latents), and
 * the RMSNorm weights (fp32, written to the checkpoint in fp16).
 
 Every stored value is still the exact decode of spec 2.2 (``fp16(lo + code * step)``),
@@ -32,13 +32,28 @@ from torch.utils.checkpoint import checkpoint
 
 from .format import HI2Tensor, assemble, decode_params, fwht_groups, ladder_dequantize
 from .pinned import PinnedWindow, module_to_device, module_to_host
-from .qad import _ste, is_norm_param
+from .qad import CptcFrozenCodeLinear, _ste, is_norm_param
 
 LOSS_CHUNK = 256  # positions per LM-head chunk in the loss
 
 
 class _Stop(Exception):
     pass
+
+
+class CptcLinear(CptcFrozenCodeLinear):
+    """The final-KL student for CPTC: frozen codes, trainable per-block scales."""
+
+    def __init__(self, t, bias=None):
+        super().__init__(t)
+        self.bias = (
+            None
+            if bias is None
+            else nn.Parameter(bias.detach().float(), requires_grad=False)
+        )
+
+    def forward(self, x):
+        return F.linear(x, self.weight().to(x.dtype), self.bias)
 
 
 class LadderLinear(nn.Module):
@@ -283,7 +298,14 @@ def final_kl(
             ckpt = resolve(f"{name}.weight")
             if ckpt in tensors:
                 b = mod.bias.detach().float() if mod.bias is not None else None
-                ll = LadderLinear(tensors[ckpt], b)
+                from .cptc import CptcTensor
+
+                cls = (
+                    CptcLinear
+                    if isinstance(tensors[ckpt], CptcTensor)
+                    else LadderLinear
+                )
+                ll = cls(tensors[ckpt], b)
                 model.set_submodule(name, ll)
                 mods[ckpt] = ll
     norms = {}
@@ -297,10 +319,16 @@ def final_kl(
         p.requires_grad_(False)
     groups = []
     if qc.final_bytes:
-        byte_p = [p for m in mods.values() for p in (*m.lo_u, *m.step_u)]
+        byte_p = [p for m in mods.values() if isinstance(m, LadderLinear) for p in (*m.lo_u, *m.step_u)]
         for p in byte_p:
             p.requires_grad_(True)
-        groups.append({"params": byte_p, "lr": qc.final_lr_p})
+        if byte_p:
+            groups.append({"params": byte_p, "lr": qc.final_lr_p})
+        cptc_p = [m.delta for m in mods.values() if isinstance(m, CptcLinear)]
+        for p in cptc_p:
+            p.requires_grad_(True)
+        if cptc_p:
+            groups.append({"params": cptc_p, "lr": qc.final_lr_p})
     if qc.final_norms:
         for p in norms.values():
             p.data = p.data.float()

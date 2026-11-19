@@ -168,25 +168,30 @@ def _run(
     outs = {}
     with torch.no_grad():
         if len(items) > 1 and os.environ.get("HI2_LAYER_BATCH", "1") != "0":
-            # One batched forward per device instead of one per sequence: a routed expert
-            # runs once on every sequence's tokens rather than 16 times, which is where
-            # the Python dispatch of a 512-expert layer spends its time. The statistics
-            # are the same sums; the sharing groups are decided on the batch's inputs.
-            xs = torch.cat([hidden[i] for i in items], dim=0)
-            # capture_inputs ran one sequence at a time, so the mask and the rotary
-            # embeddings it kept carry a batch of 1. Every sequence is its own causal
-            # window of the same length, so they expand along the batch dim unchanged;
-            # without this a QSA layer indexes visible_token_indices[1] on a size-1 batch.
-            out = layer(
-                stager.to_device(xs, dev, dtype), **_expand_batch(kw, len(items))
-            )
-            o = (out[0] if isinstance(out, tuple) else out).detach()
-            del xs
-            for k, i in enumerate(items):
-                part = o[k : k + 1]
-                outs[i] = part if resident else stager.to_host(part)
-            groups.clear()
-            keep_alive.clear()
+            # Batched forwards keep routed experts efficient, but one whole-cohort
+            # forward is unbounded: the 4B/2048 calibration peak requested 8 GiB on
+            # top of 25.5 GiB of live tensors.  Run bounded microbatches and keep the
+            # same per-Linear sum accumulators; the statistics are additive, so all
+            # samples/tokens (including the last partial batch) retain their weight.
+            micro = _calib_microbatch(len(items))
+            for start in range(0, len(items), micro):
+                chunk = items[start : start + micro]
+                xs = torch.cat([hidden[i] for i in chunk], dim=0)
+                # capture_inputs ran one sequence at a time, so the mask and the rotary
+                # embeddings it kept carry a batch of 1. Every sequence is its own causal
+                # window of the same length, so they expand along the batch dim unchanged;
+                # without this a QSA layer indexes visible_token_indices[1] on a size-1 batch.
+                out = layer(
+                    stager.to_device(xs, dev, dtype), **_expand_batch(kw, len(chunk))
+                )
+                o = (out[0] if isinstance(out, tuple) else out).detach()
+                del xs, out
+                for k, i in enumerate(chunk):
+                    part = o[k : k + 1]
+                    outs[i] = part if resident else stager.to_host(part)
+                del o
+                groups.clear()
+                keep_alive.clear()
         else:
             for i in items:
                 out = layer(stager.to_device(hidden[i], dev, dtype), **kw)
@@ -288,6 +293,21 @@ def _rss_gib() -> int:
     except OSError:
         pass
     return 0
+
+
+def _calib_microbatch(n_items: int) -> int:
+    """Bounded forward batch for one calibration layer pass.
+
+    The sample/token cohort is unchanged; only the activation working set is
+    chunked.  Statistics are summed across chunks, so a partial last chunk is
+    weighted by its actual token count rather than averaged as a batch mean.
+    """
+    raw = os.environ.get("HI2_CALIB_MICROBATCH", "8")
+    try:
+        size = int(raw)
+    except ValueError:
+        size = 8
+    return max(1, min(n_items, size))
 
 
 def _expand_batch(kwargs, n: int):

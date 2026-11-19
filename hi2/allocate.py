@@ -16,11 +16,13 @@ import torch
 from .calibrate import TensorTable, candidate_row_bits
 
 ROW_OVERHEAD_BITS = 48 + 2 + 1  # row constants + block-size flag + INT4 flag, per row
+CPTC_ROW_OVERHEAD_BITS = 32 + 32 + 8 + 8  # code_off, param_off, row_nbits, row_block
 
 
 def row_overhead_bits(t: TensorTable) -> int:
-    """Per-row overhead of spec 2.5 for the code widths the table allows: the INT4 flag
-    is ``ceil(log2(#widths))`` bits (1 for INT2/INT4 as before, 2 with INT8 added)."""
+    """Per-row index overhead of the serialized container for this table."""
+    if t.cptc:
+        return CPTC_ROW_OVERHEAD_BITS
     widths = len({nb for nb, _ in t.candidates})
     return ROW_OVERHEAD_BITS - 1 + max(1, math.ceil(math.log2(max(widths, 1))))
 

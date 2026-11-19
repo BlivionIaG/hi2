@@ -1171,3 +1171,94 @@ HellaSwag and MMLU stay below EXL3 3.0 for every HI2 variant in those tables.
 MoE QAD has no published end-to-end measurement here. Final-KL and norm training
 are implemented as described above; their measured gains and limits are in
 [lowbit.md](lowbit.md) and the completed 27B results in [qad.md](qad.md).
+
+## 14. CPTC opt-in (v3.3, arXiv 2611.22019)
+
+`--cptc` switches every eligible K=2/K=4 row from the ladder to the CPTC
+trellis format while keeping the same container fields and the same
+two-bit/four-bit allocation. Without the flag, the v3.2 ladder bytes and the
+`version: "3.2"` config are unchanged. CPTC does not support `--act-order`,
+`--sequential`, ladder `--refine-passes`, or K=8 rows; those combinations are
+rejected explicitly, not silently downgraded.
+
+### 14.1 Serialized contract
+
+The checkpoint's `quantization_config` is version `"3.3"` and carries exactly
+one global `cptc` object (the runtime parser is revision 1):
+
+```json
+{"name":"cptc","revision":1,"depth":16,"tap_q":6,"layout":"mirror_int8",
+ "shift":0,"block":"row_block",
+ "tables":{"2":{"a0":...,"a1":...,"table_scale":...,"tbl_b64":"..."},
+           "4":{"a0":...,"a1":...,"table_scale":...,"tbl_b64":"..."}}}
+```
+
+`a0`/`a1` are the uint16 coefficients of paper Table 6 for `(L,K)`;
+`tbl_b64` is exactly 64 signed-int8 bytes of the lower half of the mirrored
+table (excluding -128, whose mirrored +128 is not int8); `table_scale` is
+positive fp16 and is canonicalized to fp16 before the table product. The last
+low-half entry must be zero. Unknown global/table keys are rejected, and the
+shared checkpoint depth is 8..16 because both K=2 and K=4 codecs are stored.
+The shared container per tensor is
+`codes, code_off, scale, param_off, row_nbits, row_block, had` (plus the
+optional `hi2_col_scale` smoothing vector): `scale` is one fp16 block scale
+per `row_block` (16/32/64), `param_off` counts those blocks, and `codes` are
+32-bit words of LSB-first K-bit codes. There are no ladder `blk_params` or
+row constants.
+
+Decode of one block (no masking to `L` is needed; `a0`/`a1` have `16-L`
+trailing zeros):
+
+1. `stream` = concatenation of the block's K-bit codes; `q_t` = the 16-bit
+   little-endian window at bit `t*K`, wrapping the first `16-K` bits at the end
+   and masking to `L` bits (`q_t &= (1<<L)-1`; the coefficients' trailing zeros
+   make the mask equivalent to the paper's full window).
+2. `i = (((a0*q_t) & 0xFFFF) >> (16-tap_q)) +
+        (((a1*q_t) & 0xFFFF) >> (16-tap_q))`.
+3. `lut_i = fp16(int8_table[i] * table_scale)` for `i < 64`, else
+   `fp16(-int8_table[126-i] * table_scale)`.
+4. `weight_t = fp16(block_scale * lut_i)`; `block_scale` is the row's fp16
+   scale for the block that owns `t`.
+
+`block_scale` is nonnegative. Zero and positive subnormal fp16 values are
+valid and must survive a zero-step or frozen-code export unchanged; only the
+QAD latent-normalisation unit floors its internal divisor at `2**-14`.
+
+### 14.2 Encoder
+
+The encoder is a genuine tail-biting Viterbi, not a scalar lookup. It runs a
+free pass, takes candidate cycle statistics from the free traceback (position
+0, the mid-block window, and the best end statistic), pins each statistic, and
+keeps only *closed* paths whose end statistic equals the pin; the cheapest
+closed path wins. The objective is the exact decoder's weighted SE with the
+current fp16 block scale. A small scale grid is searched per block and each
+candidate is least-squares re-fitted and kept only when the decoded error
+falls. A tiny-block test compares the DP cost to all 2^(T*K) streams and to an
+independent Algorithm-2 decode.
+
+`--cptc-table-rounds 0` (default) uses the paper's Equation (2) table. Rounds
+add Lloyd updates with mirrored-cell pooling and held-out selection; they are
+an offline quality experiment, not part of the format. The allocation's
+candidate SSE is the CPTC encoder's SSE, so the 3.0 bpw two/four-bit mix is
+chosen for this format.
+
+### 14.3 QAD
+
+Layer-wise QAD for CPTC keeps a full fp32 weight latent in the stored basis
+(optionally in units of the initial block scale), exactly like the ladder path.
+Every training forward runs a deterministic block-local coordinate projection
+from the **immutable PTQ code stream**: for each position in `t mod period`
+phases, all `2**K` symbols are evaluated and the one minimising the exact fp16
+decode error is chosen. The period is `next_power_of_two(ceil(L/K))`, so phase
+windows cannot overlap and the period divides B in {16,32,64} for every
+checkpoint depth (8..16; lower-depth scalar codecs remain reference-only). The hard codes are a straight-through value for the
+latent and the per-block log-scales; the optimizer therefore changes weights,
+code assignments and scales. `export()` runs the same projection on the final
+latent and scales, so the checkpoint is the forward's exact fp16 decode.
+At zero optimizer steps the artifact retains the exact PTQ code stream; final-KL
+and PTQ-fallback exports stage every field to host memory through the pinned window.
+
+The final logit-KL phase preserves the default 200-step baseline: it keeps the
+codes frozen (the `CptcFrozenCodeLinear` student stores no fp32 latent) and
+trains only the per-block scales and norms. The default preset remains 300
+layer-wise steps plus 200 final-KL steps.

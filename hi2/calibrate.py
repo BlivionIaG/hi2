@@ -64,6 +64,13 @@ class Config:
     # encoding QAD starts from: refined codes are a worse start for QAD (docs/format-spec.md, 8.9).
     refine_passes: int = 0
     effort: str = "normal"  # fast | normal | max
+    # CPTC opt-in (arXiv 2611.22019): genuine tail-biting trellis coding at K=2/4.
+    # Off keeps the v3.2 ladder path byte-for-byte unchanged.
+    cptc: bool = False
+    cptc_depth: int = 16
+    cptc_table_rounds: int = 0
+    cptc_table_samples: int = 1 << 18
+    cptc_sweeps: int = 0  # bounded CD refinement after Viterbi (0 = paper encoder)
     # MoE: an expert that saw fewer than this x its widest input routed tokens tops its
     # statistics (and Hessian) up with the layer average of its projection; 0 = never
     expert_min_tokens: float = 2.0
@@ -79,6 +86,7 @@ class TensorTable:
     energy: float  # weighted energy sum(d * w^2) in the stored basis
     n_tokens: int  # calibration tokens behind the weights (0 = data-free)
     col_scale: torch.Tensor | None = None  # fp16 [K] smoothing vector, or None
+    cptc: bool = False  # v3.3 trellis container: block scales, no ladder row data
 
 
 def candidate_row_bits(nbits: int, block: int, k: int) -> float:
@@ -137,6 +145,26 @@ def choose_rotation(
     return flags.cpu()
 
 
+def _encode_sse(wt, d, nbits, block, cfg):
+    """Actual format SSE for the allocation/table (CPTC Viterbi when opted in)."""
+    if getattr(cfg, "cptc", False):
+        from .cptc import encode_rows_cptc, get_codec
+
+        if nbits not in (2, 4):
+            raise ValueError("CPTC allocation supports only K=2 and K=4")
+        codec = get_codec(
+            cfg.cptc_depth,
+            nbits,
+            rounds=cfg.cptc_table_rounds,
+            samples=cfg.cptc_table_samples,
+        )
+        return encode_rows_cptc(
+            wt, d, nbits, block, codec, effort=cfg.effort, method="viterbi",
+            sweeps=cfg.cptc_sweeps,
+        )[2]
+    return encode_rows(wt, d, nbits, block, cfg.effort).sse
+
+
 def _chunk_errors(wt, d, enc, nbits, block) -> torch.Tensor:
     """Weighted INT2/B64 error per 64-column chunk (one block per chunk per row)."""
     from .format import decode_params, ladder_dequantize
@@ -174,9 +202,14 @@ def transform_error(
     s16: torch.Tensor | None,
     had: torch.Tensor,
     ex: Executor,
+    cfg: Config | None = None,
 ) -> float:
     """Weighted INT2/B32 error of ``ws`` under one transform, relative to their weighted
-    energy (the reference candidate of the sensitivity probe). A sample of the rows."""
+    energy (the reference candidate of the sensitivity probe). A sample of the rows.
+
+    The ladder probe stays on the fixed ``fast`` K=2/B=32 candidate for every
+    ``cfg.effort`` so the chosen smoothing exponent never changes with the encoding
+    effort (v3.2 behavior). CPTC opted in probes its own codec at the same candidate."""
     dev = ex.primary
     inv = None if s16 is None else 1.0 / s16.float()
     sse = energy = 0.0
@@ -186,7 +219,10 @@ def transform_error(
         if had.any():
             wt = fwht_groups(wt, had)
         d = _weights(stats, w.shape[1], had, dev, inv)
-        sse += float(encode_rows(wt, d, 2, 32, "fast").sse.sum())
+        if cfg is not None and cfg.cptc:
+            sse += float(_encode_sse(wt, d, 2, 32, cfg).sum())
+        else:
+            sse += float(encode_rows(wt, d, 2, 32, "fast").sse.sum())
         energy += float((d * wt**2).sum())
     return sse / max(energy, 1e-30)
 
@@ -203,7 +239,7 @@ def shared_transform(
     best = None
     for alpha in dict.fromkeys((cfg.smooth, *cfg.smooth_search)):
         s16, had = _fixed_transform(ws, stats, cfg, ex, alpha)
-        err = transform_error(ws, stats, s16, had, ex)
+        err = transform_error(ws, stats, s16, had, ex, cfg)
         if best is None or err < best[0]:
             best = (err, s16, had)
     return best[1], best[2]
@@ -251,7 +287,7 @@ def build_table(
         wt = fwht_groups(wt, had) if had.any() else wt
         d = _weights(stats, k, had, dev, inv)
         sse = torch.stack(
-            [encode_rows(wt, d, nb, b, cfg.effort).sse for nb, b in cfg.candidates]
+            [_encode_sse(wt, d, nb, b, cfg) for nb, b in cfg.candidates]
         )
         return sse.cpu(), float((d * wt**2).sum())
 
@@ -267,6 +303,7 @@ def build_table(
         energy,
         n_tokens if n_tokens is not None else (stats.n if stats else 0),
         s16,
+        bool(getattr(cfg, "cptc", False)),
     )
 
 
@@ -296,7 +333,7 @@ def _factor_key(req: EncodeRequest, i: int):
 
 def encode_many(
     reqs: list[EncodeRequest], cfg: Config, ex: Executor
-) -> list[HI2Tensor]:
+) -> list:
     """Encode several tensors with their allocator picks; the same result as calling
     :func:`encode_with_picks` on each. Every tensor's rows are sharded across the devices
     as there; on each device all GPTQ candidate groups of all tensors go through one
@@ -305,6 +342,27 @@ def encode_many(
     from .hessian import GptqJob, encode_jobs_gptq, inverse_factor, transform_sigma
 
     use_gptq = [cfg.rounding == "gptq" and r.sigma is not None for r in reqs]
+    use_cptc = bool(getattr(cfg, "cptc", False))
+    codecs = None
+    if use_cptc:
+        from .cptc import check_format_block, get_codec
+
+        if cfg.act_order:
+            raise ValueError("CPTC does not support --act-order")
+        codecs = {
+            k: get_codec(
+                cfg.cptc_depth,
+                k,
+                rounds=cfg.cptc_table_rounds,
+                samples=cfg.cptc_table_samples,
+            )
+            for k in (2, 4)
+        }
+        for r in reqs:
+            for nb, b in r.table.candidates:
+                if nb not in (2, 4):
+                    raise ValueError("CPTC supports only K=2 and K=4 rows")
+                check_format_block(nb, b)
     prepared = []
     for r in reqs:
         w, inv = _smoothed(r.w, r.table.col_scale)
@@ -396,13 +454,80 @@ def encode_many(
                 comps.append((ri, rows, stager.to_host(enc.comp.float())))
         return pieces, comps
 
+    def on_device_cptc(i: int):
+        from .cptc import encode_rows_cptc, encode_rows_cptc_gptq
+
+        dev = ex.devices[i]
+        activate(dev)
+        factors: dict = {}
+        pieces: dict[int, list] = {}
+        comps: list = []
+        for ri, (r, (w, inv)) in enumerate(zip(reqs, prepared)):
+            shards = ex.shards(r.table.shape[0])
+            if i >= len(shards):
+                continue
+            _, lo, hi = shards[i]
+            had, k = r.table.had, r.table.shape[1]
+            wt = stager.to_device(w[lo:hi], dev, dtype=torch.float32)
+            wt = fwht_groups(wt, had) if had.any() else wt
+            if use_gptq[ri]:
+                fk = _factor_key(r, ri)
+                if fk not in factors:
+                    hs = transform_sigma(
+                        stager.to_device(r.sigma, dev, dtype=torch.float32),
+                        r.table.col_scale,
+                        had,
+                    )
+                    d = hs.diagonal().clone()
+                    u = inverse_factor(hs, cfg.damp)
+                    del hs
+                    factors[fk] = (d, u)
+                d, u = factors[fk]
+            else:
+                d = _weights(r.stats, k, had, dev, inv)
+            out = pieces.setdefault(ri, [])
+            for ci, (nb, b) in enumerate(r.table.candidates):
+                rows = (r.picks[lo:hi] == ci).nonzero().flatten()
+                if rows.numel() == 0:
+                    continue
+                rows = rows.to(dev)
+                if use_gptq[ri]:
+                    enc = encode_rows_cptc_gptq(
+                        wt[rows],
+                        d,
+                        u,
+                        nb,
+                        b,
+                        codecs[nb],
+                        effort=cfg.effort,
+                        sweeps=cfg.cptc_sweeps,
+                        comp=r.comp_out is not None,
+                    )
+                else:
+                    enc = encode_rows_cptc(
+                        wt[rows],
+                        d,
+                        nb,
+                        b,
+                        codecs[nb],
+                        effort=cfg.effort,
+                        method="viterbi",
+                        sweeps=cfg.cptc_sweeps,
+                    )
+                out.append((rows + lo, enc[0], enc[1]))
+                if r.comp_out is not None:
+                    comp = enc[3] if use_gptq[ri] else wt[rows].float()
+                    comps.append((ri, rows + lo, stager.to_host(comp.float())))
+        return pieces, comps
+
     if n_dev == 1:
-        per_dev = [on_device(0)]
+        per_dev = [on_device_cptc(0) if use_cptc else on_device(0)]
     else:
         from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(n_dev) as pool:
-            per_dev = list(pool.map(on_device, range(n_dev)))
+            work = on_device_cptc if use_cptc else on_device
+            per_dev = list(pool.map(work, range(n_dev)))
     out = []
     for ri, r in enumerate(reqs):
         if r.comp_out is not None:
@@ -416,11 +541,27 @@ def encode_many(
         t = r.table
         nbits = torch.tensor([t.candidates[i][0] for i in r.picks.tolist()])
         block = torch.tensor([t.candidates[i][1] for i in r.picks.tolist()])
-        out.append(
-            assemble(
-                pieces, nbits, block, t.had, t.shape[1], t.col_scale, stager=stager
+        if use_cptc:
+            from .cptc import assemble_cptc
+
+            out.append(
+                assemble_cptc(
+                    pieces,
+                    nbits,
+                    block,
+                    t.had,
+                    t.shape[1],
+                    codecs,
+                    t.col_scale,
+                    stager=stager,
+                )
             )
-        )
+        else:
+            out.append(
+                assemble(
+                    pieces, nbits, block, t.had, t.shape[1], t.col_scale, stager=stager
+                )
+            )
     return out
 
 

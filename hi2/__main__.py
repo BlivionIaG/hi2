@@ -167,6 +167,8 @@ def _refine_passes(a, qc) -> int:
     (``--qad-init ptq``) is worse (docs/format-spec.md, 8.9)."""
     if a.refine_passes is not None:
         return a.refine_passes
+    if a.cptc:
+        return 0
     return (
         2 if a.calib and qc is None and a.rounding == "gptq" and not a.act_order else 0
     )
@@ -525,6 +527,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     encoding.add_argument(
         "--effort", choices=EFFORT_NAMES, default="normal", help="ladder search effort"
+    )
+    encoding.add_argument(
+        "--cptc",
+        action="store_true",
+        help="opt in to arXiv 2611.22019 CPTC trellis coding (K=2/4 rows); "
+        "off keeps the v3.2 ladder path byte-for-byte unchanged",
+    )
+    encoding.add_argument(
+        "--cptc-depth",
+        type=int,
+        default=16,
+        help="CPTC trellis depth L (default 16, the paper's design point)",
+    )
+    encoding.add_argument(
+        "--cptc-table-rounds",
+        type=int,
+        default=0,
+        help="CPTC table Lloyd rounds (0 = analytic Equation (2) table)",
+    )
+    encoding.add_argument(
+        "--cptc-table-samples",
+        type=int,
+        default=1 << 18,
+        help="standard-normal values drawn per CPTC table round",
+    )
+    encoding.add_argument(
+        "--cptc-sweeps",
+        type=int,
+        default=0,
+        help="bounded code-refinement sweeps after the CPTC Viterbi (0 = paper encoder)",
     )
     encoding.add_argument(
         "--bits",
@@ -1120,6 +1152,11 @@ def dispatch_command(a) -> dict:
                 refine_passes=_refine_passes(a, qc),
                 damp=a.damp,
                 effort=a.effort,
+                cptc=a.cptc,
+                cptc_depth=a.cptc_depth,
+                cptc_table_rounds=a.cptc_table_rounds,
+                cptc_table_samples=a.cptc_table_samples,
+                cptc_sweeps=a.cptc_sweeps,
                 expert_min_tokens=a.expert_min_tokens,
             ),
         )

@@ -80,6 +80,62 @@ def test_invalid_plan_rejected_before_work(source, tmp_path, changes):
     assert not rc.workdir.exists() and not rc.dst.exists()
 
 
+@pytest.mark.parametrize("changes", [
+    {"candidates": [(8, 16)]},
+    {"cptc_depth": 7},
+    {"act_order": True},
+    {"sequential": True},
+    {"refine_passes": 1},
+])
+def test_unsupported_cptc_recipe_rejected_before_work(source, tmp_path, changes):
+    cfg = Config(cptc=True, candidates=[(2, 16), (4, 16)])
+    cfg = dataclasses.replace(cfg, **changes)
+    rc = configuration(source, tmp_path, cfg=cfg)
+    with pytest.raises(ValueError):
+        plan(rc, log=lambda _: None)
+    assert not rc.workdir.exists() and not rc.dst.exists()
+
+
+def test_rocm_native_count_fallback_is_rocm_only_and_preserves_ordinals():
+    from types import SimpleNamespace
+
+    from hi2 import service
+
+    def fake_torch(*, hip, reported, native, available=True):
+        calls = []
+
+        def native_count():
+            calls.append("native")
+            return native
+
+        module = SimpleNamespace(
+            device=torch.device,
+            cuda=SimpleNamespace(
+                device_count=lambda: reported,
+                is_available=lambda: available,
+            ),
+            version=SimpleNamespace(hip=hip),
+            _C=SimpleNamespace(_cuda_getDeviceCount=native_count),
+        )
+        return module, calls
+
+    rocm, calls = fake_torch(hip="7.14.60850", reported=0, native=1)
+    assert service._validated_device(rocm, "cuda:0") == torch.device("cuda", 0)
+    assert calls == ["native"]
+    with pytest.raises(RuntimeError, match="requested accelerator"):
+        service._validated_device(rocm, "cuda:1")
+
+    empty, calls = fake_torch(hip="7.14.60850", reported=0, native=0)
+    with pytest.raises(RuntimeError, match="requested accelerator"):
+        service._validated_device(empty, "cuda:0")
+    assert calls == ["native"]
+
+    cuda, calls = fake_torch(hip=None, reported=0, native=1)
+    with pytest.raises(RuntimeError, match="requested accelerator"):
+        service._validated_device(cuda, "cuda:0")
+    assert calls == []
+
+
 def test_output_source_alias_is_rejected(source, tmp_path):
     link = tmp_path / "alias"
     link.symlink_to(source, target_is_directory=True)

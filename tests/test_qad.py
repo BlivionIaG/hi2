@@ -431,6 +431,129 @@ def test_ptq_fallback_is_kept_when_training_loses():
         assert torch.equal(dequantize_stored(m.export()), dequantize_stored(t0s[name]))
 
 
+def _cptc_tensor(w, nbits=2, block=16, depth=8, col_scale=None):
+    """A CPTC tensor encoding ``w`` (fixed codec, deterministic encoder)."""
+    from hi2.cptc import assemble_cptc, encode_rows_cptc, get_codec
+
+    k, r = w.shape[1], w.shape[0]
+    codec = get_codec(depth, nbits, rounds=0)
+    codes, scales, _ = encode_rows_cptc(
+        w, torch.ones(k), nbits, block, codec, effort="fast"
+    )
+    return assemble_cptc(
+        [(torch.arange(r), codes, scales)],
+        torch.full((r,), nbits, dtype=torch.uint8),
+        torch.full((r,), block, dtype=torch.uint8),
+        torch.zeros(k // 16, dtype=torch.uint8),
+        k,
+        {nbits: codec},
+        col_scale=col_scale,
+    )
+
+
+
+
+_CPTC_FIELDS = (
+    "codes",
+    "code_off",
+    "scale",
+    "param_off",
+    "row_nbits",
+    "row_block",
+    "had",
+    "col_scale",
+)
+
+
+
+
+def test_cptc_ptq_fallback_survives_ptq_init_and_zero_steps_export_the_ptq_stream():
+    from hi2.cptc import dequantize_stored_cptc
+    from hi2.pinned import PinnedWindow
+    from hi2.qad import (
+        CptcFakeQuantLinear,
+        CptcFrozenCodeLinear,
+        _export_layer,
+        _ptq_fallback,
+    )
+
+    torch.manual_seed(61)
+    w0 = _w(6, 64, seed=62)
+    t = _cptc_tensor(w0)
+    layer = nn.Sequential(nn.Linear(64, 6, bias=False))
+    stager = PinnedWindow()
+    # CPTC keeps an exact frozen fallback even when QAD starts from the PTQ encoding
+    for init in ("ptq", "weights"):
+        qc = make_config("default", {"steps": 0, "init": init})
+        fb = _ptq_fallback(layer, ["0"], {"0": t}, {}, qc, stager)
+        assert isinstance(fb["0"], CptcFrozenCodeLinear)
+    # A latent far from the PTQ stream: the initial projection does not re-emit it, so
+    # a zero-step export taken from the fake-quant module would change the bytes.
+    moved = {"0": CptcFakeQuantLinear(3.0 * w0, t, None, "weights", "abs", sweeps=1)}
+    xs = [_x(16, 64, seed=65 + i).unsqueeze(0) for i in range(3)]
+    with torch.no_grad():
+        ys = [layer(x) for x in xs]
+    qc = make_config("default", {"steps": 0, "init": "weights"})
+    fb = _ptq_fallback(layer, ["0"], {"0": t}, {}, qc, stager)
+    info = train_layer(
+        layer,
+        moved,
+        xs,
+        ys,
+        [0, 1],
+        [2],
+        {},
+        qc,
+        torch.device("cpu"),
+        lambda *_: None,
+        "",
+        fb,
+    )
+    assert info["steps"] == 0
+    zero = _export_layer(moved, fb, info, None)["0"]
+    for name in _CPTC_FIELDS[:-1]:
+        assert torch.equal(getattr(zero, name), getattr(t, name)), name
+    assert zero.codes.device.type == "cpu"
+    assert torch.equal(dequantize_stored_cptc(zero), dequantize_stored_cptc(t))
+    # any optimizer step exports the trained module, not the frozen PTQ stream
+    with torch.no_grad():
+        layer[0].weight.copy_(3.0 * w0)
+        trained_targets = [layer(x) for x in xs]
+    trained_fq = {"0": CptcFakeQuantLinear(3.0 * w0, t, None, "weights", "abs")}
+    trained_info = train_layer(
+        layer, trained_fq, xs, trained_targets, [0, 1], [2], {},
+        make_config("default", {"steps": 1, "init": "weights"}),
+        torch.device("cpu"), lambda *_: None, "", fb,
+    )
+    assert trained_info["steps"] == 1
+    trained = _export_layer(trained_fq, fb, trained_info, None)["0"]
+    assert torch.equal(
+        dequantize_stored_cptc(trained).float(), trained_fq["0"].stored(False)
+    )
+    # the ladder path keeps its old rules: no extra fallback for init=ptq, and a
+    # zero-step ladder export still comes from the fake-quant module
+    wt, xt = _w(20, 64, seed=63), _x(512, 64, seed=64)
+    t_lad, comp = _ptq(wt, xt)
+    layer_lad = nn.Sequential(nn.Linear(64, 20, bias=False))
+    with torch.no_grad():
+        layer_lad[0].weight.copy_(wt)
+    qc_ptq = make_config("default", {"steps": 0, "init": "ptq"})
+    none_fb = _ptq_fallback(
+        layer_lad, ["0"], {"0": t_lad}, {"0": comp}, qc_ptq, stager
+    )
+    assert none_fb is None
+    qc_w = make_config("default", {"steps": 0, "init": "weights"})
+    fb_lad = _ptq_fallback(
+        layer_lad, ["0"], {"0": t_lad}, {"0": comp}, qc_w, stager
+    )
+    assert isinstance(fb_lad["0"], FakeQuantLinear)
+    fq_lad = {"0": FakeQuantLinear(wt, t_lad, comp, "weights")}
+    got = _export_layer(fq_lad, fb_lad, {"steps": 0}, None)["0"]
+    reference = fq_lad["0"].export()
+    assert torch.equal(got.codes, reference.codes)
+    assert torch.equal(got.blk_params, reference.blk_params)
+
+
 def test_step_units_train_and_keep_exactness():
     # _MLP replaces Linear's random initialisation with locally seeded weights;
     # preserve the caller's RNG as well so this test cannot affect later tests.

@@ -3,8 +3,9 @@
 """The batched layer pass: the batch-1 kwargs of ``capture_inputs`` broadcast to n."""
 
 import torch
+from torch import nn
 
-from hi2.layerwise import _expand_batch, to_device
+from hi2.layerwise import _expand_batch, _run, to_device
 
 
 def test_batch_one_tensors_expand_and_views_stay_shared():
@@ -67,3 +68,49 @@ def test_kwargs_go_through_the_pinned_stager():
     assert stager.seen == [(1, 1, 4, 4), (1, 4, 8), (1, 4, 8), (4,)]
     assert out["attention_mask"] is mask
     assert out["use_cache"] is False
+
+
+def test_streamed_microbatches_match_unbatched_stats_outputs_and_partial_tail(
+    monkeypatch,
+):
+    """The bounded cohort forward must be numerically the sum of the full cohort.
+
+    Five sequences with a two-sequence microbatch exercise a partial last chunk;
+    statistics are sums, so no batch-mean weighting is allowed.
+    """
+    torch.manual_seed(23)
+    layer = nn.Sequential(nn.Linear(16, 16))
+    hidden = [torch.randn(1, 3, 16) for _ in range(5)]
+    linears = {"0": "weight"}
+    k_of = {"0": 16}
+
+    def run_case(batch: str, micro: str):
+        monkeypatch.setenv("HI2_LAYER_BATCH", batch)
+        monkeypatch.setenv("HI2_CALIB_MICROBATCH", micro)
+        return _run(
+            layer,
+            torch.device("cpu"),
+            list(range(len(hidden))),
+            hidden,
+            {},
+            linears,
+            k_of,
+            with_hessian=True,
+            resident=False,
+        )
+
+    ref_outs, ref_stats, ref_hess, ref_leaders = run_case("0", "2")
+    got_outs, got_stats, got_hess, got_leaders = run_case("1", "2")
+
+    assert set(got_outs) == set(ref_outs)
+    for i in ref_outs:
+        torch.testing.assert_close(got_outs[i], ref_outs[i], rtol=1e-5, atol=1e-6)
+    assert got_stats["0"].n == ref_stats["0"].n == 15
+    torch.testing.assert_close(
+        got_stats["0"].S, ref_stats["0"].S, rtol=1e-5, atol=1e-6
+    )
+    assert got_hess["0"].n == ref_hess["0"].n == 15
+    torch.testing.assert_close(
+        got_hess["0"].S, ref_hess["0"].S, rtol=1e-4, atol=1e-5
+    )
+    assert got_leaders == ref_leaders

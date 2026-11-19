@@ -164,6 +164,18 @@ def tables_key(skey: dict, cfg) -> dict:
         "smooth": cfg.smooth,
         "effort": cfg.effort,
         **({"smooth_search": list(cfg.smooth_search)} if cfg.smooth_search else {}),
+        **(
+            {
+                "cptc": {
+                    "depth": cfg.cptc_depth,
+                    "table_rounds": cfg.cptc_table_rounds,
+                    "table_samples": cfg.cptc_table_samples,
+                    "sweeps": cfg.cptc_sweeps,
+                }
+            }
+            if getattr(cfg, "cptc", False)
+            else {}
+        ),
     }
 
 

@@ -120,6 +120,33 @@ def _positive(name, value, *, zero=False):
         raise ValueError(f"{name} must be {'nonnegative' if zero else 'positive'}")
 
 
+def _cuda_device_count(torch_module) -> int:
+    """Visible CUDA/HIP devices, with the ROCm-only v0.34 count fallback.
+
+    torch 2.12.0+rocm7.14 reports ``device_count() == 0`` until a context is
+    created, although ``is_available()`` is true and the native HIP count is
+    nonzero.  Do not apply this fallback to CUDA builds or to a genuinely
+    empty ROCm device set.
+    """
+    count = int(torch_module.cuda.device_count())
+    if count == 0 and getattr(torch_module.version, "hip", None) is not None:
+        count = int(torch_module._C._cuda_getDeviceCount())
+    return count
+
+
+def _validated_device(torch_module, value):
+    device = torch_module.device(value)
+    if device.type == "cuda":
+        index = device.index if device.index is not None else 0
+        count = _cuda_device_count(torch_module)
+        if not torch_module.cuda.is_available() or index >= count:
+            raise RuntimeError(f"requested accelerator is unavailable: {value}")
+        return torch_module.device("cuda", index)
+    if device.type != "cpu":
+        raise ValueError(f"unsupported quantizer device {value}; use cpu or cuda:N")
+    return device
+
+
 def resolve_config(rc, log=lambda message: None, *, check_ownership=True):
     """Resolve all fallbacks before either planning or allocating compute work."""
     import regex
@@ -152,6 +179,15 @@ def resolve_config(rc, log=lambda message: None, *, check_ownership=True):
         tuple(c) not in SELECTABLE for c in rc.cfg.candidates
     ):
         raise ValueError("every candidate must be a supported bit-width/block pair")
+    if rc.cfg.cptc:
+        if any(bits not in (2, 4) for bits, _ in rc.cfg.candidates):
+            raise ValueError("CPTC supports only 2/4-bit candidates")
+        if type(rc.cfg.cptc_depth) is not int or not 8 <= rc.cfg.cptc_depth <= 16:
+            raise ValueError("CPTC checkpoint depth must be in [8, 16] for both 2/4-bit codecs")
+        if rc.cfg.act_order or rc.cfg.sequential:
+            raise ValueError("CPTC does not support act_order or sequential propagation")
+        if rc.cfg.refine_passes:
+            raise ValueError("ladder refine_passes does not apply to CPTC; use cptc_sweeps")
     if rc.cfg.rotation not in ("on", "off", "auto"):
         raise ValueError("rotation must be on, off or auto")
     if rc.cfg.rounding not in ("nearest", "gptq") or rc.cfg.effort not in (
@@ -191,18 +227,7 @@ def resolve_config(rc, log=lambda message: None, *, check_ownership=True):
         rc.max_error_ratio, rc.max_error_ratios = ratios[0], None
     if not rc.devices:
         raise ValueError("select at least one compute device")
-    devices = []
-    for value in rc.devices:
-        device = torch.device(value)
-        if device.type == "cuda":
-            index = device.index if device.index is not None else 0
-            if not torch.cuda.is_available() or index >= torch.cuda.device_count():
-                raise RuntimeError(f"requested accelerator is unavailable: {value}")
-            device = torch.device("cuda", index)
-        elif device.type != "cpu":
-            raise ValueError(f"unsupported quantizer device {value}; use cpu or cuda:N")
-        devices.append(str(device))
-    rc.devices = devices
+    rc.devices = [str(_validated_device(torch, value)) for value in rc.devices]
     calibrated = rc.calib is not None or rc.calib_ids is not None
     if rc.calib is not None and rc.calib_ids is not None:
         raise ValueError("provide calibration files or in-memory ids, not both")
