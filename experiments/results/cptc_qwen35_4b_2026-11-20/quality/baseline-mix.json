@@ -1,0 +1,322 @@
+{
+  "tokens": 57316,
+  "ppl_original": 4.582276344299316,
+  "ppl_quantized": 4.491952896118164,
+  "kld_nats_per_token": 0.23642668310417383,
+  "top1_agreement": 0.8592190662293251,
+  "ear": 0.8620344208975516,
+  "lossless": false,
+  "dtype": "float16",
+  "eval_id": "3564dc0a4eb0cd7c1360d1e95dce03903a85a5ce13b3f79c700ece27552bd69c",
+  "sequences": [
+    {
+      "index": 0,
+      "tokens": 2047,
+      "sum_nll_original": 2211.984375,
+      "sum_nll_quantized": 2269.87255859375,
+      "sum_kl": 220.528564453125,
+      "top1_count": 1839,
+      "ear_sum": 1828.24755859375,
+      "ids_sha256": "d43df767d86cc9e9c29ecd982183d32d664a84cbc9dba9d3882d348afca94b06"
+    },
+    {
+      "index": 1,
+      "tokens": 2047,
+      "sum_nll_original": 2932.611328125,
+      "sum_nll_quantized": 3123.747314453125,
+      "sum_kl": 334.1156921386719,
+      "top1_count": 1719,
+      "ear_sum": 1724.4674072265625,
+      "ids_sha256": "6b5e0a76a5acad55bd18dd8a24350e03f31f99218e352a8c6d717f2ce7512db9"
+    },
+    {
+      "index": 2,
+      "tokens": 2047,
+      "sum_nll_original": 3008.732421875,
+      "sum_nll_quantized": 3299.63037109375,
+      "sum_kl": 357.061767578125,
+      "top1_count": 1696,
+      "ear_sum": 1715.1319580078125,
+      "ids_sha256": "827a9d24db4de68a7c89ac14a93971bbe886c15be2a57192afe5ca24bed2c526"
+    },
+    {
+      "index": 3,
+      "tokens": 2047,
+      "sum_nll_original": 3404.87646484375,
+      "sum_nll_quantized": 3720.63818359375,
+      "sum_kl": 350.6796875,
+      "top1_count": 1715,
+      "ear_sum": 1719.012451171875,
+      "ids_sha256": "d2fcece3463414ffe972394635e5d82d934e9712afa727bdce07a032c679f30e"
+    },
+    {
+      "index": 4,
+      "tokens": 2047,
+      "sum_nll_original": 2903.9296875,
+      "sum_nll_quantized": 3289.316650390625,
+      "sum_kl": 417.6641845703125,
+      "top1_count": 1689,
+      "ear_sum": 1704.698486328125,
+      "ids_sha256": "78ca070890aecd565283101abed160b157ee2a49eb079ee80b3c880d456b0490"
+    },
+    {
+      "index": 5,
+      "tokens": 2047,
+      "sum_nll_original": 2820.5712890625,
+      "sum_nll_quantized": 3137.36962890625,
+      "sum_kl": 405.8469543457031,
+      "top1_count": 1692,
+      "ear_sum": 1715.095458984375,
+      "ids_sha256": "f837619fe6fafe8300381f6436d1dbcbd841e1fcefd33180540e85349895a311"
+    },
+    {
+      "index": 6,
+      "tokens": 2047,
+      "sum_nll_original": 2545.68310546875,
+      "sum_nll_quantized": 2774.857666015625,
+      "sum_kl": 343.6307067871094,
+      "top1_count": 1746,
+      "ear_sum": 1747.4814453125,
+      "ids_sha256": "0b1705e04b539700fcba09d01c116c3de3c9b038240c7c134dc693502537f7d9"
+    },
+    {
+      "index": 7,
+      "tokens": 2047,
+      "sum_nll_original": 1736.6719970703125,
+      "sum_nll_quantized": 1797.352783203125,
+      "sum_kl": 214.52081298828125,
+      "top1_count": 1855,
+      "ear_sum": 1848.236328125,
+      "ids_sha256": "2a631aa15518eafe17943c95051d8fa9a82ef9cb6f8db9cc327fed2fc378fbb7"
+    },
+    {
+      "index": 8,
+      "tokens": 2047,
+      "sum_nll_original": 2699.206298828125,
+      "sum_nll_quantized": 2940.7421875,
+      "sum_kl": 292.1708068847656,
+      "top1_count": 1752,
+      "ear_sum": 1755.1705322265625,
+      "ids_sha256": "8f58364b24077b10941a0e8c4f9dd5b1028706113cfd18d498f7edeeeb68e981"
+    },
+    {
+      "index": 9,
+      "tokens": 2047,
+      "sum_nll_original": 2295.859375,
+      "sum_nll_quantized": 2468.2080078125,
+      "sum_kl": 265.6328430175781,
+      "top1_count": 1774,
+      "ear_sum": 1789.09228515625,
+      "ids_sha256": "71f76d9fd699332b48d52fd674d78db2cc57acbdf020cae01d5150cebe47baef"
+    },
+    {
+      "index": 10,
+      "tokens": 2047,
+      "sum_nll_original": 2502.739501953125,
+      "sum_nll_quantized": 2563.594482421875,
+      "sum_kl": 570.6047973632812,
+      "top1_count": 1750,
+      "ear_sum": 1760.0595703125,
+      "ids_sha256": "34c493ba5cf8d499b551451283f137c7e0ecb3f93d1eb1ea99627b6b510d353c"
+    },
+    {
+      "index": 11,
+      "tokens": 2047,
+      "sum_nll_original": 1690.711181640625,
+      "sum_nll_quantized": 1932.4617919921875,
+      "sum_kl": 347.3896179199219,
+      "top1_count": 1777,
+      "ear_sum": 1775.85546875,
+      "ids_sha256": "b23021e497adf1eb3a544a9c7d136db04f9339bfb6bad3a06703c0d91831b177"
+    },
+    {
+      "index": 12,
+      "tokens": 2047,
+      "sum_nll_original": 2129.4658203125,
+      "sum_nll_quantized": 2200.025390625,
+      "sum_kl": 311.30078125,
+      "top1_count": 1825,
+      "ear_sum": 1808.8311767578125,
+      "ids_sha256": "0ac9abbe94da200e379bdd534d6f78075ec0773b071bf3629caac2a4ca708228"
+    },
+    {
+      "index": 13,
+      "tokens": 2047,
+      "sum_nll_original": 2916.655029296875,
+      "sum_nll_quantized": 2513.066162109375,
+      "sum_kl": 416.1755676269531,
+      "top1_count": 1804,
+      "ear_sum": 1808.101806640625,
+      "ids_sha256": "3a0fd0cea50a8ed0003d8ff1fde8a77b4105b188d624f3b20e2c5da71924da8e"
+    },
+    {
+      "index": 14,
+      "tokens": 2047,
+      "sum_nll_original": 3862.802001953125,
+      "sum_nll_quantized": 3722.270751953125,
+      "sum_kl": 952.4688110351562,
+      "top1_count": 1737,
+      "ear_sum": 1725.34375,
+      "ids_sha256": "156015e0cefa035e85393a2415e960dbb5fffa1742ec656252b34451a5f2af48"
+    },
+    {
+      "index": 15,
+      "tokens": 2047,
+      "sum_nll_original": 3328.227783203125,
+      "sum_nll_quantized": 3211.533447265625,
+      "sum_kl": 710.8191528320312,
+      "top1_count": 1772,
+      "ear_sum": 1759.4461669921875,
+      "ids_sha256": "34c4e92eaf18cda6f82433b96fd3f8810a94f017ba522e68e054e6ab8335a912"
+    },
+    {
+      "index": 16,
+      "tokens": 2047,
+      "sum_nll_original": 3519.83642578125,
+      "sum_nll_quantized": 3046.78857421875,
+      "sum_kl": 591.6900024414062,
+      "top1_count": 1760,
+      "ear_sum": 1775.32470703125,
+      "ids_sha256": "8bea1d39239cb12a86f2a8769292af4d2b8fa9cd8eb4f0fdf60eab55110b8846"
+    },
+    {
+      "index": 17,
+      "tokens": 2047,
+      "sum_nll_original": 3084.821044921875,
+      "sum_nll_quantized": 3129.829345703125,
+      "sum_kl": 371.8924865722656,
+      "top1_count": 1753,
+      "ear_sum": 1759.28125,
+      "ids_sha256": "3064225fc5aef02cdc3e7c4c121c456dcc244fdcb270310564daab3145e9abe2"
+    },
+    {
+      "index": 18,
+      "tokens": 2047,
+      "sum_nll_original": 3983.562744140625,
+      "sum_nll_quantized": 3563.3583984375,
+      "sum_kl": 810.9315185546875,
+      "top1_count": 1747,
+      "ear_sum": 1754.98681640625,
+      "ids_sha256": "c00825cad179aa8e2b6346ac72ba43c4cc6c134a87f87e3deb1026f69c303d5b"
+    },
+    {
+      "index": 19,
+      "tokens": 2047,
+      "sum_nll_original": 3894.625,
+      "sum_nll_quantized": 3631.412353515625,
+      "sum_kl": 522.0767822265625,
+      "top1_count": 1771,
+      "ear_sum": 1780.9842529296875,
+      "ids_sha256": "c7917e22c04e75c1100954b0ebabac73d2d87f31dbace5156757084d382a9451"
+    },
+    {
+      "index": 20,
+      "tokens": 2047,
+      "sum_nll_original": 3488.735595703125,
+      "sum_nll_quantized": 3318.95654296875,
+      "sum_kl": 610.8126220703125,
+      "top1_count": 1743,
+      "ear_sum": 1749.32666015625,
+      "ids_sha256": "69e3d702a97a3e1eca39f9cf1425be9201c69ed905ecd9d41048c8421fdcb202"
+    },
+    {
+      "index": 21,
+      "tokens": 2047,
+      "sum_nll_original": 3371.64501953125,
+      "sum_nll_quantized": 3158.103515625,
+      "sum_kl": 388.9597473144531,
+      "top1_count": 1802,
+      "ear_sum": 1804.9578857421875,
+      "ids_sha256": "71cb6e4a754a471dab9850997c7a17b41de7d2e8a83e8682429ce97f51879a95"
+    },
+    {
+      "index": 22,
+      "tokens": 2047,
+      "sum_nll_original": 4597.064453125,
+      "sum_nll_quantized": 3942.993408203125,
+      "sum_kl": 879.726318359375,
+      "top1_count": 1677,
+      "ear_sum": 1695.0064697265625,
+      "ids_sha256": "a7dabe5d783dfd5ff6f66fb4a64a38f91dfde4984ba8aa650e35aaccb07e670b"
+    },
+    {
+      "index": 23,
+      "tokens": 2047,
+      "sum_nll_original": 3711.35302734375,
+      "sum_nll_quantized": 3435.779296875,
+      "sum_kl": 388.79949951171875,
+      "top1_count": 1793,
+      "ear_sum": 1795.6124267578125,
+      "ids_sha256": "1f198cb4abc4ac9b0f3d59bb944fe75dd203e132f2939247a772b033c7185787"
+    },
+    {
+      "index": 24,
+      "tokens": 2047,
+      "sum_nll_original": 3291.62548828125,
+      "sum_nll_quantized": 3383.842041015625,
+      "sum_kl": 401.97186279296875,
+      "top1_count": 1754,
+      "ear_sum": 1778.12451171875,
+      "ids_sha256": "1f371b6de062a79b6596771ac9770d25ed3c379f27c2675d0dc41d522e62d409"
+    },
+    {
+      "index": 25,
+      "tokens": 2047,
+      "sum_nll_original": 3241.90087890625,
+      "sum_nll_quantized": 3129.07373046875,
+      "sum_kl": 492.611572265625,
+      "top1_count": 1793,
+      "ear_sum": 1796.71044921875,
+      "ids_sha256": "41aea5a07f47477e6f3e98c68c8d7e917fea5014efea4796d9f17a66174bd8f8"
+    },
+    {
+      "index": 26,
+      "tokens": 2047,
+      "sum_nll_original": 4764.8330078125,
+      "sum_nll_quantized": 4299.7783203125,
+      "sum_kl": 1139.434326171875,
+      "top1_count": 1706,
+      "ear_sum": 1710.149658203125,
+      "ids_sha256": "a9f8a6159b877591e13cea52d6f5bf9de48d4992f7ab23c05db464f43e810513"
+    },
+    {
+      "index": 27,
+      "tokens": 2047,
+      "sum_nll_original": 3305.45361328125,
+      "sum_nll_quantized": 3100.505615234375,
+      "sum_kl": 441.5142822265625,
+      "top1_count": 1806,
+      "ear_sum": 1823.6279296875,
+      "ids_sha256": "3016ef6d8ac7247d0b84f6ef9291fc9558c9c01574dd6041388cc66b6df29bc9"
+    }
+  ],
+  "scope": "Teacher-forced full-vocabulary KL/NLL from HF dense exports; not native-kernel KL or inference speed",
+  "source": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+  "dataset": {
+    "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/eval-mix.txt",
+    "sha256": "3564dc0a4eb0cd7c1360d1e95dce03903a85a5ce13b3f79c700ece27552bd69c",
+    "documents": 90,
+    "exact_overlap_checked_against": [
+      "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt"
+    ],
+    "semantic_deduplication": "not_measured"
+  },
+  "native_windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+  "domain": "mix",
+  "structural_validation": {
+    "mode": "full_structural",
+    "status": "ok",
+    "checked": 248,
+    "expected": 248,
+    "coverage": 1.0,
+    "physical_containers": 248,
+    "physical_tensors": 2722,
+    "dense_tensors": 490,
+    "tensor_data_bytes": 3530906368,
+    "shards": 2,
+    "report_checked": true,
+    "portable_manifest_checked": false,
+    "native_runtime": "not_run"
+  }
+}

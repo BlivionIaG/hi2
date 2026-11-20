@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "scope": "Completed matched HF full-vocabulary quality comparison only; not native runtime performance or task-accuracy qualification.",
+  "source_model": "Qwen/Qwen3.5-4B",
+  "source_model_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "quantizer_source_sha": "995fc26317bd74d5d77653f42c4639086ac0d441",
+  "adaptation": "CPTC from arXiv:2611.22019 under existing HI2 H16; not the full paper RHT pipeline.",
+  "preset": "Production 27B DEFAULT, target 3.0 bpw, QAD 300 steps/layer and final-KL 200 steps attempted for both variants.",
+  "variants": {
+    "baseline": {
+      "qad_layers": 32,
+      "qad_steps_executed": 9600,
+      "qad_kept": {
+        "trained": 32
+      },
+      "final_kl_steps_executed": 200,
+      "final_kl_kept": "best",
+      "calibration_validation_kl_before_final": 0.15940703050000593,
+      "calibration_validation_kl_after_final": 0.1358654808718711,
+      "protected_tensor_count": 313,
+      "protected_tensors_byte_identical": 313,
+      "quantized_parameters": 3569090560,
+      "quantized_payload_bpw": 3.0245369307748806,
+      "quantized_payload_bytes": 1349355776,
+      "source_parameters": 4659865088,
+      "total_exported_tensor_data_bytes": 3530906368,
+      "whole_checkpoint_tensor_bpw": 6.0618173295921824,
+      "training_timing_valid": false
+    },
+    "cptc": {
+      "qad_layers": 32,
+      "qad_steps_executed": 9600,
+      "qad_kept": {
+        "ptq": 4,
+        "trained": 28
+      },
+      "final_kl_steps_executed": 200,
+      "final_kl_kept": "init",
+      "calibration_validation_kl_before_final": 0.15967385191470385,
+      "calibration_validation_kl_after_final": 0.15967385191470385,
+      "protected_tensor_count": 313,
+      "protected_tensors_byte_identical": 313,
+      "quantized_parameters": 3569090560,
+      "quantized_payload_bpw": 3.000113723088046,
+      "quantized_payload_bytes": 1338459696,
+      "source_parameters": 4659865088,
+      "total_exported_tensor_data_bytes": 3520010288,
+      "whole_checkpoint_tensor_bpw": 6.043111071287736,
+      "training_timing_valid": false
+    }
+  },
+  "quality_reviews": {
+    "baseline-mix": {
+      "numerical_output_accepted": true,
+      "gate_complete": false,
+      "timing_valid": false,
+      "kfd_evicted_ms": 50239,
+      "windows": 28,
+      "scored_tokens": 57316,
+      "review_reason": "All fixed windows completed with finite NLL/KL, zero fault markers and child exit 0. The supervisor stopped for KFD review; elapsed time is excluded from performance claims."
+    },
+    "baseline-docs": {
+      "numerical_output_accepted": true,
+      "gate_complete": false,
+      "timing_valid": false,
+      "kfd_evicted_ms": 4044,
+      "windows": 7,
+      "scored_tokens": 14329,
+      "review_reason": "All fixed windows completed with finite NLL/KL, zero fault markers and child exit 0. The supervisor stopped for KFD review; elapsed time is excluded from performance claims."
+    },
+    "cptc-mix": {
+      "numerical_output_accepted": true,
+      "gate_complete": false,
+      "timing_valid": false,
+      "kfd_evicted_ms": 42880,
+      "windows": 28,
+      "scored_tokens": 57316,
+      "review_reason": "All fixed windows completed with finite NLL/KL, zero fault markers and child exit 0. The supervisor stopped for KFD review; elapsed time is excluded from performance claims."
+    },
+    "cptc-docs": {
+      "numerical_output_accepted": true,
+      "gate_complete": false,
+      "timing_valid": false,
+      "kfd_evicted_ms": 11613,
+      "windows": 7,
+      "scored_tokens": 14329,
+      "review_reason": "All fixed windows completed with finite NLL/KL, zero fault markers and child exit 0. The supervisor stopped for KFD review; elapsed time is excluded from performance claims."
+    }
+  },
+  "comparison_files": {
+    "mix": "quality/mix-comparison.json",
+    "docs": "quality/docs-comparison.json"
+  },
+  "storage_saving_tensor_bytes": 10896080,
+  "storage_limit": "Tensor bytes exclude serialization headers; a smaller checkpoint does not establish an automatic KV-cache capacity gain.",
+  "quality_limit": "Paired-window bootstrap intervals are conditional on the frozen 28 mix / 7 docs windows. Exact calibration-document duplicates were removed; semantic near-duplicate coverage was not established.",
+  "recommendation": "This CPTC/H16 DEFAULT pipeline regresses quality on both measured cohorts. Keep experimental and opt-in; do not claim a quality win or a failure of the full paper.",
+  "receipt_sha256": {
+    "quality/baseline-mix.json": "897826ba9ac5235496bd2f68d50190e490df1110e44e831d5b3a9351e5d21231",
+    "quality/baseline-mix-receipt.json": "dccab3c8b975dec4af0133ec613b588dced0795553fff06f8171ff2e13c70a41",
+    "quality/baseline-docs.json": "f58220e142b86133f980471fccf231aa74fc983c2c632af46a6e7fff7a79241c",
+    "quality/baseline-docs-receipt.json": "876de7845bd9ca1c02c922ec3c53b15767f2c5110f48f81a0ecfefbd661b7aa5",
+    "quality/cptc-mix.json": "16fe457de2028e02bb2cbaabd6a7bf0b4547d378bcf20ba66dcbfac6a8bcc3a1",
+    "quality/cptc-mix-receipt.json": "2189fdc64b21d4b8bfd9cd86de1c12ff9e39baf71ce82cdac32264605e033087",
+    "quality/cptc-docs.json": "dfa8edb10496a5901b05e21d0bb05305358eaed736131cfd1eacc59f40703f59",
+    "quality/cptc-docs-receipt.json": "a52856246eb7f97dcd56183930d9182c254643f07df174a013ec41404c351514",
+    "quality/mix-comparison.json": "29616eb58c33b7497c32d9c0ade9853b222750159e847dbbc272e0af18773ded",
+    "quality/docs-comparison.json": "da69fe90c105b642c0993fe9249c36b610bf90953570a609aa3279bd16fb2376",
+    "quantization/baseline/manifest.json": "9a3f825f68042bfb226a1bc9d42706527edbe619044347f7cd7f62ca99eeea7a",
+    "quantization/baseline/run.json": "0051136351d8e0f74fc4a4d62c15e47ec21050402f4cafe881849baebc9d95f4",
+    "quantization/baseline/final_kl.json": "ba204f7ddc90c360262634327a7eaf228d3677249ba42c34e99c70fd622fd7ee",
+    "quantization/baseline/qad_report.json": "91c1b31192a594dc64b804010a702c25797ff87c9e469a9e6a928da4e2f03db9",
+    "quantization/baseline/protected-tensors.json": "b2426205a6ffd7b24cc9bef245275e5e4017ec15e1df0619a14c7615a3afb1da",
+    "quantization/cptc/manifest.json": "8c0c26e314aa4024eeaad303170125393c8b353795670428b7cdb45ad8a01f94",
+    "quantization/cptc/run.json": "bd2bcf092754d7a9736f9a0aa32b2ead96f0a759ee2df3e166aa7e85c41c9096",
+    "quantization/cptc/final_kl.json": "dbc21ff13629c41be1da75b6e235b6ecf41b9853e52ac459d5f2e8d21a98b15d",
+    "quantization/cptc/qad_report.json": "94ecf360fd78db458e4a41ae6b28e16f069749f722a0fe9b182ed086af0e06c4",
+    "quantization/cptc/protected-tensors.json": "6291e15b79dd71774e7ee48a20f9ba02e4f3a66da705d5ea0b302916996a1b53"
+  }
+}

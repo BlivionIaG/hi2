@@ -1,0 +1,112 @@
+{
+  "tokens": 14329,
+  "ppl_original": 7.219318866729736,
+  "ppl_quantized": 7.325623035430908,
+  "kld_nats_per_token": 0.07135645983332124,
+  "top1_agreement": 0.893642263940261,
+  "ear": 0.9037652144471003,
+  "lossless": false,
+  "dtype": "float16",
+  "eval_id": "32f1301e782a53d1ef96246fd40fca6b6591788be78fca984499a716412a346d",
+  "sequences": [
+    {
+      "index": 0,
+      "tokens": 2047,
+      "sum_nll_original": 4826.46337890625,
+      "sum_nll_quantized": 4872.5712890625,
+      "sum_kl": 155.920654296875,
+      "top1_count": 1786,
+      "ear_sum": 1828.081298828125,
+      "ids_sha256": "20eef4b0138b9bee59e336080ab3b9bad48c8cd4210333c139eb231c2176ee7f"
+    },
+    {
+      "index": 1,
+      "tokens": 2047,
+      "sum_nll_original": 2910.940673828125,
+      "sum_nll_quantized": 2915.630126953125,
+      "sum_kl": 125.96430206298828,
+      "top1_count": 1887,
+      "ear_sum": 1890.058837890625,
+      "ids_sha256": "356739927911fd791cd320ef69d8b0be4f904e3e88a9541e7bc2d03dcb26b2a9"
+    },
+    {
+      "index": 2,
+      "tokens": 2047,
+      "sum_nll_original": 3662.8515625,
+      "sum_nll_quantized": 3664.855224609375,
+      "sum_kl": 137.28213500976562,
+      "top1_count": 1847,
+      "ear_sum": 1857.362548828125,
+      "ids_sha256": "edb42364ca550d1f2ecd6664c7de5523d43e8e8d88a5653bfba5bb43ba9455a0"
+    },
+    {
+      "index": 3,
+      "tokens": 2047,
+      "sum_nll_original": 4568.3857421875,
+      "sum_nll_quantized": 4573.083984375,
+      "sum_kl": 127.53083801269531,
+      "top1_count": 1808,
+      "ear_sum": 1843.94775390625,
+      "ids_sha256": "b9dc8399980fa376d313a118d770acbf9374e105dc76c47db98347d947291925"
+    },
+    {
+      "index": 4,
+      "tokens": 2047,
+      "sum_nll_original": 2666.254638671875,
+      "sum_nll_quantized": 2701.197265625,
+      "sum_kl": 167.23300170898438,
+      "top1_count": 1872,
+      "ear_sum": 1880.630126953125,
+      "ids_sha256": "774d7e2e74860531a126fe7517f16ddc19e2781bac57bd3060d330a1bfb4bf5b"
+    },
+    {
+      "index": 5,
+      "tokens": 2047,
+      "sum_nll_original": 4970.029296875,
+      "sum_nll_quantized": 5010.326171875,
+      "sum_kl": 138.3936767578125,
+      "top1_count": 1800,
+      "ear_sum": 1831.658447265625,
+      "ids_sha256": "be78101023584cbbd8851e0f01582cfd0cb9ea9df6fdf8da79a8a69624081aeb"
+    },
+    {
+      "index": 6,
+      "tokens": 2047,
+      "sum_nll_original": 4720.0771484375,
+      "sum_nll_quantized": 4796.79443359375,
+      "sum_kl": 170.14210510253906,
+      "top1_count": 1805,
+      "ear_sum": 1818.312744140625,
+      "ids_sha256": "681a981deb9e8f0b4dd33e7410b06c61f95b8847099f77bfcb6b98febeaa7f11"
+    }
+  ],
+  "scope": "Teacher-forced full-vocabulary KL/NLL from HF dense exports; not native-kernel KL or inference speed",
+  "source": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+  "dataset": {
+    "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/eval-docs-heldout.txt",
+    "sha256": "32f1301e782a53d1ef96246fd40fca6b6591788be78fca984499a716412a346d",
+    "documents": 25,
+    "exact_overlap_checked_against": [
+      "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt"
+    ],
+    "semantic_deduplication": "not_measured"
+  },
+  "native_windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+  "domain": "docs",
+  "structural_validation": {
+    "mode": "full_structural",
+    "status": "ok",
+    "checked": 248,
+    "expected": 248,
+    "coverage": 1.0,
+    "physical_containers": 248,
+    "physical_tensors": 2722,
+    "dense_tensors": 490,
+    "tensor_data_bytes": 3530906368,
+    "shards": 2,
+    "report_checked": true,
+    "portable_manifest_checked": false,
+    "native_runtime": "not_run"
+  }
+}

@@ -1,0 +1,2754 @@
+{
+  "arms": {
+    "baseline": {
+      "cache_dir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/cache",
+      "checks": {
+        "checks": {
+          "calib_samples": true,
+          "candidates": true,
+          "compute_dtype": true,
+          "cptc": true,
+          "cptc_defaults": true,
+          "devices_cpu": true,
+          "effort": true,
+          "exclude_preserved": true,
+          "phases": true,
+          "qad_config_path": true,
+          "qad_final_lr_p_default": true,
+          "qad_layers": true,
+          "qad_layerwise_lr_p_default": true,
+          "qad_preset_values": true,
+          "refine_passes": true,
+          "rotation": true,
+          "rounding": true,
+          "sensitivity": true,
+          "seq_len": true,
+          "smooth": true,
+          "source": true,
+          "target_bpw": true
+        },
+        "plan_sha256": "2ea56e1ffaa7304f3bfd502a76fbc0a1c80a5344470f75ba40da887d477379e5"
+      },
+      "cptc": false,
+      "cpu_donor": {
+        "ld_library_path": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_libraries/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/host-math/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/rocm_sysdeps/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/torch/lib",
+        "python": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+        "python_args": [
+          "-S"
+        ],
+        "pythonpath": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages",
+        "site_packages": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages"
+      },
+      "cpu_plan": {
+        "calib_tokens_available": 1125438,
+        "calib_tokens_needed": 540672,
+        "calibrated": true,
+        "checkpoint": {
+          "architectures": [
+            "Qwen3_5ForConditionalGeneration"
+          ],
+          "compatibility": {
+            "metadata": "readable",
+            "model_execution": "not_measured",
+            "native_runtime": "not_measured"
+          },
+          "hidden_size": 2560,
+          "largest_hessian_bytes_fp32": 339738624,
+          "largest_tensor_bytes": 1271398400,
+          "layers": 32,
+          "model_type": "qwen3_5",
+          "parameters": 4659865088,
+          "path": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+          "quantization_config": null,
+          "schema_version": 1,
+          "shard_bytes": 9319828096,
+          "tensor_bytes": 9319737856,
+          "tensor_count": 738
+        },
+        "config": {
+          "cache_devices": 0,
+          "cache_dir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/cache",
+          "calib": [
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt"
+          ],
+          "calib_ids": null,
+          "calib_samples": 128,
+          "cfg": {
+            "act_order": false,
+            "candidates": [
+              [
+                2,
+                16
+              ],
+              [
+                2,
+                32
+              ],
+              [
+                2,
+                64
+              ],
+              [
+                4,
+                16
+              ],
+              [
+                4,
+                32
+              ],
+              [
+                4,
+                64
+              ]
+            ],
+            "cptc": false,
+            "cptc_depth": 16,
+            "cptc_sweeps": 0,
+            "cptc_table_rounds": 0,
+            "cptc_table_samples": 262144,
+            "damp": 0.01,
+            "effort": "normal",
+            "expert_min_tokens": 2.0,
+            "refine_passes": 0,
+            "rotation": "on",
+            "rounding": "gptq",
+            "sequential": false,
+            "smooth": 0.5,
+            "smooth_search": []
+          },
+          "compute_dtype": "float32",
+          "devices": [
+            "cpu"
+          ],
+          "dst": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/model",
+          "exclude": "(embed|lm_head|norm|\\.mlp\\.gate(\\.weight)?$|router|indexer|conv1d|\\.bias$)",
+          "expert_share_floor": 0.05,
+          "include": null,
+          "int8_force": 0,
+          "limit_layers": null,
+          "max_error_ratio": null,
+          "max_error_ratios": null,
+          "moe_layout": "stacked",
+          "qad": {
+            "batch": 4,
+            "budget": 1.0,
+            "buffer_dtype": "auto",
+            "data_parallel": true,
+            "dtype": "float32",
+            "eval_every": 0,
+            "evals": 4,
+            "final_batch": 2,
+            "final_bytes": true,
+            "final_evals": 4,
+            "final_kl": 200,
+            "final_lr_norm": 5e-05,
+            "final_lr_p": 0.02,
+            "final_norms": true,
+            "final_tokens": 0,
+            "init": "weights",
+            "keep_best": true,
+            "kl_layers": 0,
+            "kl_tokens": 256,
+            "kl_weight": 1.0,
+            "latent_units": "step",
+            "layers": null,
+            "lr_norm": 0.0001,
+            "lr_p": 0.05,
+            "lr_w": 0.01,
+            "min_gain": 0.0,
+            "min_steps": 0,
+            "samples": 256,
+            "sampling": "random",
+            "seed": 0,
+            "steps": 300,
+            "train_norms": false,
+            "val": 8,
+            "warmup": 0.05
+          },
+          "sens_batch": 1,
+          "sens_dtype": "auto",
+          "sens_floor": 0.05,
+          "sens_len": 512,
+          "sens_seqs": 8,
+          "sensitivity": "probe",
+          "seq_len": 2048,
+          "sigma_fp16_above": 0,
+          "src": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+          "target_bpw": 3.0,
+          "workdir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/work"
+        },
+        "devices": [
+          "cpu"
+        ],
+        "dst": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/model",
+        "layers": 32,
+        "max_error_ratio": null,
+        "moe_layout": "stacked",
+        "native_runtime": "not_measured",
+        "outputs": [
+          "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/model"
+        ],
+        "phase_repetitions": {
+          "final_kl": 1,
+          "qad": 1,
+          "validation": 1
+        },
+        "phases": [
+          "calibration",
+          "sensitivity",
+          "allocation",
+          "qad",
+          "final_kl",
+          "encode",
+          "validation"
+        ],
+        "qad": {
+          "batch": 4,
+          "budget": 1.0,
+          "buffer_dtype": "auto",
+          "data_parallel": true,
+          "dtype": "float32",
+          "eval_every": 0,
+          "evals": 4,
+          "final_batch": 2,
+          "final_bytes": true,
+          "final_evals": 4,
+          "final_kl": 200,
+          "final_lr_norm": 5e-05,
+          "final_lr_p": 0.02,
+          "final_norms": true,
+          "final_tokens": 0,
+          "init": "weights",
+          "keep_best": true,
+          "kl_layers": 0,
+          "kl_tokens": 256,
+          "kl_weight": 1.0,
+          "latent_units": "step",
+          "layers": null,
+          "lr_norm": 0.0001,
+          "lr_p": 0.05,
+          "lr_w": 0.01,
+          "min_gain": 0.0,
+          "min_steps": 0,
+          "samples": 256,
+          "sampling": "random",
+          "seed": 0,
+          "steps": 300,
+          "train_norms": false,
+          "val": 8,
+          "warmup": 0.05
+        },
+        "qad_hidden_state_ram_gib_fp32": 20.62,
+        "qad_trained_layers": 32,
+        "resource_estimates": {
+          "dense_export_bytes_fp16": 9319730176,
+          "full_model_stages": [
+            "sensitivity_probe",
+            "final_kl"
+          ],
+          "full_model_weights_bytes_fp32": 18639460352,
+          "host_physical_memory_bytes": 540660150272,
+          "largest_hessian_bytes_fp32": 339738624,
+          "largest_source_tensor_bytes": 1271398400,
+          "peak_vram_bytes": null,
+          "scope": "metadata-derived component sizes; not simultaneous peak estimates",
+          "source_tensor_bytes": 9319737856,
+          "storage": [
+            {
+              "free_bytes": 335350431744,
+              "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/work",
+              "purpose": "work"
+            },
+            {
+              "free_bytes": 335350431744,
+              "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/model",
+              "purpose": "output"
+            }
+          ],
+          "total_runtime_s": null,
+          "warning": "These are component sizes, not fit guarantees. Candidate tables, activations, optimizer state, cache copies and evaluation exports require additional space."
+        },
+        "resume": "per layer under <workdir>/qad (re-run the same command)",
+        "rounding": "gptq",
+        "schema_version": 1,
+        "sensitivity": "probe",
+        "src": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+        "target_bpw": 3.0,
+        "workdir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/work"
+      },
+      "cpu_plan_argv": [
+        "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+        "-S",
+        "-m",
+        "hi2",
+        "quantize",
+        "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/model",
+        "--workdir",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/work",
+        "--cache-dir",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-baseline/cache",
+        "--calib",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt",
+        "--calib-samples",
+        "128",
+        "--seq-len",
+        "2048",
+        "--target-bpw",
+        "3.0",
+        "--bits",
+        "2,4",
+        "--blocks",
+        "16,32,64",
+        "--rotation",
+        "on",
+        "--smooth",
+        "0.5",
+        "--rounding",
+        "gptq",
+        "--effort",
+        "normal",
+        "--compute-dtype",
+        "float32",
+        "--devices",
+        "cpu",
+        "--qad-preset",
+        "default",
+        "--qad-samples",
+        "256",
+        "--qad-batch",
+        "4",
+        "--qad-steps",
+        "300",
+        "--qad-budget",
+        "1.0",
+        "--qad-final-kl",
+        "200",
+        "--qad-config",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/qad-default.json",
+        "--refine-passes",
+        "0",
+        "--dry-run"
+      ],
+      "dst": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+      "env": {
+        "CUDA_VISIBLE_DEVICES": null,
+        "HI2_CALIB_MICROBATCH": "8",
+        "HIP_VISIBLE_DEVICES": "0,1",
+        "OMP_NUM_THREADS": "32",
+        "PYTHONPATH": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot",
+        "ROCR_VISIBLE_DEVICES": null
+      },
+      "gpu_argv": [
+        "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+        "-m",
+        "hi2",
+        "quantize",
+        "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+        "--workdir",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work",
+        "--cache-dir",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/cache",
+        "--calib",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt",
+        "--calib-samples",
+        "128",
+        "--seq-len",
+        "2048",
+        "--target-bpw",
+        "3.0",
+        "--bits",
+        "2,4",
+        "--blocks",
+        "16,32,64",
+        "--rotation",
+        "on",
+        "--smooth",
+        "0.5",
+        "--rounding",
+        "gptq",
+        "--effort",
+        "normal",
+        "--compute-dtype",
+        "float32",
+        "--devices",
+        "cuda:0,cuda:1",
+        "--qad-preset",
+        "default",
+        "--qad-samples",
+        "256",
+        "--qad-batch",
+        "4",
+        "--qad-steps",
+        "300",
+        "--qad-budget",
+        "1.0",
+        "--qad-final-kl",
+        "200",
+        "--qad-config",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/qad-default.json",
+        "--refine-passes",
+        "0"
+      ],
+      "workdir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work"
+    },
+    "cptc": {
+      "cache_dir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/cache",
+      "checks": {
+        "checks": {
+          "calib_samples": true,
+          "candidates": true,
+          "compute_dtype": true,
+          "cptc": true,
+          "cptc_defaults": true,
+          "devices_cpu": true,
+          "effort": true,
+          "exclude_preserved": true,
+          "phases": true,
+          "qad_config_path": true,
+          "qad_final_lr_p_default": true,
+          "qad_layers": true,
+          "qad_layerwise_lr_p_default": true,
+          "qad_preset_values": true,
+          "refine_passes": true,
+          "rotation": true,
+          "rounding": true,
+          "sensitivity": true,
+          "seq_len": true,
+          "smooth": true,
+          "source": true,
+          "target_bpw": true
+        },
+        "plan_sha256": "6e57219d128908120753c316b07dbfcc0fd20023aa141e14d6552c28934862e1"
+      },
+      "cptc": true,
+      "cpu_donor": {
+        "ld_library_path": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_libraries/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/host-math/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/rocm_sysdeps/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/torch/lib",
+        "python": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+        "python_args": [
+          "-S"
+        ],
+        "pythonpath": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages",
+        "site_packages": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages"
+      },
+      "cpu_plan": {
+        "calib_tokens_available": 1125438,
+        "calib_tokens_needed": 540672,
+        "calibrated": true,
+        "checkpoint": {
+          "architectures": [
+            "Qwen3_5ForConditionalGeneration"
+          ],
+          "compatibility": {
+            "metadata": "readable",
+            "model_execution": "not_measured",
+            "native_runtime": "not_measured"
+          },
+          "hidden_size": 2560,
+          "largest_hessian_bytes_fp32": 339738624,
+          "largest_tensor_bytes": 1271398400,
+          "layers": 32,
+          "model_type": "qwen3_5",
+          "parameters": 4659865088,
+          "path": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+          "quantization_config": null,
+          "schema_version": 1,
+          "shard_bytes": 9319828096,
+          "tensor_bytes": 9319737856,
+          "tensor_count": 738
+        },
+        "config": {
+          "cache_devices": 0,
+          "cache_dir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/cache",
+          "calib": [
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt"
+          ],
+          "calib_ids": null,
+          "calib_samples": 128,
+          "cfg": {
+            "act_order": false,
+            "candidates": [
+              [
+                2,
+                16
+              ],
+              [
+                2,
+                32
+              ],
+              [
+                2,
+                64
+              ],
+              [
+                4,
+                16
+              ],
+              [
+                4,
+                32
+              ],
+              [
+                4,
+                64
+              ]
+            ],
+            "cptc": true,
+            "cptc_depth": 16,
+            "cptc_sweeps": 0,
+            "cptc_table_rounds": 0,
+            "cptc_table_samples": 262144,
+            "damp": 0.01,
+            "effort": "normal",
+            "expert_min_tokens": 2.0,
+            "refine_passes": 0,
+            "rotation": "on",
+            "rounding": "gptq",
+            "sequential": false,
+            "smooth": 0.5,
+            "smooth_search": []
+          },
+          "compute_dtype": "float32",
+          "devices": [
+            "cpu"
+          ],
+          "dst": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/model",
+          "exclude": "(embed|lm_head|norm|\\.mlp\\.gate(\\.weight)?$|router|indexer|conv1d|\\.bias$)",
+          "expert_share_floor": 0.05,
+          "include": null,
+          "int8_force": 0,
+          "limit_layers": null,
+          "max_error_ratio": null,
+          "max_error_ratios": null,
+          "moe_layout": "stacked",
+          "qad": {
+            "batch": 4,
+            "budget": 1.0,
+            "buffer_dtype": "auto",
+            "data_parallel": true,
+            "dtype": "float32",
+            "eval_every": 0,
+            "evals": 4,
+            "final_batch": 2,
+            "final_bytes": true,
+            "final_evals": 4,
+            "final_kl": 200,
+            "final_lr_norm": 5e-05,
+            "final_lr_p": 0.02,
+            "final_norms": true,
+            "final_tokens": 0,
+            "init": "weights",
+            "keep_best": true,
+            "kl_layers": 0,
+            "kl_tokens": 256,
+            "kl_weight": 1.0,
+            "latent_units": "step",
+            "layers": null,
+            "lr_norm": 0.0001,
+            "lr_p": 0.05,
+            "lr_w": 0.01,
+            "min_gain": 0.0,
+            "min_steps": 0,
+            "samples": 256,
+            "sampling": "random",
+            "seed": 0,
+            "steps": 300,
+            "train_norms": false,
+            "val": 8,
+            "warmup": 0.05
+          },
+          "sens_batch": 1,
+          "sens_dtype": "auto",
+          "sens_floor": 0.05,
+          "sens_len": 512,
+          "sens_seqs": 8,
+          "sensitivity": "probe",
+          "seq_len": 2048,
+          "sigma_fp16_above": 0,
+          "src": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+          "target_bpw": 3.0,
+          "workdir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/work"
+        },
+        "devices": [
+          "cpu"
+        ],
+        "dst": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/model",
+        "layers": 32,
+        "max_error_ratio": null,
+        "moe_layout": "stacked",
+        "native_runtime": "not_measured",
+        "outputs": [
+          "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/model"
+        ],
+        "phase_repetitions": {
+          "final_kl": 1,
+          "qad": 1,
+          "validation": 1
+        },
+        "phases": [
+          "calibration",
+          "sensitivity",
+          "allocation",
+          "qad",
+          "final_kl",
+          "encode",
+          "validation"
+        ],
+        "qad": {
+          "batch": 4,
+          "budget": 1.0,
+          "buffer_dtype": "auto",
+          "data_parallel": true,
+          "dtype": "float32",
+          "eval_every": 0,
+          "evals": 4,
+          "final_batch": 2,
+          "final_bytes": true,
+          "final_evals": 4,
+          "final_kl": 200,
+          "final_lr_norm": 5e-05,
+          "final_lr_p": 0.02,
+          "final_norms": true,
+          "final_tokens": 0,
+          "init": "weights",
+          "keep_best": true,
+          "kl_layers": 0,
+          "kl_tokens": 256,
+          "kl_weight": 1.0,
+          "latent_units": "step",
+          "layers": null,
+          "lr_norm": 0.0001,
+          "lr_p": 0.05,
+          "lr_w": 0.01,
+          "min_gain": 0.0,
+          "min_steps": 0,
+          "samples": 256,
+          "sampling": "random",
+          "seed": 0,
+          "steps": 300,
+          "train_norms": false,
+          "val": 8,
+          "warmup": 0.05
+        },
+        "qad_hidden_state_ram_gib_fp32": 20.62,
+        "qad_trained_layers": 32,
+        "resource_estimates": {
+          "dense_export_bytes_fp16": 9319730176,
+          "full_model_stages": [
+            "sensitivity_probe",
+            "final_kl"
+          ],
+          "full_model_weights_bytes_fp32": 18639460352,
+          "host_physical_memory_bytes": 540660150272,
+          "largest_hessian_bytes_fp32": 339738624,
+          "largest_source_tensor_bytes": 1271398400,
+          "peak_vram_bytes": null,
+          "scope": "metadata-derived component sizes; not simultaneous peak estimates",
+          "source_tensor_bytes": 9319737856,
+          "storage": [
+            {
+              "free_bytes": 335350398976,
+              "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/work",
+              "purpose": "work"
+            },
+            {
+              "free_bytes": 335350398976,
+              "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/model",
+              "purpose": "output"
+            }
+          ],
+          "total_runtime_s": null,
+          "warning": "These are component sizes, not fit guarantees. Candidate tables, activations, optimizer state, cache copies and evaluation exports require additional space."
+        },
+        "resume": "per layer under <workdir>/qad (re-run the same command)",
+        "rounding": "gptq",
+        "schema_version": 1,
+        "sensitivity": "probe",
+        "src": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+        "target_bpw": 3.0,
+        "workdir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/work"
+      },
+      "cpu_plan_argv": [
+        "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+        "-S",
+        "-m",
+        "hi2",
+        "quantize",
+        "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/model",
+        "--workdir",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/work",
+        "--cache-dir",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/plan-cptc/cache",
+        "--calib",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt",
+        "--calib-samples",
+        "128",
+        "--seq-len",
+        "2048",
+        "--target-bpw",
+        "3.0",
+        "--bits",
+        "2,4",
+        "--blocks",
+        "16,32,64",
+        "--rotation",
+        "on",
+        "--smooth",
+        "0.5",
+        "--rounding",
+        "gptq",
+        "--effort",
+        "normal",
+        "--compute-dtype",
+        "float32",
+        "--devices",
+        "cpu",
+        "--qad-preset",
+        "default",
+        "--qad-samples",
+        "256",
+        "--qad-batch",
+        "4",
+        "--qad-steps",
+        "300",
+        "--qad-budget",
+        "1.0",
+        "--qad-final-kl",
+        "200",
+        "--qad-config",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/qad-default.json",
+        "--refine-passes",
+        "0",
+        "--cptc",
+        "--dry-run"
+      ],
+      "dst": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+      "env": {
+        "CUDA_VISIBLE_DEVICES": null,
+        "HI2_CALIB_MICROBATCH": "8",
+        "HIP_VISIBLE_DEVICES": "0,1",
+        "OMP_NUM_THREADS": "32",
+        "PYTHONPATH": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot",
+        "ROCR_VISIBLE_DEVICES": null
+      },
+      "gpu_argv": [
+        "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+        "-m",
+        "hi2",
+        "quantize",
+        "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+        "--workdir",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work",
+        "--cache-dir",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/cache",
+        "--calib",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt",
+        "--calib-samples",
+        "128",
+        "--seq-len",
+        "2048",
+        "--target-bpw",
+        "3.0",
+        "--bits",
+        "2,4",
+        "--blocks",
+        "16,32,64",
+        "--rotation",
+        "on",
+        "--smooth",
+        "0.5",
+        "--rounding",
+        "gptq",
+        "--effort",
+        "normal",
+        "--compute-dtype",
+        "float32",
+        "--devices",
+        "cuda:0,cuda:1",
+        "--qad-preset",
+        "default",
+        "--qad-samples",
+        "256",
+        "--qad-batch",
+        "4",
+        "--qad-steps",
+        "300",
+        "--qad-budget",
+        "1.0",
+        "--qad-final-kl",
+        "200",
+        "--qad-config",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/qad-default.json",
+        "--refine-passes",
+        "0",
+        "--cptc"
+      ],
+      "workdir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work"
+    }
+  },
+  "arms_order": [
+    "baseline",
+    "cptc"
+  ],
+  "attested_commit": "995fc26317bd74d5d77653f42c4639086ac0d441",
+  "attested_commit_source": "parent --commit on .git-free archive",
+  "calibration": {
+    "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt",
+    "sha256": "4f52263a8d3cbd5e1e376e43a918c3dfca814a0f5bb0187f410cf8623d000079"
+  },
+  "cooling": {
+    "channels": {
+      "8": "0000:d4:00.0",
+      "9": "0000:d1:00.0"
+    },
+    "config": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/cooling/fan-config-cptc.json",
+    "config_sha256": "3245bdf592f68822b9766df98b4ebf3404f84304a7203113b8479c5e52fe2950",
+    "other_channels_unchanged": true,
+    "pwm": 100,
+    "restore_required": true,
+    "service_dropin": "/etc/systemd/system/openfan-gpu-fan-control.service.d/90-cptc-20261119.conf",
+    "thermal_limits_unchanged": true,
+    "verified_rpm": {
+      "8": 4016,
+      "9": 4053
+    }
+  },
+  "cpu_donor": {
+    "ld_library_path": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_libraries/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/host-math/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/rocm_sysdeps/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/torch/lib",
+    "python": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+    "python_args": [
+      "-S"
+    ],
+    "pythonpath": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages",
+    "site_packages": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages"
+  },
+  "created_utc": "2026-11-19T07:09:19Z",
+  "execution": {
+    "arms": {
+      "baseline": {
+        "artifact": {
+          "files": 7,
+          "files_list": [
+            {
+              "bytes": 217,
+              "path": ".hi2-owner.json",
+              "sha256": "0057de27152b1c3c16dd856d8fbaef928570318b3ddb2dd427f87eeeb8a1c8e0"
+            },
+            {
+              "bytes": 3617,
+              "path": "config.json",
+              "sha256": "0ed12e6a7b1bb4eee9fa471b46a9b744256d9dd69ccacc6aad0d118f0970f385"
+            },
+            {
+              "bytes": 105176,
+              "path": "hi2_report.json",
+              "sha256": "e54da337d5e737a62db9e55b3e078d2378fc56167ee6e58718638dcd2adc935e"
+            },
+            {
+              "bytes": 89234,
+              "path": "hi2_run.json",
+              "sha256": "0051136351d8e0f74fc4a4d62c15e47ec21050402f4cafe881849baebc9d95f4"
+            },
+            {
+              "bytes": 2143701416,
+              "path": "model.safetensors-00001-of-00002.safetensors",
+              "sha256": "c218a1aabd67a5426da68646957bc01d65a41608ce19cab72fa5bf1d87d8d248"
+            },
+            {
+              "bytes": 1387558728,
+              "path": "model.safetensors-00002-of-00002.safetensors",
+              "sha256": "e0b2c24d896ca35f0602de7792bd0d11ce1765037fcf2adeb105434c038efed6"
+            },
+            {
+              "bytes": 309380,
+              "path": "model.safetensors.index.json",
+              "sha256": "ebcfd74997dccc430419a4ecc98cc66249537a0826f2393902b7e70dd8ab53c3"
+            }
+          ],
+          "files_sha256": "018bd5f1858361361d568945ae93f47a8267ed086eaf8e4d2a4566cff1c2517d",
+          "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model"
+        },
+        "kfd": {
+          "child_peak_rss_kib": 120278584,
+          "context_observed": true,
+          "errors": [],
+          "eviction_deltas_ms": [
+            7479
+          ]
+        },
+        "kfd_invalid": true,
+        "kfd_summary": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/gate/kfd-baseline.jsonl.summary.json",
+        "peak_memory": {
+          "child_peak_rss_kib": 120278584,
+          "source": "live KFD wrapper / resource.getrusage(RUSAGE_CHILDREN)"
+        },
+        "phase_reports": [
+          {
+            "bytes": 424,
+            "name": "cache_ref.json",
+            "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work/cache_ref.json",
+            "sha256": "6cdba3dbd0dead212bbcf135a7101db4d371062a0717fb873d737d09f4d89eb1",
+            "summary": {
+              "keys": [
+                "probe",
+                "stats",
+                "tables"
+              ]
+            }
+          },
+          {
+            "bytes": 590,
+            "name": "final_kl.json",
+            "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work/final_kl.json",
+            "sha256": "ba204f7ddc90c360262634327a7eaf228d3677249ba42c34e99c70fd622fd7ee",
+            "summary": {
+              "keys": [
+                "gpu_peak_gib",
+                "kept",
+                "seconds",
+                "steps",
+                "teacher_seconds",
+                "trace",
+                "val_after",
+                "val_before"
+              ]
+            }
+          },
+          {
+            "bytes": 12088,
+            "name": "qad_report.json",
+            "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work/qad_report.json",
+            "sha256": "91c1b31192a594dc64b804010a702c25797ff87c9e469a9e6a928da4e2f03db9",
+            "summary": {
+              "keys": []
+            }
+          },
+          {
+            "bytes": 89234,
+            "name": "run.json",
+            "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work/run.json",
+            "sha256": "0051136351d8e0f74fc4a4d62c15e47ec21050402f4cafe881849baebc9d95f4",
+            "summary": {
+              "keys": [
+                "attempt_id",
+                "calibration",
+                "config",
+                "environment",
+                "outputs",
+                "phase_event_count",
+                "phases",
+                "result",
+                "run_id",
+                "schema_version",
+                "source",
+                "started_at",
+                "state",
+                "updated_at"
+              ]
+            }
+          },
+          {
+            "bytes": 19601,
+            "name": "sensitivity.json",
+            "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work/sensitivity.json",
+            "sha256": "f9ddf468f5b700638095ad2defb2a60b32ed65f1d8db807f7cd30b0b24df9b46",
+            "summary": {
+              "keys": [
+                "model.language_model.layers.0.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.0.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.0.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.0.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.0.linear_attn.out_proj.weight",
+                "model.language_model.layers.0.mlp.down_proj.weight",
+                "model.language_model.layers.0.mlp.gate_proj.weight",
+                "model.language_model.layers.0.mlp.up_proj.weight",
+                "model.language_model.layers.1.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.1.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.1.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.1.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.1.linear_attn.out_proj.weight",
+                "model.language_model.layers.1.mlp.down_proj.weight",
+                "model.language_model.layers.1.mlp.gate_proj.weight",
+                "model.language_model.layers.1.mlp.up_proj.weight",
+                "model.language_model.layers.10.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.10.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.10.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.10.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.10.linear_attn.out_proj.weight",
+                "model.language_model.layers.10.mlp.down_proj.weight",
+                "model.language_model.layers.10.mlp.gate_proj.weight",
+                "model.language_model.layers.10.mlp.up_proj.weight",
+                "model.language_model.layers.11.mlp.down_proj.weight",
+                "model.language_model.layers.11.mlp.gate_proj.weight",
+                "model.language_model.layers.11.mlp.up_proj.weight",
+                "model.language_model.layers.11.self_attn.k_proj.weight",
+                "model.language_model.layers.11.self_attn.o_proj.weight",
+                "model.language_model.layers.11.self_attn.q_proj.weight",
+                "model.language_model.layers.11.self_attn.v_proj.weight",
+                "model.language_model.layers.12.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.12.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.12.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.12.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.12.linear_attn.out_proj.weight",
+                "model.language_model.layers.12.mlp.down_proj.weight",
+                "model.language_model.layers.12.mlp.gate_proj.weight",
+                "model.language_model.layers.12.mlp.up_proj.weight",
+                "model.language_model.layers.13.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.13.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.13.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.13.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.13.linear_attn.out_proj.weight",
+                "model.language_model.layers.13.mlp.down_proj.weight",
+                "model.language_model.layers.13.mlp.gate_proj.weight",
+                "model.language_model.layers.13.mlp.up_proj.weight",
+                "model.language_model.layers.14.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.14.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.14.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.14.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.14.linear_attn.out_proj.weight",
+                "model.language_model.layers.14.mlp.down_proj.weight",
+                "model.language_model.layers.14.mlp.gate_proj.weight",
+                "model.language_model.layers.14.mlp.up_proj.weight",
+                "model.language_model.layers.15.mlp.down_proj.weight",
+                "model.language_model.layers.15.mlp.gate_proj.weight",
+                "model.language_model.layers.15.mlp.up_proj.weight",
+                "model.language_model.layers.15.self_attn.k_proj.weight",
+                "model.language_model.layers.15.self_attn.o_proj.weight",
+                "model.language_model.layers.15.self_attn.q_proj.weight",
+                "model.language_model.layers.15.self_attn.v_proj.weight",
+                "model.language_model.layers.16.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.16.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.16.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.16.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.16.linear_attn.out_proj.weight",
+                "model.language_model.layers.16.mlp.down_proj.weight",
+                "model.language_model.layers.16.mlp.gate_proj.weight",
+                "model.language_model.layers.16.mlp.up_proj.weight",
+                "model.language_model.layers.17.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.17.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.17.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.17.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.17.linear_attn.out_proj.weight",
+                "model.language_model.layers.17.mlp.down_proj.weight",
+                "model.language_model.layers.17.mlp.gate_proj.weight",
+                "model.language_model.layers.17.mlp.up_proj.weight",
+                "model.language_model.layers.18.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.18.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.18.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.18.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.18.linear_attn.out_proj.weight",
+                "model.language_model.layers.18.mlp.down_proj.weight",
+                "model.language_model.layers.18.mlp.gate_proj.weight",
+                "model.language_model.layers.18.mlp.up_proj.weight",
+                "model.language_model.layers.19.mlp.down_proj.weight",
+                "model.language_model.layers.19.mlp.gate_proj.weight",
+                "model.language_model.layers.19.mlp.up_proj.weight",
+                "model.language_model.layers.19.self_attn.k_proj.weight",
+                "model.language_model.layers.19.self_attn.o_proj.weight",
+                "model.language_model.layers.19.self_attn.q_proj.weight",
+                "model.language_model.layers.19.self_attn.v_proj.weight",
+                "model.language_model.layers.2.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.2.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.2.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.2.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.2.linear_attn.out_proj.weight",
+                "model.language_model.layers.2.mlp.down_proj.weight",
+                "model.language_model.layers.2.mlp.gate_proj.weight",
+                "model.language_model.layers.2.mlp.up_proj.weight",
+                "model.language_model.layers.20.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.20.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.20.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.20.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.20.linear_attn.out_proj.weight",
+                "model.language_model.layers.20.mlp.down_proj.weight",
+                "model.language_model.layers.20.mlp.gate_proj.weight",
+                "model.language_model.layers.20.mlp.up_proj.weight",
+                "model.language_model.layers.21.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.21.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.21.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.21.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.21.linear_attn.out_proj.weight",
+                "model.language_model.layers.21.mlp.down_proj.weight",
+                "model.language_model.layers.21.mlp.gate_proj.weight",
+                "model.language_model.layers.21.mlp.up_proj.weight",
+                "model.language_model.layers.22.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.22.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.22.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.22.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.22.linear_attn.out_proj.weight",
+                "model.language_model.layers.22.mlp.down_proj.weight",
+                "model.language_model.layers.22.mlp.gate_proj.weight",
+                "model.language_model.layers.22.mlp.up_proj.weight",
+                "model.language_model.layers.23.mlp.down_proj.weight",
+                "model.language_model.layers.23.mlp.gate_proj.weight",
+                "model.language_model.layers.23.mlp.up_proj.weight",
+                "model.language_model.layers.23.self_attn.k_proj.weight",
+                "model.language_model.layers.23.self_attn.o_proj.weight",
+                "model.language_model.layers.23.self_attn.q_proj.weight",
+                "model.language_model.layers.23.self_attn.v_proj.weight",
+                "model.language_model.layers.24.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.24.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.24.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.24.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.24.linear_attn.out_proj.weight",
+                "model.language_model.layers.24.mlp.down_proj.weight",
+                "model.language_model.layers.24.mlp.gate_proj.weight",
+                "model.language_model.layers.24.mlp.up_proj.weight",
+                "model.language_model.layers.25.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.25.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.25.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.25.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.25.linear_attn.out_proj.weight",
+                "model.language_model.layers.25.mlp.down_proj.weight",
+                "model.language_model.layers.25.mlp.gate_proj.weight",
+                "model.language_model.layers.25.mlp.up_proj.weight",
+                "model.language_model.layers.26.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.26.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.26.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.26.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.26.linear_attn.out_proj.weight",
+                "model.language_model.layers.26.mlp.down_proj.weight",
+                "model.language_model.layers.26.mlp.gate_proj.weight",
+                "model.language_model.layers.26.mlp.up_proj.weight",
+                "model.language_model.layers.27.mlp.down_proj.weight",
+                "model.language_model.layers.27.mlp.gate_proj.weight",
+                "model.language_model.layers.27.mlp.up_proj.weight",
+                "model.language_model.layers.27.self_attn.k_proj.weight",
+                "model.language_model.layers.27.self_attn.o_proj.weight",
+                "model.language_model.layers.27.self_attn.q_proj.weight",
+                "model.language_model.layers.27.self_attn.v_proj.weight",
+                "model.language_model.layers.28.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.28.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.28.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.28.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.28.linear_attn.out_proj.weight",
+                "model.language_model.layers.28.mlp.down_proj.weight",
+                "model.language_model.layers.28.mlp.gate_proj.weight",
+                "model.language_model.layers.28.mlp.up_proj.weight",
+                "model.language_model.layers.29.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.29.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.29.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.29.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.29.linear_attn.out_proj.weight",
+                "model.language_model.layers.29.mlp.down_proj.weight",
+                "model.language_model.layers.29.mlp.gate_proj.weight",
+                "model.language_model.layers.29.mlp.up_proj.weight",
+                "model.language_model.layers.3.mlp.down_proj.weight",
+                "model.language_model.layers.3.mlp.gate_proj.weight",
+                "model.language_model.layers.3.mlp.up_proj.weight",
+                "model.language_model.layers.3.self_attn.k_proj.weight",
+                "model.language_model.layers.3.self_attn.o_proj.weight",
+                "model.language_model.layers.3.self_attn.q_proj.weight",
+                "model.language_model.layers.3.self_attn.v_proj.weight",
+                "model.language_model.layers.30.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.30.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.30.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.30.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.30.linear_attn.out_proj.weight",
+                "model.language_model.layers.30.mlp.down_proj.weight",
+                "model.language_model.layers.30.mlp.gate_proj.weight",
+                "model.language_model.layers.30.mlp.up_proj.weight",
+                "model.language_model.layers.31.mlp.down_proj.weight",
+                "model.language_model.layers.31.mlp.gate_proj.weight",
+                "model.language_model.layers.31.mlp.up_proj.weight",
+                "model.language_model.layers.31.self_attn.k_proj.weight",
+                "model.language_model.layers.31.self_attn.o_proj.weight",
+                "model.language_model.layers.31.self_attn.q_proj.weight",
+                "model.language_model.layers.31.self_attn.v_proj.weight",
+                "model.language_model.layers.4.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.4.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.4.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.4.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.4.linear_attn.out_proj.weight",
+                "model.language_model.layers.4.mlp.down_proj.weight",
+                "model.language_model.layers.4.mlp.gate_proj.weight",
+                "model.language_model.layers.4.mlp.up_proj.weight",
+                "model.language_model.layers.5.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.5.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.5.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.5.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.5.linear_attn.out_proj.weight",
+                "model.language_model.layers.5.mlp.down_proj.weight",
+                "model.language_model.layers.5.mlp.gate_proj.weight",
+                "model.language_model.layers.5.mlp.up_proj.weight",
+                "model.language_model.layers.6.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.6.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.6.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.6.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.6.linear_attn.out_proj.weight",
+                "model.language_model.layers.6.mlp.down_proj.weight",
+                "model.language_model.layers.6.mlp.gate_proj.weight",
+                "model.language_model.layers.6.mlp.up_proj.weight",
+                "model.language_model.layers.7.mlp.down_proj.weight",
+                "model.language_model.layers.7.mlp.gate_proj.weight",
+                "model.language_model.layers.7.mlp.up_proj.weight",
+                "model.language_model.layers.7.self_attn.k_proj.weight",
+                "model.language_model.layers.7.self_attn.o_proj.weight",
+                "model.language_model.layers.7.self_attn.q_proj.weight",
+                "model.language_model.layers.7.self_attn.v_proj.weight",
+                "model.language_model.layers.8.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.8.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.8.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.8.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.8.linear_attn.out_proj.weight",
+                "model.language_model.layers.8.mlp.down_proj.weight",
+                "model.language_model.layers.8.mlp.gate_proj.weight",
+                "model.language_model.layers.8.mlp.up_proj.weight",
+                "model.language_model.layers.9.linear_attn.in_proj_a.weight",
+                "model.language_model.layers.9.linear_attn.in_proj_b.weight",
+                "model.language_model.layers.9.linear_attn.in_proj_qkv.weight",
+                "model.language_model.layers.9.linear_attn.in_proj_z.weight",
+                "model.language_model.layers.9.linear_attn.out_proj.weight",
+                "model.language_model.layers.9.mlp.down_proj.weight",
+                "model.language_model.layers.9.mlp.gate_proj.weight",
+                "model.language_model.layers.9.mlp.up_proj.weight"
+              ]
+            }
+          },
+          {
+            "bytes": 966,
+            "name": "sensitivity.key.json",
+            "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work/sensitivity.key.json",
+            "sha256": "f60ee7c736b5e96ce5fdcddb5288aa156592d3a4b4a5ff7c1518e3d1ca80e454",
+            "summary": {
+              "keys": [
+                "dtype",
+                "floor",
+                "len",
+                "phase1",
+                "seqs",
+                "share_floor"
+              ]
+            }
+          }
+        ],
+        "run": {
+          "cancel_reason": null,
+          "child_started": true,
+          "command": [
+            "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/cptc_full4b_child.py",
+            "--kfd-out",
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/gate/kfd-baseline.jsonl",
+            "--expected-power-cap-uw",
+            "175000000",
+            "--",
+            "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+            "-m",
+            "hi2",
+            "quantize",
+            "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+            "--workdir",
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work",
+            "--cache-dir",
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/cache",
+            "--calib",
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt",
+            "--calib-samples",
+            "128",
+            "--seq-len",
+            "2048",
+            "--target-bpw",
+            "3.0",
+            "--bits",
+            "2,4",
+            "--blocks",
+            "16,32,64",
+            "--rotation",
+            "on",
+            "--smooth",
+            "0.5",
+            "--rounding",
+            "gptq",
+            "--effort",
+            "normal",
+            "--compute-dtype",
+            "float32",
+            "--devices",
+            "cuda:0,cuda:1",
+            "--qad-preset",
+            "default",
+            "--qad-samples",
+            "256",
+            "--qad-batch",
+            "4",
+            "--qad-steps",
+            "300",
+            "--qad-budget",
+            "1.0",
+            "--qad-final-kl",
+            "200",
+            "--qad-config",
+            "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/qad-default.json",
+            "--refine-passes",
+            "0"
+          ],
+          "counts": null,
+          "cwd": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot",
+          "dmesg_after_count": 3782,
+          "dmesg_after_log": "/home/chenco_adm/w4a8_runs/triton-pr12747/full-amd/artifacts/20261119T082346Z-01-full4b-baseline-dmesg-after.log",
+          "dmesg_after_tail": "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered disabled state",
+          "dmesg_artifact_error": null,
+          "dmesg_before_count": 3743,
+          "dmesg_error": null,
+          "dmesg_fault_lines": [],
+          "duration_s": 10634.33,
+          "env": {
+            "CUDA_VISIBLE_DEVICES": null,
+            "HIP_PATH": "/opt/rocm/core-7.14",
+            "HIP_VISIBLE_DEVICES": "0,1",
+            "LD_LIBRARY_PATH": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_libraries/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/host-math/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/rocm_sysdeps/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/torch/lib",
+            "PYTEST_ADDOPTS": "",
+            "PYTHONPATH": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot",
+            "ROCM_PATH": "/opt/rocm/core-7.14",
+            "ROCR_VISIBLE_DEVICES": null,
+            "TRITON_DISABLE_LINE_INFO": "1",
+            "TRITON_LIBHIP_PATH": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/gate/sdk-lib/libamdhip64.so"
+          },
+          "exit_code": 0,
+          "fault_monitor": {
+            "already_exited_before_kill": null,
+            "enabled": true,
+            "error": null,
+            "first_marker": null,
+            "kill_grace_s": 1.0,
+            "poll_detection_bound_s": 0.1,
+            "poll_interval_s": 0.1,
+            "stop_after_detection_s": null,
+            "stopped": true,
+            "triggered": false
+          },
+          "finished_at_utc": "2026-11-19T11:21:00.733764+00:00",
+          "first_event": null,
+          "id": "full4b-baseline",
+          "junit": null,
+          "kernel_monitor": {
+            "after_count": 3782,
+            "after_tail": "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered disabled state",
+            "before_count": 3743,
+            "detected_at_utc": null,
+            "enabled": true,
+            "error": null,
+            "faults": [],
+            "new_line_tail": [
+              "[Thu Nov 19 09:26:56 2026] docker0: port 4(vethe0dad61) entered blocking state",
+              "[Thu Nov 19 09:26:56 2026] docker0: port 4(vethe0dad61) entered disabled state",
+              "[Thu Nov 19 09:26:56 2026] vethe0dad61: entered allmulticast mode",
+              "[Thu Nov 19 09:26:56 2026] vethe0dad61: entered promiscuous mode",
+              "[Thu Nov 19 09:26:56 2026] eth0: renamed from vethfae77a6",
+              "[Thu Nov 19 09:26:56 2026] docker0: port 4(vethe0dad61) entered blocking state",
+              "[Thu Nov 19 09:26:56 2026] docker0: port 4(vethe0dad61) entered forwarding state",
+              "[Thu Nov 19 09:26:56 2026] docker0: port 4(vethe0dad61) entered disabled state",
+              "[Thu Nov 19 09:26:56 2026] vethfae77a6: renamed from eth0",
+              "[Thu Nov 19 09:26:56 2026] docker0: port 4(vethe0dad61) entered disabled state",
+              "[Thu Nov 19 09:26:56 2026] vethe0dad61 (unregistering): left allmulticast mode",
+              "[Thu Nov 19 09:26:56 2026] vethe0dad61 (unregistering): left promiscuous mode",
+              "[Thu Nov 19 09:26:56 2026] docker0: port 4(vethe0dad61) entered disabled state",
+              "[Thu Nov 19 10:26:56 2026] docker0: port 4(vethe713cd0) entered blocking state",
+              "[Thu Nov 19 10:26:56 2026] docker0: port 4(vethe713cd0) entered disabled state",
+              "[Thu Nov 19 10:26:56 2026] vethe713cd0: entered allmulticast mode",
+              "[Thu Nov 19 10:26:56 2026] vethe713cd0: entered promiscuous mode",
+              "[Thu Nov 19 10:26:56 2026] eth0: renamed from vethb61b68e",
+              "[Thu Nov 19 10:26:56 2026] docker0: port 4(vethe713cd0) entered blocking state",
+              "[Thu Nov 19 10:26:56 2026] docker0: port 4(vethe713cd0) entered forwarding state",
+              "[Thu Nov 19 10:26:57 2026] docker0: port 4(vethe713cd0) entered disabled state",
+              "[Thu Nov 19 10:26:57 2026] vethb61b68e: renamed from eth0",
+              "[Thu Nov 19 10:26:57 2026] docker0: port 4(vethe713cd0) entered disabled state",
+              "[Thu Nov 19 10:26:57 2026] vethe713cd0 (unregistering): left allmulticast mode",
+              "[Thu Nov 19 10:26:57 2026] vethe713cd0 (unregistering): left promiscuous mode",
+              "[Thu Nov 19 10:26:57 2026] docker0: port 4(vethe713cd0) entered disabled state",
+              "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered blocking state",
+              "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered disabled state",
+              "[Thu Nov 19 11:26:57 2026] veth4fac26a: entered allmulticast mode",
+              "[Thu Nov 19 11:26:57 2026] veth4fac26a: entered promiscuous mode",
+              "[Thu Nov 19 11:26:57 2026] eth0: renamed from veth60f96ad",
+              "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered blocking state",
+              "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered forwarding state",
+              "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered disabled state",
+              "[Thu Nov 19 11:26:57 2026] veth60f96ad: renamed from eth0",
+              "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered disabled state",
+              "[Thu Nov 19 11:26:57 2026] veth4fac26a (unregistering): left allmulticast mode",
+              "[Thu Nov 19 11:26:57 2026] veth4fac26a (unregistering): left promiscuous mode",
+              "[Thu Nov 19 11:26:57 2026] docker0: port 4(veth4fac26a) entered disabled state"
+            ],
+            "new_lines": 39,
+            "poll_interval_s": 0.2,
+            "polls": 42890
+          },
+          "kernel_monitor_stopped": true,
+          "log": "/home/chenco_adm/w4a8_runs/triton-pr12747/full-amd/logs/20261119T082346Z-01-full4b-baseline.log",
+          "log_fault_markers": [],
+          "native_crash": false,
+          "owned_child_file": null,
+          "pgid": 2272654,
+          "sequence": 1,
+          "signal": null,
+          "started_at_utc": "2026-11-19T08:23:46.393021+00:00",
+          "status": "pass",
+          "thermal_guard_exit": 0,
+          "thermal_guard_pid": 2272658,
+          "thermal_guard_sigkilled": false,
+          "thermal_guard_stopped_by_supervisor": false,
+          "thermal_log": "/home/chenco_adm/w4a8_runs/triton-pr12747/full-amd/logs/20261119T082346Z-01-full4b-baseline.thermal.jsonl",
+          "timed_out": false
+        }
+      }
+    },
+    "power_admission": {
+      "baseline": {
+        "0000:d1:00.0": 175000000,
+        "0000:d4:00.0": 175000000
+      }
+    },
+    "preflight": {
+      "cancel_reason": null,
+      "child_started": true,
+      "command": [
+        "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+        "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/gate/preflight_gpu01.py"
+      ],
+      "counts": null,
+      "cwd": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot",
+      "dmesg_after_count": 3743,
+      "dmesg_after_log": "/home/chenco_adm/w4a8_runs/triton-pr12747/full-amd/artifacts/20261119T082340Z-01-full4b-preflight-dmesg-after.log",
+      "dmesg_after_tail": "[Thu Nov 19 08:26:56 2026] docker0: port 4(veth83c20e8) entered disabled state",
+      "dmesg_artifact_error": null,
+      "dmesg_before_count": 3743,
+      "dmesg_error": null,
+      "dmesg_fault_lines": [],
+      "duration_s": 3.28,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": null,
+        "HIP_PATH": "/opt/rocm/core-7.14",
+        "HIP_VISIBLE_DEVICES": "0,1",
+        "LD_LIBRARY_PATH": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_libraries/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/host-math/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib/rocm_sysdeps/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/_rocm_sdk_core/lib:/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/lib/python3.12/site-packages/torch/lib",
+        "PYTEST_ADDOPTS": "",
+        "PYTHONPATH": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot",
+        "ROCM_PATH": "/opt/rocm/core-7.14",
+        "ROCR_VISIBLE_DEVICES": null,
+        "TRITON_DISABLE_LINE_INFO": "1",
+        "TRITON_LIBHIP_PATH": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/gate/sdk-lib/libamdhip64.so"
+      },
+      "exit_code": 0,
+      "fault_monitor": {
+        "already_exited_before_kill": null,
+        "enabled": true,
+        "error": null,
+        "first_marker": null,
+        "kill_grace_s": 1.0,
+        "poll_detection_bound_s": 0.1,
+        "poll_interval_s": 0.1,
+        "stop_after_detection_s": null,
+        "stopped": true,
+        "triggered": false
+      },
+      "finished_at_utc": "2026-11-19T08:23:43.988729+00:00",
+      "first_event": null,
+      "id": "full4b-preflight",
+      "junit": null,
+      "kernel_monitor": {
+        "after_count": 3743,
+        "after_tail": "[Thu Nov 19 08:26:56 2026] docker0: port 4(veth83c20e8) entered disabled state",
+        "before_count": 3743,
+        "detected_at_utc": null,
+        "enabled": true,
+        "error": null,
+        "faults": [],
+        "new_line_tail": [],
+        "new_lines": 0,
+        "poll_interval_s": 0.2,
+        "polls": 12
+      },
+      "kernel_monitor_stopped": true,
+      "log": "/home/chenco_adm/w4a8_runs/triton-pr12747/full-amd/logs/20261119T082340Z-01-full4b-preflight.log",
+      "log_fault_markers": [],
+      "native_crash": false,
+      "owned_child_file": null,
+      "pgid": 2272373,
+      "sequence": 1,
+      "signal": null,
+      "started_at_utc": "2026-11-19T08:23:40.708998+00:00",
+      "status": "pass",
+      "thermal_guard_exit": 0,
+      "thermal_guard_pid": 2272377,
+      "thermal_guard_sigkilled": false,
+      "thermal_guard_stopped_by_supervisor": false,
+      "thermal_log": "/home/chenco_adm/w4a8_runs/triton-pr12747/full-amd/logs/20261119T082340Z-01-full4b-preflight.thermal.jsonl",
+      "timed_out": false
+    },
+    "status": "preflight_pass"
+  },
+  "guards": {
+    "boot_lock": "/home/chenco_adm/w4a8_runs/boot.lock",
+    "dmesg": "isolate_fault KernelMonitor + pre-step check",
+    "explicit_hip_visible_devices": "0,1",
+    "grant_env": "CPTC_FULL4B_GRANT",
+    "kfd_wrapper": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/cptc_full4b_child.py",
+    "lease": "/home/chenco_adm/w4a8_runs/lanes/lease/CPTCAllocation.a2",
+    "macro_deadline_s": 1000000000,
+    "no_health_kernel": true,
+    "no_reset": true,
+    "no_retry": true,
+    "pci_buses": [
+      "0000:d1:00.0",
+      "0000:d4:00.0"
+    ],
+    "preflight": "dev/cptc_gpu01_gate.py PREFLIGHT_CODE",
+    "stop_sha256": "6fedfb2bed9df48a10d7ea21d3013d10a6f96fc8ebcd5e6ddd594259e1f637a4",
+    "stop_size": 641,
+    "thermal_guard": "full-amd/drivers/thermal_guard.py d1/d4"
+  },
+  "infra_source_fix": {
+    "committed": false,
+    "paths": [
+      "platform/ansible/roles/v620-powercap/templates/v620-powercap.service.j2",
+      "platform/ansible/roles/v620-powercap/tasks/main.yaml"
+    ],
+    "reason": "Both source files are pre-existing uncommitted user additions; do not commit their underlying contents without authorization.",
+    "repository": "/Users/kletorch/Projects/Infra/infra"
+  },
+  "kind": "cptc-full4b-driver-manifest",
+  "power_policy": {
+    "enforce_during_live_child": true,
+    "reason_not_restored": "175 W is the declared chassis policy, not a study-only power reduction.",
+    "reassert_before_each_arm": true,
+    "remain_after_exit": false,
+    "restore_to_factory_250w": false,
+    "source": "existing managed v620-powercap.service chassis policy",
+    "timer_regression_proof": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/cooling/powercap-retrigger-proof.jsonl",
+    "watts": 175
+  },
+  "prep_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute",
+  "qad_config": {
+    "lr_override": null,
+    "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/full4b-prep-995fc26317-absolute/qad-default.json",
+    "resolved_defaults": {
+      "final_lr_p": 0.02,
+      "lr_p": 0.05
+    },
+    "sha256": "cc6cb699ea1760fc65368cc8b2b6d342e30370668d6d08f47fc37060983a21dc",
+    "values": {
+      "data_parallel": true,
+      "final_batch": 2,
+      "seed": 0,
+      "val": 8
+    }
+  },
+  "qad_defaults": {
+    "cli_override": null,
+    "config_override": null,
+    "final_lr_p": 0.02,
+    "lr_p": 0.05,
+    "source": "hi2.qad.QadConfig"
+  },
+  "resumes_failed_execution": {
+    "calibration_and_sensitivity_cache_reused": true,
+    "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/cooling/baseline-fullfan-thermal-abort.manifest.json",
+    "preserved_prior_qad": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/work/qad-before-enforced-power-policy",
+    "qad_restarted_under_enforced_power_policy": true,
+    "reason": "Reviewed repeat thermal abort; found d4 readback at 250 W versus the managed 175 W policy. Fixed sticky oneshot timer and verified two automatic retriggers, all six caps at 175 W.",
+    "same_quantizer_settings": true,
+    "sha256": "e5f9a2c4eef9c1fa955a8978fc8b1c804d31edfae46c210b74e51e5701de53d2"
+  },
+  "root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119",
+  "run_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default",
+  "runner_scripts": [
+    {
+      "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/cptc_full4b_driver.py",
+      "sha256": "d19159b185a99f44d7ef631d74d945ae904577575b840b2bde6a6104d8ce5881"
+    },
+    {
+      "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/cptc_full4b_child.py",
+      "sha256": "69570488abb99221feeaadb6a847928a20d900320f40d8a756e20a044e187474"
+    }
+  ],
+  "schema_version": 1,
+  "scope": {
+    "bits": [
+      2,
+      4
+    ],
+    "blocks": [
+      16,
+      32,
+      64
+    ],
+    "calib_samples": 128,
+    "compute_dtype": "float32",
+    "effort": "normal",
+    "final_lr_p": 0.02,
+    "full4b_only": true,
+    "layerwise_lr_p": 0.05,
+    "no_27b": true,
+    "preserve_vision_mtp_nonquantized": true,
+    "qad_batch": 4,
+    "qad_budget": 1.0,
+    "qad_final_batch": 2,
+    "qad_final_kl": 200,
+    "qad_preset": "default",
+    "qad_samples": 256,
+    "qad_steps": 300,
+    "qad_val": 8,
+    "refine_passes": 0,
+    "rotation": "on",
+    "rounding": "gptq",
+    "seq_len": 2048,
+    "smooth": 0.5,
+    "target_bpw": 3.0
+  },
+  "snapshot": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot",
+  "snapshot_manifest_sha256": "fd55115dec3b27976f804717116e943e382ecab0f5ce82e6df5e2747ae85b150",
+  "source_model": {
+    "files": {
+      "config.json": {
+        "bytes": 3161,
+        "sha256": "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670"
+      },
+      "model.safetensors.index.json": {
+        "bytes": 76196,
+        "sha256": "cf3f798ee02ba45f9622aa8892a47369ab667d0afbf154ee7c2212de42e6302d"
+      },
+      "preprocessor_config.json": {
+        "bytes": 390,
+        "sha256": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+      },
+      "tokenizer.json": {
+        "bytes": 12807982,
+        "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+      },
+      "tokenizer_config.json": {
+        "bytes": 16710,
+        "sha256": "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8"
+      }
+    },
+    "mtp_keys": [
+      "mtp.layers.0.mlp.down_proj.weight",
+      "mtp.layers.0.mlp.gate_proj.weight",
+      "mtp.layers.0.mlp.up_proj.weight",
+      "mtp.layers.0.self_attn.q_proj.weight",
+      "mtp.fc.weight",
+      "mtp.layers.0.self_attn.o_proj.weight",
+      "mtp.layers.0.self_attn.k_proj.weight",
+      "mtp.layers.0.self_attn.v_proj.weight",
+      "mtp.layers.0.input_layernorm.weight",
+      "mtp.layers.0.post_attention_layernorm.weight",
+      "mtp.norm.weight",
+      "mtp.pre_fc_norm_embedding.weight",
+      "mtp.pre_fc_norm_hidden.weight",
+      "mtp.layers.0.self_attn.k_norm.weight",
+      "mtp.layers.0.self_attn.q_norm.weight"
+    ],
+    "mtp_tensor_count": 15,
+    "repository": "Qwen/Qwen3.5-4B",
+    "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "source_path": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+  },
+  "source_tree": {
+    "commit": null,
+    "dirty": null,
+    "file_count": 216,
+    "files": [
+      {
+        "bytes": 787,
+        "path": ".github/workflows/tests.yml",
+        "sha256": "22d87fd82f7d5153c5a4967b65c8b3366cfc5399ea15bb29e89485217f386a05"
+      },
+      {
+        "bytes": 59,
+        "path": ".gitignore",
+        "sha256": "399603bed540d1793ba8aa37fafb31a16f79c7787fa42ac76370510c6f137cf8"
+      },
+      {
+        "bytes": 11358,
+        "path": "LICENSE",
+        "sha256": "c95bae1d1ce0235ecccd3560b772ec1efb97f348a79f0fbe0a634f0c2ccefe2c"
+      },
+      {
+        "bytes": 6054,
+        "path": "README.md",
+        "sha256": "c920b25dd1fd533dc6dd09373bad82811ea88f5b215a5f8448aef21fd5bca30b"
+      },
+      {
+        "bytes": 22755,
+        "path": "bench/README.md",
+        "sha256": "53b35d06b0fbdb5157bacceea46b8346e96ffc41108686179d36a7a2ee1d2925"
+      },
+      {
+        "bytes": 285,
+        "path": "bench/__init__.py",
+        "sha256": "7290a55abb7fe73c82b048d29a0b815f5529b478618aa0ed1bf176d0c175be41"
+      },
+      {
+        "bytes": 3065,
+        "path": "bench/client.py",
+        "sha256": "e7cf99bc8c4b2afd73f5d8ae915a6c07d620b0309acf2aa5d965c539acb75c3a"
+      },
+      {
+        "bytes": 23522,
+        "path": "bench/compare.py",
+        "sha256": "34e0fae01055c647e6d52db051716015cf8dbe85048e5ab1d6aa54c3bb09f6ab"
+      },
+      {
+        "bytes": 21827,
+        "path": "bench/cptc_baseline_guard.py",
+        "sha256": "75b36779321e27dc52c379667f8e3c17ce1f017bdfb385faa5e9e473ec585d17"
+      },
+      {
+        "bytes": 6557,
+        "path": "bench/cptc_guard_selftest.py",
+        "sha256": "af776bef1a2008012cc9fba59006ce3d599b3c5e188c286af3c169acfbc7dc9f"
+      },
+      {
+        "bytes": 19460,
+        "path": "bench/cptc_microbench.py",
+        "sha256": "7b82771415756f435ada731961a81f877bb24d31c48d715277ea0f68167b45fd"
+      },
+      {
+        "bytes": 3180,
+        "path": "bench/data.py",
+        "sha256": "50b9bd6a93aaa9447d4c3d181fd9cb4684d907bf62093c1161b32345f4601ba2"
+      },
+      {
+        "bytes": 1228,
+        "path": "bench/hook.sh",
+        "sha256": "865c8b9dd864976b93322a9bc7acd981a0ae1221322a7321d1b51b4fd85656a3"
+      },
+      {
+        "bytes": 9009,
+        "path": "bench/logprob_gap.py",
+        "sha256": "47c360601525297b64b2c7a8a5f61b2a217d1dc40dd90a9640c053025ed94f75"
+      },
+      {
+        "bytes": 12702,
+        "path": "bench/run.py",
+        "sha256": "387f731c89c8950877d34a64ac3681a3ee37349ca3e7384c6228f019ed3bd3e5"
+      },
+      {
+        "bytes": 3637,
+        "path": "bench/sandbox.py",
+        "sha256": "577aabd56b1735570b1db595020692b5f10324b525515d4a204d1664d7f31ef1"
+      },
+      {
+        "bytes": 3472,
+        "path": "bench/serve_run.sh",
+        "sha256": "4d926642a33495ef980fe86108518eb91d89f9bd1fceca0454471559e60649fa"
+      },
+      {
+        "bytes": 1498,
+        "path": "bench/tasks/__init__.py",
+        "sha256": "2ad3967b884b26486c0971b743b139cd871691e570dab0b8bfcc901c24b7e042"
+      },
+      {
+        "bytes": 1181,
+        "path": "bench/tasks/decision.py",
+        "sha256": "a9bf480897d16fc05c63b6eeeb2998b12e0f3261c8a818154af96b8cf029053a"
+      },
+      {
+        "bytes": 1867,
+        "path": "bench/tasks/gsm8k.py",
+        "sha256": "59d4db0c70cac419a2107520dc29c1298def732bcf39f7f8d7a3ac22203b54e0"
+      },
+      {
+        "bytes": 1616,
+        "path": "bench/tasks/humaneval.py",
+        "sha256": "21f8ab363efb449f538b720ba9eeb1f35647d50603c982a1da6f9ecdcbef8ecd"
+      },
+      {
+        "bytes": 9949,
+        "path": "bench/tasks/ifeval.py",
+        "sha256": "09fb6775b37134d82cfdb91d3d9810f13d10535233b91b3a70d7df5e96d7fb0d"
+      },
+      {
+        "bytes": 1547,
+        "path": "bench/tasks/mbpp.py",
+        "sha256": "a822c695be3200b104b16350417f00dd4b3817fc1cbbe25b47f7127dad6de172"
+      },
+      {
+        "bytes": 3145,
+        "path": "bench/tasks/mc.py",
+        "sha256": "91de2eeb604770b0fbc6061ce477f5470ebddac44641d1654033d9d49d2a4ad8"
+      },
+      {
+        "bytes": 5197,
+        "path": "bench/tasks/needle.py",
+        "sha256": "8d55d0cad5c0f44de4eb01f1ef7d28a85a6109988062deb36e7856484f4ec97f"
+      },
+      {
+        "bytes": 5971,
+        "path": "bench/tasks/toolcall.py",
+        "sha256": "56fe6dd4f93131ed541427164447fa8ea79f9d006e530e5d0e7e6c75d5a1a878"
+      },
+      {
+        "bytes": 3526,
+        "path": "docs/README.md",
+        "sha256": "ff237879818be104492b71db2c5bb676334edfde73bc06dd7944eb9ddb38919f"
+      },
+      {
+        "bytes": 27474,
+        "path": "docs/architecture-evaluation-roadmap.md",
+        "sha256": "3efd5522c910d9af511ac406e1c53a8fa189704a5c5d3f29911fb3ca9ea17a1f"
+      },
+      {
+        "bytes": 8144,
+        "path": "docs/architecture.md",
+        "sha256": "34af02c15e0c73a07cdc9e8132c750df90abc9e87d204c3cc254c7b9b4dcf407"
+      },
+      {
+        "bytes": 9968,
+        "path": "docs/design-notes.md",
+        "sha256": "5d4ffc8a2542ac305892b9b7b8244ff74e2d5f62dd2214be054598316e75cd14"
+      },
+      {
+        "bytes": 18676,
+        "path": "docs/evaluation.md",
+        "sha256": "78f7d2073db4e49b37a75590f735f1360cb1434aa52687b387ce13f51d7d4e54"
+      },
+      {
+        "bytes": 75470,
+        "path": "docs/format-spec.md",
+        "sha256": "342360054370fb891fa48463b1d1363ee24150d3d42a878a98f3720f754692cc"
+      },
+      {
+        "bytes": 19970,
+        "path": "docs/getting-started.md",
+        "sha256": "dfc2a1f0f11bfe8eacc4539dafb311cab2c4124dc1ba08a0259986d762a29eb2"
+      },
+      {
+        "bytes": 26253,
+        "path": "docs/handover.md",
+        "sha256": "d394f3b4b3c38d57fe5a295a83723eaac3c4675b38021357aa7c8c1f556688a4"
+      },
+      {
+        "bytes": 11528,
+        "path": "docs/installation.md",
+        "sha256": "38fc2795142acda7583f04d0fa8f452cbf31d16969d508105bdc4a6501231db5"
+      },
+      {
+        "bytes": 6524,
+        "path": "docs/lowbit.md",
+        "sha256": "c13ee78f877a2bca5d8bfe089381aaa1bfa78a4cbffc56c6eec6b910d73a14ae"
+      },
+      {
+        "bytes": 30008,
+        "path": "docs/mcp.md",
+        "sha256": "ecfcf23bbea9a38d6d263afcee965493fd1e7d1449b00def099cc3bbc64f5077"
+      },
+      {
+        "bytes": 22001,
+        "path": "docs/moe.md",
+        "sha256": "24f3365ec080706d224eea9f0fad8938664b62e2858db08dd7c86f37803a0243"
+      },
+      {
+        "bytes": 20122,
+        "path": "docs/operations.md",
+        "sha256": "9a1e5864dd79259ac5989e204cc1b149523a88a926975a2a92f5606f1b2fa9a4"
+      },
+      {
+        "bytes": 12428,
+        "path": "docs/overview.html",
+        "sha256": "669e2c46181b6e9ee1f814aef96096309491bef29fa57115377a3733fe4b6c10"
+      },
+      {
+        "bytes": 47114,
+        "path": "docs/qad.md",
+        "sha256": "c07f443167e0e9ec1ca2fb9b2833f202344d56e8e0f5b97f0d6942e67795bfe7"
+      },
+      {
+        "bytes": 55468,
+        "path": "docs/results.md",
+        "sha256": "eb01d5be27d7a885fcb3c167cc7fa1625ad450f8d63468a7dced338d7d4f5b7b"
+      },
+      {
+        "bytes": 22242,
+        "path": "docs/speed.md",
+        "sha256": "2ac06e544aee7122b19f898c5437990e772d10eb69ed1ca54f490c6d780b8d9c"
+      },
+      {
+        "bytes": 14453,
+        "path": "docs/surfaces.md",
+        "sha256": "09125418f87a1f0f01f1b93c5633fbe78bf50d5bcce3b697869c02aea10961c2"
+      },
+      {
+        "bytes": 30879,
+        "path": "docs/usage.md",
+        "sha256": "8c8224025aec82cf9be45bbc5c00d53d8ca2280b883c5f52fe831b11b4abe23a"
+      },
+      {
+        "bytes": 4203,
+        "path": "experiments/README.md",
+        "sha256": "cf11b244a30e398dd8278b6b6cce6ebc35963e49a07dbc2589258c7f7d84f2d7"
+      },
+      {
+        "bytes": 3915,
+        "path": "experiments/block_rotation_study.py",
+        "sha256": "523d1d522a5c6525769a9965be51c4f39fdb5fac43e8210ba5d11bfdab3e585e"
+      },
+      {
+        "bytes": 2645,
+        "path": "experiments/build_calib_mix.py",
+        "sha256": "c9608d649cd445d59bb64150b1b6be423830c744a439127748560aa5e54ea498"
+      },
+      {
+        "bytes": 2292,
+        "path": "experiments/candidate_usage.py",
+        "sha256": "51c5410417db929600d0e508d90ffd2c4efd43ac52d5ec443609e84b9d76f667"
+      },
+      {
+        "bytes": 2308,
+        "path": "experiments/check_tables.py",
+        "sha256": "81aeb0aec85ce3a8356de9ae52e70fb0306c8a603b9856395ef2a9d1d61f7f98"
+      },
+      {
+        "bytes": 3099,
+        "path": "experiments/compare_layouts.py",
+        "sha256": "66920b7c48be49588d693fb93797b64b2f5aa3589c9004afc2d692f1d78666d1"
+      },
+      {
+        "bytes": 1409,
+        "path": "experiments/compare_qad_init.py",
+        "sha256": "bd65bab0f7c11f00a3756f713c4e6fff9c67cf3ac203cc8e8f9340b5897552b2"
+      },
+      {
+        "bytes": 97791,
+        "path": "experiments/data/decision_prompts.json",
+        "sha256": "682bd3f8792fb05e2e83ad12dee269d864a7e970787fb95587c305659d7606a9"
+      },
+      {
+        "bytes": 6753,
+        "path": "experiments/decision_fidelity.py",
+        "sha256": "9fbe889d21cf0c2b362545f12f57b9e231cba1a1439faa09e752946a2631703b"
+      },
+      {
+        "bytes": 1372,
+        "path": "experiments/decision_fidelity.sh",
+        "sha256": "2099fcaf9c97ad3f330bf1c2515dc5a2e2fb0e0422da1b8d25fb86314c7b51dd"
+      },
+      {
+        "bytes": 1057,
+        "path": "experiments/decision_fidelity_hook.sh",
+        "sha256": "b4e062c0a70a82119217e8116f1ed0451f2a963c91ba098369644cced6ce8fc3"
+      },
+      {
+        "bytes": 5700,
+        "path": "experiments/decision_prompts.py",
+        "sha256": "b1063ed053f2bf1786cdf93da62fad589571fd3c3f16eab485fe89e8ed09ae5e"
+      },
+      {
+        "bytes": 3352,
+        "path": "experiments/fp16_gemm_check.py",
+        "sha256": "33b0eaa60d6bdee7ff40b453e59b612cbde15f438f3863cc9a3b5f10df1b6614"
+      },
+      {
+        "bytes": 6541,
+        "path": "experiments/gguf_bpw.py",
+        "sha256": "e3e2ca04d26bf1b57658174fd5ff1365e179601bd3e1cb2d606f94768051aaf2"
+      },
+      {
+        "bytes": 1860,
+        "path": "experiments/gguf_kld.sh",
+        "sha256": "50e4e961b757c541e9baea1de898bb9208621ed1ae2ba5c34d6d909f5fdefbe2"
+      },
+      {
+        "bytes": 1765,
+        "path": "experiments/int8_usage.py",
+        "sha256": "176e2f882c48b873a068f4ff562ec012aaaade39e2a4c2ef7568fd8b6cdd850c"
+      },
+      {
+        "bytes": 568,
+        "path": "experiments/isa/probe.hip",
+        "sha256": "840cbaa6b10e8095ab592cc75f66bc006d64efba10c32bf0523d62937c370d0a"
+      },
+      {
+        "bytes": 1033,
+        "path": "experiments/isa/run.hip",
+        "sha256": "6180132d38245cad828ab30f01a0ee15b1886c1c2cccfb7e54971f89f8818737"
+      },
+      {
+        "bytes": 1179,
+        "path": "experiments/make_calib_qad.py",
+        "sha256": "6e6972c7362cc390470bc8bb5a4fd1edb93b653cce73bf52f97b1797c5535438"
+      },
+      {
+        "bytes": 3318,
+        "path": "experiments/make_calib_tasks.py",
+        "sha256": "90e57993a23d22fc1d9a0e528475894ca110c48d2214331db2e2f897f613380b"
+      },
+      {
+        "bytes": 3721,
+        "path": "experiments/mc_eval.py",
+        "sha256": "671de750c5c37282e91f61d51cb677c4db854f0c832e253d40a284d1d1149178"
+      },
+      {
+        "bytes": 2719,
+        "path": "experiments/module_to_device_check.py",
+        "sha256": "835c87603dfdb9aa77d498b302603530e4c1d1ad36c1b9761d3cc0710642e4e6"
+      },
+      {
+        "bytes": 4407,
+        "path": "experiments/pinned_copy_check.py",
+        "sha256": "967ebc7c0a5bde53b61832ccfad98dd4e05bc451ddeec0aee4f7b9f314cccfa4"
+      },
+      {
+        "bytes": 8133,
+        "path": "experiments/profile_encode.py",
+        "sha256": "1e56aa86ceedd1c99468d5d147529a9c55bbb941bd1b3deecc343e6af6b8e623"
+      },
+      {
+        "bytes": 2412,
+        "path": "experiments/profile_new.py",
+        "sha256": "198b3674ecb1187d8332b6677db8c4f8a1bb8f1969ba465e15365c4b21868348"
+      },
+      {
+        "bytes": 3158,
+        "path": "experiments/profile_probe.py",
+        "sha256": "2adabd10d46cba454f7931ac4123ff19db03b336d4aec2412cdb5b691ca2192e"
+      },
+      {
+        "bytes": 5945,
+        "path": "experiments/profile_qad.py",
+        "sha256": "27e8d3c870170ae0bab1b02026f9245c41357f4f0fb4d9f09e4ff7ea6630720b"
+      },
+      {
+        "bytes": 10782,
+        "path": "experiments/qad_budget_sim.py",
+        "sha256": "8302d9eb24d8a2bebea5fb23df37b3e08cd18a2ad1fd2926ab616dfdc3f73506"
+      },
+      {
+        "bytes": 8971,
+        "path": "experiments/qad_dtype_check.py",
+        "sha256": "88ef3a5976e31052801ef61f87c74bc34ff4aeda23c84d9324d1ee78d4ad254c"
+      },
+      {
+        "bytes": 780,
+        "path": "experiments/qad_layers.py",
+        "sha256": "770812843f844b185c2cf8cb82992029318a8073096641db3f06b6aee0bcbf3d"
+      },
+      {
+        "bytes": 1915,
+        "path": "experiments/ratio_table.py",
+        "sha256": "1ec720bd550d098b8b3eea679455ff4856ae4164332323e749036f528b3261e0"
+      },
+      {
+        "bytes": 2312,
+        "path": "experiments/refine_cost.py",
+        "sha256": "d91c6b2d185a233728e4ea6b74adcb35c4b07b02f32d0e69fcf80cffa3197b47"
+      },
+      {
+        "bytes": 9316,
+        "path": "experiments/refine_study.py",
+        "sha256": "107131c6e33538a792b487e8c7a218c1b242378b85b5a24420d13a981ed12be5"
+      },
+      {
+        "bytes": 1864,
+        "path": "experiments/restamp_qad.py",
+        "sha256": "7373dd581bc4acceae5a931e9759a94e3f87031c1be99351d132f7c5124c9b78"
+      },
+      {
+        "bytes": 18718,
+        "path": "experiments/results/decision_fidelity_27b_2026-10-27/awq27.json",
+        "sha256": "9396698702a2c6e6360b43a67a2646619c2fc5cb3cb8ee08af21de5ece030602"
+      },
+      {
+        "bytes": 17234,
+        "path": "experiments/results/decision_fidelity_27b_2026-10-27/default27.json",
+        "sha256": "ac050d395bc700abe96119ada8cf96684dc624c2c5645611ac5c32adbc78553e"
+      },
+      {
+        "bytes": 17979,
+        "path": "experiments/results/decision_fidelity_27b_2026-10-27/dense27.json",
+        "sha256": "8d36fe80ff228fe7abc620e41806e84fd4f7204c8b019a8a5bfaa790a3e75e91"
+      },
+      {
+        "bytes": 17201,
+        "path": "experiments/results/decision_fidelity_27b_2026-10-27/ptq27.json",
+        "sha256": "9d05d06f0783c91a36690b49dd2f228cc687601e0452918b065f08460b926b44"
+      },
+      {
+        "bytes": 17054,
+        "path": "experiments/results/decision_fidelity_27b_2026-10-27/qad27.json",
+        "sha256": "b9dc5b569ec78c3ce39ee1880250719636ab1d2702513e6cfd4bfe059ba98223"
+      },
+      {
+        "bytes": 18270,
+        "path": "experiments/results/decision_fidelity_4b_2026-10-27/dense-a.json",
+        "sha256": "7610e7443923debca837b19c3c99abf21ac5e014bcb2d554f638d8d7decea14a"
+      },
+      {
+        "bytes": 18270,
+        "path": "experiments/results/decision_fidelity_4b_2026-10-27/dense-b.json",
+        "sha256": "7610e7443923debca837b19c3c99abf21ac5e014bcb2d554f638d8d7decea14a"
+      },
+      {
+        "bytes": 27041,
+        "path": "experiments/results/decision_fidelity_4b_2026-10-27/ptq35.json",
+        "sha256": "d32eb0a2a62ce142fbb6957b102d6a3d8e8b88a7e0e261139bd32b3677250135"
+      },
+      {
+        "bytes": 21923,
+        "path": "experiments/results/decision_fidelity_4b_2026-10-27/qad30-su.json",
+        "sha256": "e2c4bac6831d63fcbd6a897071027ae9e8131acd5efa3106f7e3bd870c3b44f3"
+      },
+      {
+        "bytes": 21461,
+        "path": "experiments/results/decision_fidelity_4b_2026-10-27/qad35-su.json",
+        "sha256": "8c6b2aeb2ea041b0642c18ab62b6dcbcd9e80a9d8a728886a5eba98112d19650"
+      },
+      {
+        "bytes": 21188,
+        "path": "experiments/results/decision_fidelity_4b_2026-10-27/qad35.json",
+        "sha256": "0ab60736a290b502cecc20d4ea8748033bf541df853d6fb24650f01ad2cfebaa"
+      },
+      {
+        "bytes": 20618,
+        "path": "experiments/results/e2e_qwen2.5-0.5b.json",
+        "sha256": "42df2b4a085616075ba3bc23e4066f80103b4dd63f4364891e01e165a86fedf0"
+      },
+      {
+        "bytes": 11519,
+        "path": "experiments/results/e2e_qwen3.5-0.8b.json",
+        "sha256": "d0aae128e6aa45ce29e198bf8f3d5958678d0517c7542f7fcb385f2a807a4225"
+      },
+      {
+        "bytes": 11478,
+        "path": "experiments/results/hi2_candidate_usage_2026-10-26.json",
+        "sha256": "5bfa57e18a7c0fa865f9158dd21f304750cae8b9058366d5389159cb4860547f"
+      },
+      {
+        "bytes": 8843,
+        "path": "experiments/results/hi2_speed_profile_4b_2026-10-26.json",
+        "sha256": "545f3bd6b292c4043a86e7a7c937fc94662a085097528df4c3ec9c22557e8f4b"
+      },
+      {
+        "bytes": 4522,
+        "path": "experiments/results/hi2_speed_runs_2026-10-26.json",
+        "sha256": "cb94008cf139a214aca8262ded44a38be28b27c42da9194eb76009f7e12ebc4a"
+      },
+      {
+        "bytes": 318,
+        "path": "experiments/results/kld_27b_2026-10-27/q27b-b3.0-qad.docs.json",
+        "sha256": "4216a2b4beadbbdefbd0292d0e7689f90abc1dc579044320d338ad9128124e8b"
+      },
+      {
+        "bytes": 317,
+        "path": "experiments/results/kld_27b_2026-10-27/q27b-b3.0-qad.mix.json",
+        "sha256": "4d2a1f3bc2878f96bc4fb477f97ba1035cf65de81bf1df9b89cc7f9984427e6e"
+      },
+      {
+        "bytes": 317,
+        "path": "experiments/results/kld_27b_2026-10-27/q27b-ptq-b3.0.docs.json",
+        "sha256": "732a2b63769d80e11d9106b2b9b7df9dd670713cce230cf2a0cac54e14f6e0eb"
+      },
+      {
+        "bytes": 315,
+        "path": "experiments/results/kld_27b_2026-10-27/q27b-ptq-b3.0.mix.json",
+        "sha256": "de7fe1c54dd6a735ae78af9c7febf75c506043682458c12d29236add104a1cd5"
+      },
+      {
+        "bytes": 254,
+        "path": "experiments/results/kld_27b_2026-10-28/q27b-b3.0-qad-fast.docs.json",
+        "sha256": "1caac51931964b24f386a801eadbe08f1b9dcdd2cfb5caea3c8f6dba1bbf11d3"
+      },
+      {
+        "bytes": 252,
+        "path": "experiments/results/kld_27b_2026-10-28/q27b-b3.0-qad-fast.mix.json",
+        "sha256": "78925f0b68831901bccd08a47cff124c1f2a4232ce33b9d07bbf9bf52d2c977d"
+      },
+      {
+        "bytes": 318,
+        "path": "experiments/results/kld_27b_2026-10-29/q27b-b3.0-qad-default.docs.json",
+        "sha256": "ddf42598f4a134668f05e0133cfb8a4c03b5ff8ddec1ab60a5a1c4e45987b3e1"
+      },
+      {
+        "bytes": 515,
+        "path": "experiments/results/kld_27b_2026-10-29/q27b-b3.0-qad-default.final_kl.json",
+        "sha256": "b7c20b2088cdaa1ac53dff2d5781fb0a8550b9a684bf86bd51b4f7c39ed78f5c"
+      },
+      {
+        "bytes": 318,
+        "path": "experiments/results/kld_27b_2026-10-29/q27b-b3.0-qad-default.mix.json",
+        "sha256": "e144d384010c9a91018f554193e25257bb13c3778d2f217a43d2f007c1e1be9a"
+      },
+      {
+        "bytes": 1032,
+        "path": "experiments/results/kld_27b_gguf_2026-10-28/README.md",
+        "sha256": "83ffde04f83ae103565e71766f267ecc87e1b31482199271d98982270982a97d"
+      },
+      {
+        "bytes": 3191,
+        "path": "experiments/results/kld_27b_gguf_2026-10-28/docs.kld.log",
+        "sha256": "754107e7e1dc9c8b0891dcea726e27c6bbbbc28e01e26443ed23d90c0a30ecbb"
+      },
+      {
+        "bytes": 132,
+        "path": "experiments/results/kld_27b_gguf_2026-10-28/docs.run.log",
+        "sha256": "664628ef14455d807877259b78460b038f2379f155b568e081a610b5aac1b7bd"
+      },
+      {
+        "bytes": 3192,
+        "path": "experiments/results/kld_27b_gguf_2026-10-28/mix.kld.log",
+        "sha256": "b0734edff4d6906da9632e318e5a2da04ed9e9a22fb052fd6c025462967c01d6"
+      },
+      {
+        "bytes": 131,
+        "path": "experiments/results/kld_27b_gguf_2026-10-28/mix.run.log",
+        "sha256": "b9190edee5447c2172893354004fb943ecbe787e55244507a7a26463cb68464f"
+      },
+      {
+        "bytes": 11908,
+        "path": "experiments/results/lowbit_runs_2026-10-26.json",
+        "sha256": "5ba2af03bec48310daae99f664a23e407ca269f9c65bf4b26b5f18c5ed00bb9c"
+      },
+      {
+        "bytes": 19105,
+        "path": "experiments/results/qwen2.5-0.5b-scale-study.json",
+        "sha256": "9af068f9b1caee26b88729f0c5e54894fe410146e046792b9c162639ea6f44c3"
+      },
+      {
+        "bytes": 3451,
+        "path": "experiments/results/qwen2.5-0.5b-scope-study.json",
+        "sha256": "2e4900a0eb33b0ec68dc90396968c1c1e35434f854c9a7cef529e4540ecae88e"
+      },
+      {
+        "bytes": 1483,
+        "path": "experiments/results/qwen3.5-0.8b-block-rotation-study.json",
+        "sha256": "db06207fd851526ad4bb15fbb0b9fcfcc5db431c5ce6384e6d5bc156e6a424b8"
+      },
+      {
+        "bytes": 3469,
+        "path": "experiments/results/refine_model_2026-10-27.json",
+        "sha256": "f9cd2854215b5e34ec4dad3795b927e5defe124be5989d7471dae2a2933b225d"
+      },
+      {
+        "bytes": 3675,
+        "path": "experiments/results/refine_study_2026-10-27.json",
+        "sha256": "eec6f561686407a28852367787580ce3921a3ea778c56a162dd228de7075f2d7"
+      },
+      {
+        "bytes": 3180,
+        "path": "experiments/results/smooth_search_2026-10-27.json",
+        "sha256": "2e17c0fc86349ab33ea8ffb4006acfdcf32e6af1c96a2625a0d9900c1bf4773f"
+      },
+      {
+        "bytes": 2308,
+        "path": "experiments/results/suite_27b_2026-10-30/README.md",
+        "sha256": "c4c4b3ad0f9686615abe934935ff250d6c73c4b7a7bd3435e79cd150fde182ac"
+      },
+      {
+        "bytes": 19029,
+        "path": "experiments/results/suite_27b_2026-10-30/compare-awq.json",
+        "sha256": "ff3fab88a67b69d2cf6f615dd52df38cd752516efe6c1fefe90a8d5aadcc2183"
+      },
+      {
+        "bytes": 1525,
+        "path": "experiments/results/suite_27b_2026-10-30/compare-awq.md",
+        "sha256": "17fc5a30bcdc269cc7f7c26d07e4a54076186c2ae24c8438c511062f054942a3"
+      },
+      {
+        "bytes": 19125,
+        "path": "experiments/results/suite_27b_2026-10-30/compare-hi2.json",
+        "sha256": "ba672311e61985ea0d7823b5bac34c7e4720834937c4261f6bd90bd4b2831e6d"
+      },
+      {
+        "bytes": 1533,
+        "path": "experiments/results/suite_27b_2026-10-30/compare-hi2.md",
+        "sha256": "71aecc3fab563964dc51f2d29e03167d31e75eb964ccb60eb6c711530ee6ef2d"
+      },
+      {
+        "bytes": 899,
+        "path": "experiments/results/suite_27b_2026-10-30/kld_domain_27b.json",
+        "sha256": "5e0c37ea8fc0d1cdaa7283da95d78f7b40799625db2bc9dc98253436b08f8704"
+      },
+      {
+        "bytes": 3920,
+        "path": "experiments/rotation_study.py",
+        "sha256": "b46a49e58d8f0c97603aa5a4bd3f9fea11df0f864ec724b832d099fb83363af1"
+      },
+      {
+        "bytes": 1505,
+        "path": "experiments/run_27b.sh",
+        "sha256": "203e1a3254ddc15af9a2f359405c2884590c4d3dc6a38845908a389dd884a44b"
+      },
+      {
+        "bytes": 12480,
+        "path": "experiments/scale_study.py",
+        "sha256": "f473bfaddc6527a2e4e01ce276d9d5879a3746de8049b2e8cddeb2eb0b53335f"
+      },
+      {
+        "bytes": 2392,
+        "path": "experiments/scope_study.py",
+        "sha256": "9e865a81e91a7fec6b6ad890ea0d23e1b24c8bdc50e4ccde5ba8beb02c3b0b09"
+      },
+      {
+        "bytes": 4328,
+        "path": "experiments/staging_rate_check.py",
+        "sha256": "56bb35124adcdc5eabb2c8c16065b3df21329a354d459c13a07353620290321d"
+      },
+      {
+        "bytes": 2772,
+        "path": "experiments/summarize_gguf.py",
+        "sha256": "136edd3ef23881cec7df1ea14a4bb9a89b13570cc639739ad517887566b37b19"
+      },
+      {
+        "bytes": 2032,
+        "path": "experiments/summarize_qad.py",
+        "sha256": "5ff411ad112de522b08a434ea3e066f96a0a99f3a3d0b3f329ffd00bfbf6130c"
+      },
+      {
+        "bytes": 2245,
+        "path": "experiments/vllm_ppl.py",
+        "sha256": "8522321aa9df250962803d1f61c97362d37c689486db498a78c063a85c8ff459"
+      },
+      {
+        "bytes": 181,
+        "path": "hi2/__init__.py",
+        "sha256": "9aeba9831b61e8998b12685379d1c148d795ae1e9021c67e5b4cbbc5c59d1996"
+      },
+      {
+        "bytes": 50213,
+        "path": "hi2/__main__.py",
+        "sha256": "b463b7448530e77be2688ba302c987a4307a3136b4f6d04c608a14594e4f594e"
+      },
+      {
+        "bytes": 9306,
+        "path": "hi2/allocate.py",
+        "sha256": "b6e2edb3702c5c6f0bbdbd4b6349f3e79aca9ffce359f4ea1fb381b1b45f112f"
+      },
+      {
+        "bytes": 19231,
+        "path": "hi2/cache.py",
+        "sha256": "79a35acf87b85946ab03754dc9508c72965b81a38fdc0fbc1c789900ac97416e"
+      },
+      {
+        "bytes": 15884,
+        "path": "hi2/calib.py",
+        "sha256": "81d9b2af761ac6b5cf8312d286256a945a52dd9a69c64efcd6ea9fd9e4745a36"
+      },
+      {
+        "bytes": 26300,
+        "path": "hi2/calibrate.py",
+        "sha256": "de3a44bd0ed71e0294900347e5cc4bd357e2a78c3c0375885f78f27ac63a6f3a"
+      },
+      {
+        "bytes": 67416,
+        "path": "hi2/checkpoint.py",
+        "sha256": "350f7aa031ee1d9fef1d27a45ff9cb163a661158a9d4a0dd7d5baf42bf8e3e72"
+      },
+      {
+        "bytes": 58671,
+        "path": "hi2/cptc.py",
+        "sha256": "fee8d045b83b9b00600fd9deefec38c32b1e4079632c7167e9c7d45e480847ff"
+      },
+      {
+        "bytes": 14495,
+        "path": "hi2/cptc_projection_kernel.py",
+        "sha256": "e084186e1e4b7501b79bdbf7c50433f733894de16509d6038cbe6f6070ed1214"
+      },
+      {
+        "bytes": 23162,
+        "path": "hi2/cptc_viterbi_kernel.py",
+        "sha256": "0bad06d59cde7ee5c58f6e58ca59b8452652b296030092d9e19b0a543a6d30cb"
+      },
+      {
+        "bytes": 6658,
+        "path": "hi2/encode.py",
+        "sha256": "9779553a87d924e1b9248c216b85379781963a4d889bfd31f27e620ee8e41cc5"
+      },
+      {
+        "bytes": 2299,
+        "path": "hi2/errors.py",
+        "sha256": "e7cc3a998de7532e7c333d471a6ff7568ac7feb9b693a9a131ce89a6488b2487"
+      },
+      {
+        "bytes": 5882,
+        "path": "hi2/evalq.py",
+        "sha256": "c7372a3ba44f1256ed914e53da115b05c40c95deb5b76784d62e1b94cf312b65"
+      },
+      {
+        "bytes": 2811,
+        "path": "hi2/executor.py",
+        "sha256": "121138a56db7ed3a327155aafc0c130e8974f83b1aaa3f7f113bcb73762ad87f"
+      },
+      {
+        "bytes": 17600,
+        "path": "hi2/finalkl.py",
+        "sha256": "193eea9d9d9fc1a8347710f5296f2af47f248a90d6c3903f469cc811f662d422"
+      },
+      {
+        "bytes": 11437,
+        "path": "hi2/format.py",
+        "sha256": "3248a8a53a7217998a99193a7df2bc6b8444f285028e114acca6b17625003044"
+      },
+      {
+        "bytes": 8577,
+        "path": "hi2/gptq_kernel.py",
+        "sha256": "0b18d9fa41db95156a275b6d9459bb6ccebb76b427165837961b08f1fdc02e95"
+      },
+      {
+        "bytes": 17021,
+        "path": "hi2/hessian.py",
+        "sha256": "10f58158d1befd2ebe5d4be817e75ab0b81975733c08d85eae04c062c4a3a8f0"
+      },
+      {
+        "bytes": 15524,
+        "path": "hi2/job_worker.py",
+        "sha256": "4e0d9d388f0c8d8818102fedb86ec3164616780ee50f9627cff7e1d60c9bb32b"
+      },
+      {
+        "bytes": 29353,
+        "path": "hi2/jobs.py",
+        "sha256": "5ca7ac59ed7c8b4be34026c36ffb46899e48953296871f48f66eb477ac0fb56e"
+      },
+      {
+        "bytes": 5797,
+        "path": "hi2/ladder_kernel.py",
+        "sha256": "e76a302feaee7e89dc99d8a4916dc813a0968b183ab9545707a3499921c7864f"
+      },
+      {
+        "bytes": 28769,
+        "path": "hi2/layerwise.py",
+        "sha256": "11dc847a6375f114da2ed9941e566b2aa3ce28dc08b4926f24dff01a3ea3de80"
+      },
+      {
+        "bytes": 27623,
+        "path": "hi2/mcp_server.py",
+        "sha256": "be5c439d3314ca756458cbdd483f9d451efe02faa50cbbebbc9263da1967c187"
+      },
+      {
+        "bytes": 9819,
+        "path": "hi2/mcp_tasks.py",
+        "sha256": "78d3e9ced5a818d6b665d8f4fb5bd61bfa0d7923c2de85303a7b52648fb753e9"
+      },
+      {
+        "bytes": 8741,
+        "path": "hi2/moe.py",
+        "sha256": "b21ff7b720975d32263c76b53e534b141da1aa4c556283cd6007eacf106ad8b6"
+      },
+      {
+        "bytes": 2039,
+        "path": "hi2/paths.py",
+        "sha256": "9464a14bab696d83aac88c651b967dfa015e2c78f52ef812fd375856297fe311"
+      },
+      {
+        "bytes": 5943,
+        "path": "hi2/pinned.py",
+        "sha256": "cc197c5611525a0d174c93a8748d4103e46b35d6857601ce8a92b6247b0e50a7"
+      },
+      {
+        "bytes": 49543,
+        "path": "hi2/pipeline.py",
+        "sha256": "6305be9c7c0f3ecea9164f94662e4a0538c3feef1ab5158b2d2742a232ec662b"
+      },
+      {
+        "bytes": 70695,
+        "path": "hi2/qad.py",
+        "sha256": "2912cb0273372b3601c8200ea4e30178bf775e78797737d90e9377c997ce3c97"
+      },
+      {
+        "bytes": 18203,
+        "path": "hi2/qad_kernel.py",
+        "sha256": "1101783dd83a0834f867c9424186b1cede1fc18c7b54f87410798beab5a257ef"
+      },
+      {
+        "bytes": 7887,
+        "path": "hi2/quality.py",
+        "sha256": "69ea8c0b5cf7972663baf9878e125f74a94a8c2bd9298df17219431841736d02"
+      },
+      {
+        "bytes": 6555,
+        "path": "hi2/refine.py",
+        "sha256": "447e977c2b6925927d0f338a5027c554bef8b17c538bacf255f007b44b39aaa9"
+      },
+      {
+        "bytes": 7860,
+        "path": "hi2/refine_kernel.py",
+        "sha256": "e1bd8d948e1680826fc1611720bfdb5f648a7492f1f775d3c6537eda679a1b66"
+      },
+      {
+        "bytes": 10120,
+        "path": "hi2/runtime.py",
+        "sha256": "240a745eb2d05b622e0da50cb77081010e3033ab5d60e7c234d3471b530cfa28"
+      },
+      {
+        "bytes": 14462,
+        "path": "hi2/sensitivity.py",
+        "sha256": "da0c12192126ce0768af66b921d85d91088ea3afd460d3aa586f99d14454acbc"
+      },
+      {
+        "bytes": 23300,
+        "path": "hi2/service.py",
+        "sha256": "f878ed630ff32792c89b57f2aa8e17a6c265169e2e7dc497bdde529fe21fa657"
+      },
+      {
+        "bytes": 8278,
+        "path": "hi2/size.py",
+        "sha256": "e99a5c4fd7e3bbb35428c7b9d1c6ce8bf513deb32d26859de4b0684f2ff498d5"
+      },
+      {
+        "bytes": 22082,
+        "path": "hi2/stack.py",
+        "sha256": "a90d44031ea7101a39e84171d07e83e3925612416a2e3bcd76c4b3e63a4808e1"
+      },
+      {
+        "bytes": 2368,
+        "path": "hi2/stats.py",
+        "sha256": "40927f9c8c5549d503752d10757d3c6fdeab24b1646faa30f212b7b90a403fea"
+      },
+      {
+        "bytes": 3661,
+        "path": "hi2/tune.py",
+        "sha256": "346f47699d07292b8e1f7cdf7f79fca50bc5f9287db0e0ac8459c7df7e139951"
+      },
+      {
+        "bytes": 21667,
+        "path": "hi2/workspace.py",
+        "sha256": "329193c9e644d654a3ccc1c176e8121921d48a3e30f10c06a6dca23ee1d54b02"
+      },
+      {
+        "bytes": 1018,
+        "path": "pyproject.toml",
+        "sha256": "132347d68708a6f035bc3efb0df26020556874f66a8b9068fad15465c45c2052"
+      },
+      {
+        "bytes": 8179,
+        "path": "tests/test_allocate_fast.py",
+        "sha256": "2cbac262f5762a931bf257a7b840a1697818660395758ec5f6d9c0894d571e4a"
+      },
+      {
+        "bytes": 5836,
+        "path": "tests/test_auxiliary_inputs.py",
+        "sha256": "af8eded6ee92b389f4789b83669ac684f04644a305793f133364b1b0481c37a0"
+      },
+      {
+        "bytes": 2939,
+        "path": "tests/test_bench_ifeval.py",
+        "sha256": "ae27849965560d986ccd0d4fd69deec6ef418abd13c024d768e8daab55716486"
+      },
+      {
+        "bytes": 1000,
+        "path": "tests/test_bench_logprob_gap.py",
+        "sha256": "3573234a237902e136ba9bc25f5113bb7deeeae29270752277a87beffba6a8e9"
+      },
+      {
+        "bytes": 1774,
+        "path": "tests/test_bench_needle.py",
+        "sha256": "2f5b7311cb787907d154c6b861e5cbefe2ecb62fe51e195f032aa746dc80d689"
+      },
+      {
+        "bytes": 18676,
+        "path": "tests/test_bench_run.py",
+        "sha256": "039ae13f8635a04fee80e5b1a9c211cb405037790ff54c128fe3fda048551e43"
+      },
+      {
+        "bytes": 1741,
+        "path": "tests/test_bench_sandbox.py",
+        "sha256": "904ed05b7a8d8db7b7e4376d1baf152e9c33c4d0522d4ff8c71f4ad717e102fb"
+      },
+      {
+        "bytes": 7003,
+        "path": "tests/test_bench_scoring.py",
+        "sha256": "7cc93889b50868158aa4ffe669b67e51414da8834fd582ac50536e52e92cb417"
+      },
+      {
+        "bytes": 11916,
+        "path": "tests/test_bench_stats.py",
+        "sha256": "7689eb32ffd9235fc749d01b56167b493cb54d3eabe42e0dfe2c84a7b2073753"
+      },
+      {
+        "bytes": 26572,
+        "path": "tests/test_cache.py",
+        "sha256": "3a5ebf1031c530ebcfcc8445f6a92f159929b6254a3fbc9ed495856520f381af"
+      },
+      {
+        "bytes": 18662,
+        "path": "tests/test_calib.py",
+        "sha256": "10a2bdc38834977f81f499b0013160dd3b74331a303f7fe5be187eadd80790b0"
+      },
+      {
+        "bytes": 36952,
+        "path": "tests/test_checkpoint_safety.py",
+        "sha256": "d77b79e138495c31aacb56684b8b36edc5aba4979225d28e84779dc6a9d998fe"
+      },
+      {
+        "bytes": 21612,
+        "path": "tests/test_cli_contracts.py",
+        "sha256": "86fd8301762509e71ec53aecf62d55e58cf3eb618079a7dadbc8cccc1501f0c9"
+      },
+      {
+        "bytes": 22794,
+        "path": "tests/test_cptc.py",
+        "sha256": "96f1725081da65b06cc584802f0037d53e129285c53b4a63ed734f97b429b5f5"
+      },
+      {
+        "bytes": 32072,
+        "path": "tests/test_cptc_projection_kernel.py",
+        "sha256": "9bcede5974975fbdda338751b0f9d648fd0ad37b461d196340a627dfecd3eeac"
+      },
+      {
+        "bytes": 19103,
+        "path": "tests/test_cptc_viterbi_kernel.py",
+        "sha256": "b0d130d1b7f370b4a2ff8c2cf759c1198df3aa4757d4f56b4db1b543afffea0d"
+      },
+      {
+        "bytes": 2343,
+        "path": "tests/test_decision_fidelity.py",
+        "sha256": "c858d3293a93f716f6bd0eb47f7a9dcaaf110428be36052ee4fe577d0760df0f"
+      },
+      {
+        "bytes": 10504,
+        "path": "tests/test_encode.py",
+        "sha256": "c3ea55c470f3f482fbff524e945ed11410ae47d8b43217f93ba0e83b5a426386"
+      },
+      {
+        "bytes": 6574,
+        "path": "tests/test_format.py",
+        "sha256": "fcb759234274c8993154a5b603813bed6df60b40259abffb13008dbbf9ee9da7"
+      },
+      {
+        "bytes": 5054,
+        "path": "tests/test_gptq_fast.py",
+        "sha256": "8e82c7d31fa49566f74a4034f1f260b296270cc91bdeec603b2b48470e41d63d"
+      },
+      {
+        "bytes": 5291,
+        "path": "tests/test_hessian.py",
+        "sha256": "4c49a5c6681fcf1a1fac0708163e1c2f2b8a6a3c04ac81e26f6755c0cf947336"
+      },
+      {
+        "bytes": 66066,
+        "path": "tests/test_jobs.py",
+        "sha256": "3959518a161c20cfcf6dcc29972f676e433939a8aceecd701545f234f81a120b"
+      },
+      {
+        "bytes": 2824,
+        "path": "tests/test_ladder_kernel.py",
+        "sha256": "b5527ea63f5c8458269ed7fb7d1d641dc9903d080995205f917fdcdd747e195b"
+      },
+      {
+        "bytes": 4025,
+        "path": "tests/test_layerwise_batch.py",
+        "sha256": "ee11af8d94ca6b7e705096951befd2e880b9a047535edaefc15a0bc4d06108af"
+      },
+      {
+        "bytes": 11956,
+        "path": "tests/test_lowbit.py",
+        "sha256": "e84c3e2d5eedfc4e05692915a375260391f037dd6618d2315c2e8f536132c764"
+      },
+      {
+        "bytes": 30977,
+        "path": "tests/test_mcp_server.py",
+        "sha256": "ebab81354b2de9caffcd6b2612ec204adbe4a2a2c09e8af81d83dda8650a6c40"
+      },
+      {
+        "bytes": 24316,
+        "path": "tests/test_mcp_tasks.py",
+        "sha256": "1a37e3527e740fc6a9c1fcaa6bf5512fbcec35b5e7d62ddb4f1007f6a91ef1bf"
+      },
+      {
+        "bytes": 17642,
+        "path": "tests/test_moe.py",
+        "sha256": "32d1aa3927241107f803a1f19e980a36045e1b1591cd0a0e388ac1f169b23346"
+      },
+      {
+        "bytes": 6602,
+        "path": "tests/test_ngram_mmap.py",
+        "sha256": "9c6780b11f88bafc0778a75408764e703f1ca1ff75ca4d8c28ad370bd6fb82c1"
+      },
+      {
+        "bytes": 1935,
+        "path": "tests/test_pinned.py",
+        "sha256": "42fa0e6b340bd4eea8494de8b25024826f0ee4cda42ffa3f5c51ffd8267953bc"
+      },
+      {
+        "bytes": 9481,
+        "path": "tests/test_pipeline.py",
+        "sha256": "075859f1048aa35b2a756e7f09a39cf3bb025c47900f2583267b14b40dbd4762"
+      },
+      {
+        "bytes": 1685,
+        "path": "tests/test_probe_dtype.py",
+        "sha256": "06e5c55de4644aca7399a489228ee1977485da8993073f8c810d065f2937c126"
+      },
+      {
+        "bytes": 28805,
+        "path": "tests/test_qad.py",
+        "sha256": "707fb7dd880a22dabdde16ba4f73e86ef7e873889e63f9ea099fd560a1d1bd2b"
+      },
+      {
+        "bytes": 5226,
+        "path": "tests/test_qad_budget_sim.py",
+        "sha256": "1d965d9a0e6109ee95e05c11df64fa04c6cc87fbf6173d264ddaac1c677e564c"
+      },
+      {
+        "bytes": 4627,
+        "path": "tests/test_qad_kernel.py",
+        "sha256": "50a643f9b77a87349b85cde4f1506765e978a6e24214f80aa974a6ff06247047"
+      },
+      {
+        "bytes": 30119,
+        "path": "tests/test_quality.py",
+        "sha256": "cecee724616cb7cc17b0f1c336b5f38dc167c963ab21a88ec69856cc224c1d0b"
+      },
+      {
+        "bytes": 7689,
+        "path": "tests/test_refine.py",
+        "sha256": "6ef8ae9fbfd67f655c55a6b79fdd74ace4dd625b24c329de3aa79e7c48b1eed9"
+      },
+      {
+        "bytes": 2908,
+        "path": "tests/test_refine_kernel.py",
+        "sha256": "14f08140c8b9af3a0ca75da4d405d6ab55dfe777c080b6540a56d86b67cde4f1"
+      },
+      {
+        "bytes": 6786,
+        "path": "tests/test_sensitivity.py",
+        "sha256": "41a7f5b928ca9b30aea983db6a68666fc1d0e4b80ca0a21d53288f00ea082106"
+      },
+      {
+        "bytes": 10787,
+        "path": "tests/test_service.py",
+        "sha256": "3b16e2721da392b33a550cfdb9d0ab9b244d99c8bcf08f52247826101c58f856"
+      },
+      {
+        "bytes": 3952,
+        "path": "tests/test_size.py",
+        "sha256": "54efe37e42436720dc98a9dd09e9c92c45784adfd1db09b82d06a8cf764ffd84"
+      },
+      {
+        "bytes": 9955,
+        "path": "tests/test_stack.py",
+        "sha256": "4495eedaa4c3f4cd25b3e6751e425409a352786b8a0c1fd6e901071748a6f014"
+      },
+      {
+        "bytes": 1426,
+        "path": "tests/test_tune.py",
+        "sha256": "12612c2a13d6b507724f5dba226a655ab5646747180fc6d934ed2d5f50d37745"
+      },
+      {
+        "bytes": 36963,
+        "path": "tests/test_workspace.py",
+        "sha256": "65801cec52e35e926e9d806241f6d1432e51245bd336d120e9789235c986975f"
+      }
+    ],
+    "files_sha256": "fd55115dec3b27976f804717116e943e382ecab0f5ce82e6df5e2747ae85b150",
+    "git": false,
+    "packages": {
+      "accelerate": "1.16.0",
+      "executable": "/home/chenco_adm/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340/bin/python",
+      "hi2": null,
+      "numpy": "2.3.5",
+      "python": "3.12.14",
+      "regex": "2026.11.18",
+      "safetensors": "0.8.0",
+      "tokenizers": "0.23.3",
+      "torch": "2.12.0+rocm7.14.0",
+      "transformers": "5.22.2",
+      "triton": "3.7.1+git0263a6a6.rocm7.14.0"
+    },
+    "tree": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/source-full4b-995fc26317bd74d5d77653f42c4639086ac0d441-snapshot"
+  },
+  "status": "cpu_verified"
+}

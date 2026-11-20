@@ -1,7 +1,7 @@
 # HI2 (`rdna_hint_flex`) against EXL3, GGUF and AWQ: what we measured
 
 The initial snapshot is from 2026-10-26, with dated follow-up measurements below
-through 2026-10-31. GPU runs used Radeon PRO V620 (gfx1030); some numerical
+through 2026-11-20. GPU runs used Radeon PRO V620 (gfx1030); some numerical
 evaluations ran on CPU, as specified in their sections. "n/m" means not measured.
 Perplexity ratio (PPL x) is quantized perplexity divided by the unquantized
 perplexity on the same text and evaluator. KLD denotes full-vocabulary KL divergence,
@@ -16,6 +16,46 @@ See the [support matrix](getting-started.md#supported-inputs-and-evidence) and
 Reading guide: "docs" is the repo-docs held-out text, which the early HI2 runs were also
 *calibrated* on (flattering); "mix" is a held-out chat, instruction and tool-calling text;
 multiple-choice scores are out of domain for everything and are the fairest signal.
+
+## CPTC/H16 DEFAULT quality on Qwen3.5-4B (2026-11-20)
+
+This is the opt-in [CPTC adaptation](format-spec.md#14-cptc-opt-in-v33-arxiv-261122019),
+not the paper's full randomized-Hadamard pipeline. Both variants used the
+production 27B DEFAULT preset at target 3.0 bpw: all 32 layers executed 300 QAD
+steps and both final-KL phases executed 200 steps. The ladder kept all 32 trained
+layers and its best final-KL update. CPTC kept 28 trained layers and four PTQ
+fallbacks; every final-KL validation was worse, so the keep-best guard restored
+the pre-final-KL state. Do not call CPTC's final-KL phase an improvement.
+
+FP16 HF dense-export evaluation, full-vocabulary KL against the original
+`Qwen/Qwen3.5-4B` revision `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`.
+Mix has 28 frozen windows / 57,316 scored tokens; docs has seven / 14,329.
+Exact calibration-document duplicates were removed; semantic near-duplicates
+were not qualified. Reference NLL is identical between the paired runs.
+
+| Cohort / metric (lower is better) | Ladder | CPTC | CPTC / ladder, paired-window 95% interval |
+| --- | ---: | ---: | --- |
+| Mix PPL | 4.491953 | 5.004764 | 1.114 [1.075, 1.161] |
+| Mix KL (nats/token) | 0.236427 | 0.281164 | 1.189 [1.141, 1.237] |
+| Docs PPL | 7.325623 | 7.648359 | 1.044 [1.033, 1.057] |
+| Docs KL (nats/token) | 0.071356 | 0.094890 | 1.330 [1.271, 1.403] |
+
+Intervals use 5,000 paired-window bootstrap draws, seed 0, and are conditional
+on these windows, not independent-document or task-accuracy qualification.
+The HF evaluation children completed with finite scores and no fault markers,
+but all cohorts had KFD eviction increments: their elapsed times are excluded
+from performance claims. Training elapsed times are excluded for the same reason.
+
+CPTC saves 10,896,080 tensor bytes (10.39 MiB, about 0.31% of this checkpoint's
+tensor payload). All 313 protected embedding, vision and MTP tensors are
+byte-identical to the source. A smaller checkpoint does not establish a KV-cache
+capacity gain. Native throughput, latency and capacity are not measured by this
+HF quality study.
+
+**Verdict:** this CPTC/H16 DEFAULT pipeline is a quality regression on both
+cohorts, not a default recommendation or a verdict on the full paper.
+[Raw receipts, parameter counts, final-KL traces and reviewed scope](../experiments/results/cptc_qwen35_4b_2026-11-20/quality-study.json)
+pin the actual quantizer source at `995fc26317bd74d5d77653f42c4639086ac0d441`.
 
 ## Qwen3.5-4B (unquantized PPL 7.067 on docs)
 

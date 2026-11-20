@@ -1,0 +1,52 @@
+{
+  "scope": "Teacher-forced full-vocabulary KL and NLL from HF dense exports; not a native-kernel KL measurement.",
+  "eval_id": "3564dc0a4eb0cd7c1360d1e95dce03903a85a5ce13b3f79c700ece27552bd69c",
+  "dtype": "float16",
+  "windows": 28,
+  "baseline": {
+    "tokens": 57316,
+    "ppl_original": 4.582276676351505,
+    "ppl_quantized": 4.491952525221066,
+    "kld_nats_per_token": 0.23642668310417383,
+    "top1_agreement": 0.8592190662293251
+  },
+  "candidate": {
+    "tokens": 57316,
+    "ppl_original": 4.582276676351505,
+    "ppl_quantized": 5.004764115319722,
+    "kld_nats_per_token": 0.28116448145700074,
+    "top1_agreement": 0.8573696699002024
+  },
+  "difference": {
+    "ppl_ratio_candidate_over_baseline": 1.1141622907231012,
+    "kld_difference_candidate_minus_baseline": 0.0447377983528269,
+    "kld_ratio_candidate_over_baseline": 1.1892248276101502,
+    "top1_difference_candidate_minus_baseline": -0.0018493963291227322
+  },
+  "paired_window_bootstrap_95pct": {
+    "ppl_ratio_candidate_over_baseline": [
+      1.0749917064174441,
+      1.1610620058466872
+    ],
+    "kld_difference_candidate_minus_baseline": [
+      0.029441058430221448,
+      0.06158322024074175
+    ],
+    "kld_ratio_candidate_over_baseline": [
+      1.140514017014397,
+      1.2367519885945244
+    ],
+    "top1_difference_candidate_minus_baseline": [
+      -0.00415241817293599,
+      0.0005238502337916221
+    ]
+  },
+  "bootstrap_draws": 5000,
+  "bootstrap_seed": 0,
+  "bootstrap_limit": "Conditional on these fixed token windows; not independent-document or task-accuracy qualification.",
+  "max_teacher_nll_drift_nats_per_token": 0.0,
+  "input_sha256": {
+    "baseline": "897826ba9ac5235496bd2f68d50190e490df1110e44e831d5b3a9351e5d21231",
+    "candidate": "16fe457de2028e02bb2cbaabd6a7bf0b4547d378bcf20ba66dcbfac6a8bcc3a1"
+  }
+}

@@ -1,0 +1,2227 @@
+{
+  "attempt_id": "c190d4c815ce46fbb423320a42f96148",
+  "calibration": {
+    "ids_fingerprint": null,
+    "paths": [
+      {
+        "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt",
+        "sha256": "4f52263a8d3cbd5e1e376e43a918c3dfca814a0f5bb0187f410cf8623d000079"
+      }
+    ]
+  },
+  "config": {
+    "cache_devices": 0,
+    "cache_dir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/cache",
+    "calib": [
+      "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/inputs/calib.txt"
+    ],
+    "calib_ids": null,
+    "calib_samples": 128,
+    "cfg": {
+      "act_order": false,
+      "candidates": [
+        [
+          2,
+          16
+        ],
+        [
+          2,
+          32
+        ],
+        [
+          2,
+          64
+        ],
+        [
+          4,
+          16
+        ],
+        [
+          4,
+          32
+        ],
+        [
+          4,
+          64
+        ]
+      ],
+      "cptc": true,
+      "cptc_depth": 16,
+      "cptc_sweeps": 0,
+      "cptc_table_rounds": 0,
+      "cptc_table_samples": 262144,
+      "damp": 0.01,
+      "effort": "normal",
+      "expert_min_tokens": 2.0,
+      "refine_passes": 0,
+      "rotation": "on",
+      "rounding": "gptq",
+      "sequential": false,
+      "smooth": 0.5,
+      "smooth_search": []
+    },
+    "compute_dtype": "float32",
+    "devices": [
+      "cuda:0",
+      "cuda:1"
+    ],
+    "dst": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+    "exclude": "(embed|lm_head|norm|\\.mlp\\.gate(\\.weight)?$|router|indexer|conv1d|\\.bias$)",
+    "expert_share_floor": 0.05,
+    "include": null,
+    "int8_force": 0,
+    "limit_layers": null,
+    "max_error_ratio": null,
+    "max_error_ratios": null,
+    "moe_layout": "stacked",
+    "qad": {
+      "batch": 4,
+      "budget": 1.0,
+      "buffer_dtype": "auto",
+      "data_parallel": true,
+      "dtype": "float32",
+      "eval_every": 0,
+      "evals": 4,
+      "final_batch": 2,
+      "final_bytes": true,
+      "final_evals": 4,
+      "final_kl": 200,
+      "final_lr_norm": 5e-05,
+      "final_lr_p": 0.02,
+      "final_norms": true,
+      "final_tokens": 0,
+      "init": "weights",
+      "keep_best": true,
+      "kl_layers": 0,
+      "kl_tokens": 256,
+      "kl_weight": 1.0,
+      "latent_units": "step",
+      "layers": null,
+      "lr_norm": 0.0001,
+      "lr_p": 0.05,
+      "lr_w": 0.01,
+      "min_gain": 0.0,
+      "min_steps": 0,
+      "samples": 256,
+      "sampling": "random",
+      "seed": 0,
+      "steps": 300,
+      "train_norms": false,
+      "val": 8,
+      "warmup": 0.05
+    },
+    "sens_batch": 1,
+    "sens_dtype": "auto",
+    "sens_floor": 0.05,
+    "sens_len": 512,
+    "sens_seqs": 8,
+    "sensitivity": "probe",
+    "seq_len": 2048,
+    "sigma_fp16_above": 0,
+    "src": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "target_bpw": 3.0,
+    "workdir": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work"
+  },
+  "environment": {
+    "code_sha256": "5bdc53d6f23243c98cea8f08cb52742e5613a068cbbd33fb1921618e8bb5d6a7",
+    "hi2": null,
+    "platform": "Linux-7.1.7-100.p2p_post7.fc43.x86_64-x86_64-with-glibc2.42",
+    "python": "3.12.14",
+    "safetensors": "0.8.0",
+    "torch": "2.12.0+rocm7.14.0",
+    "transformers": "5.22.2"
+  },
+  "outputs": [
+    "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model"
+  ],
+  "phase_event_count": 460,
+  "phases": [
+    {
+      "elapsed_s": 10379.36664891243,
+      "phase": "final_kl",
+      "status": "running",
+      "step": 200,
+      "total_steps": 200,
+      "validation_kld": 0.24500142474425957
+    },
+    {
+      "phase": "final_kl",
+      "status": "completed"
+    },
+    {
+      "output": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+      "phase": "qad",
+      "status": "completed"
+    },
+    {
+      "outputs": 1,
+      "phase": "encode",
+      "status": "running"
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 1,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.1.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 2,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.1.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 3,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.1.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 4,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.10.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 5,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.10.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 6,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.10.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 7,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.11.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 8,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.11.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 9,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.11.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 10,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.18.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 11,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.18.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 12,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.18.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 13,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.19.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 14,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.19.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 15,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.19.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 16,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.12.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 17,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.12.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 18,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.12.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 19,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.13.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 20,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.13.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 21,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.13.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 22,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.7.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 23,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.8.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 24,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.8.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 25,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.8.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 26,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.21.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 27,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.21.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 28,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.21.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 29,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.22.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 30,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.22.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 31,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.22.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 32,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.23.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 33,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.23.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 34,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.23.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 35,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.31.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 36,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.31.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 37,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.31.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 38,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.4.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 39,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.4.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 40,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.4.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 41,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.14.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 42,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.14.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 43,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.14.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 44,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.15.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 45,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.15.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 46,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.15.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 47,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.9.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 48,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.9.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 49,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.9.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 50,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.29.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 51,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.3.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 52,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.3.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 53,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.3.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 54,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.30.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 55,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.30.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 56,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.30.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 57,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.16.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 58,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.16.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 59,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.16.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 60,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.17.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 61,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.17.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 62,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.17.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 63,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.24.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 64,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.24.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 65,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.24.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 66,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.5.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 67,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.5.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 68,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.5.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 69,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.6.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 70,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.6.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 71,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.6.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 72,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.7.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 73,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.7.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 74,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.2.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 75,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.2.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 76,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.2.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 77,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.20.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 78,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.20.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 79,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.20.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 80,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.25.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 81,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.25.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 82,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.25.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 83,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.26.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 84,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.26.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 85,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.26.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 86,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.27.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 87,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.27.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 88,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.27.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 89,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.28.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 90,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.28.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 91,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.28.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 92,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.29.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 93,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.29.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 94,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.0.mlp.down_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 95,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.0.mlp.gate_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 96,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.0.mlp.up_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 97,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.10.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 98,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.11.self_attn.q_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 99,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.18.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 100,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.19.self_attn.q_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 101,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.2.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 102,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.12.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 103,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.13.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 104,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.7.self_attn.q_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 105,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.8.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 106,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.22.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 107,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.23.self_attn.q_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 108,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.31.self_attn.q_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 109,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.4.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 110,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.14.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 111,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.15.self_attn.q_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 112,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.9.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 113,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.3.self_attn.q_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 114,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.30.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 115,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.16.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 116,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.17.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 117,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.24.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 118,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.25.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 119,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.5.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 120,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.6.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 121,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.20.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 122,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.21.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 123,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.26.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 124,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.27.self_attn.q_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 125,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.28.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 126,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.29.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 127,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.0.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 128,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.1.linear_attn.in_proj_qkv.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 129,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.10.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 130,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.10.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 131,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.11.self_attn.o_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 132,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.18.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 133,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.18.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 134,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.19.self_attn.o_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 135,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.2.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 136,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.12.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 137,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.12.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 138,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.13.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 139,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.13.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 140,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.7.self_attn.o_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 141,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.8.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 142,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.8.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 143,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.21.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 144,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.22.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 145,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.22.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 146,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.23.self_attn.o_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 147,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.31.self_attn.o_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 148,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.4.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 149,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.4.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 150,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.14.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 151,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.14.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 152,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.15.self_attn.o_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 153,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.9.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 154,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.9.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 155,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.3.self_attn.o_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 156,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.30.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 157,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.30.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 158,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.16.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 159,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.16.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 160,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.17.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 161,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.17.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 162,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.24.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 163,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.24.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 164,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.25.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 165,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.25.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 166,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.5.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 167,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.5.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 168,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.6.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 169,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.6.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 170,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.2.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 171,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.20.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 172,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.20.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 173,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.21.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 174,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.26.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 175,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.26.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 176,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.27.self_attn.o_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 177,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.28.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 178,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.28.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 179,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.29.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 180,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.29.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 181,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.0.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 182,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.0.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 183,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.1.linear_attn.in_proj_z.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 184,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.1.linear_attn.out_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 185,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.11.self_attn.k_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 186,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.11.self_attn.v_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 187,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.19.self_attn.k_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 188,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.19.self_attn.v_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 189,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.7.self_attn.k_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 190,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.7.self_attn.v_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 191,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.23.self_attn.k_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 192,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.23.self_attn.v_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 193,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.31.self_attn.k_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 194,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.31.self_attn.v_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 195,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.15.self_attn.k_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 196,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.15.self_attn.v_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 197,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.3.self_attn.k_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 198,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.3.self_attn.v_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 199,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.27.self_attn.k_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 200,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.27.self_attn.v_proj.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 201,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.10.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 202,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.10.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 203,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.18.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 204,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.18.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 205,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.2.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 206,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.2.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 207,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.12.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 208,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.12.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 209,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.13.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 210,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.13.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 211,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.8.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 212,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.8.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 213,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.22.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 214,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.22.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 215,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.4.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 216,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.4.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 217,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.14.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 218,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.14.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 219,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.9.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 220,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.9.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 221,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.30.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 222,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.30.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 223,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.16.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 224,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.16.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 225,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.17.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 226,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.17.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 227,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.24.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 228,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.24.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 229,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.25.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 230,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.25.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 231,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.5.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 232,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.5.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 233,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.6.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 234,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.6.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 235,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.20.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 236,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.20.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 237,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.21.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 238,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.21.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 239,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.26.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 240,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.26.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 241,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.28.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 242,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.28.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 243,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.29.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 244,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.29.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 245,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.0.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 246,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.0.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 247,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.1.linear_attn.in_proj_b.weight",
+      "total_tensors": 248
+    },
+    {
+      "artifact": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/work/per-expert/model",
+      "completed_tensors": 248,
+      "phase": "encode",
+      "status": "running",
+      "tensor": "model.language_model.layers.1.linear_attn.in_proj_a.weight",
+      "total_tensors": 248
+    },
+    {
+      "phase": "encode",
+      "status": "completed"
+    },
+    {
+      "phase": "validation",
+      "status": "running"
+    },
+    {
+      "phase": "validation",
+      "status": "completed"
+    },
+    {
+      "phase": "run",
+      "status": "completed"
+    }
+  ],
+  "result": {
+    "allocation_bpw": 2.999999318593922,
+    "allocation_error_ratio": 5.863856305131096,
+    "avg_bpw": 3.000051549266377,
+    "bpw_by_projection": {
+      "down_proj": 2.9923531214396157,
+      "gate_proj": 2.934608777364095,
+      "in_proj_a": 4.7880859375,
+      "in_proj_b": 4.778849283854167,
+      "in_proj_qkv": 2.8457463582356772,
+      "in_proj_z": 3.125635782877604,
+      "k_proj": 4.099700927734375,
+      "o_proj": 4.1431732177734375,
+      "out_proj": 3.1345080693562823,
+      "q_proj": 2.8254432678222656,
+      "up_proj": 2.92534605662028,
+      "v_proj": 4.295707702636719
+    },
+    "feasible": true,
+    "frac_int4_rows": 0.3511817688955622,
+    "frac_rows_by_bits": {
+      "2": 0.6488182312867481,
+      "4": 0.3511817687132519
+    },
+    "moe_layout": "stacked",
+    "params": 3569090560,
+    "peak_memory_gib": {
+      "cuda:0": 7.52,
+      "cuda:1": 9.76,
+      "host_rss": 114.25
+    },
+    "runtime_s": {
+      "allocate": 1.3,
+      "encode": 4.8,
+      "outputs_in_this_run": 1,
+      "phase1": 32313.4,
+      "probe": 7290.3,
+      "qad": 23816.0,
+      "total": 63425.9
+    },
+    "tensors": 248
+  },
+  "run_id": "6306795df04335745d36462d4b96c75f9620756f54c9ef2f578fbee26d52f4ca",
+  "schema_version": 1,
+  "source": {
+    "assets": {
+      "LICENSE": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a",
+      "README.md": "1406be1b6b8fd8a6545870da516912804756593628a1d0fb0a7965211e82a7bb",
+      "chat_template.jinja": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+      "config.json": "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670",
+      "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+      "model.safetensors.index.json": "cf3f798ee02ba45f9622aa8892a47369ab667d0afbf154ee7c2212de42e6302d",
+      "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+      "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+      "tokenizer_config.json": "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8",
+      "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13",
+      "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+    },
+    "auxiliary_inputs": [],
+    "fingerprint": "c42981fb99671d7edd0ee2aaeaa2da3881b1b400f3a47c8cba9ab9bb5c3c5a2b",
+    "path": "/home/chenco_adm/.cache/huggingface/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+  },
+  "started_at": 1795087469.989066,
+  "state": "succeeded",
+  "updated_at": 1795150900.0102434
+}
