@@ -922,13 +922,14 @@ def test_cptc_shared_tables_train_across_two_devices_with_one_master():
         for p, q in zip(book.parameters(), ref.parameters()):
             q.copy_(p)
 
-    # The cached indices are immutable, but the table values they index are live.
+    # Negate the whole live table: one arbitrary entry may not occur in this fixture.
+    # Cached indices stay immutable, but every nonzero selected value must change.
     before2, before4 = m2.weight().detach().clone(), m4.weight().detach().clone()
+    assert torch.count_nonzero(before2) and torch.count_nonzero(before4)
     with torch.no_grad():
-        book.table_u[2][1].add_(2.0)
-        book.table_u[4][1].add_(2.0)
-        ref.table_u[2][1].add_(2.0)
-        ref.table_u[4][1].add_(2.0)
+        for k in book.widths():
+            book.table_u[k].neg_()
+            ref.table_u[k].neg_()
     torch.testing.assert_close(
         m2.weight(), r2.weight(), rtol=1e-4, atol=1e-5
     )
