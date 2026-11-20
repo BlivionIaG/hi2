@@ -1,0 +1,544 @@
+{
+  "schema_version": 1,
+  "status": "factor_design_frozen_not_executed",
+  "scope": "Prospective controlled optimization plan. No planned trial or runtime path is a measured result.",
+  "model": {
+    "id": "Qwen/Qwen3.5-4B",
+    "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "target_bpw": 3.0,
+    "transform": "existing H16, not full-paper RHT"
+  },
+  "immutable_controls": {
+    "quantizer_source_sha": "995fc26317bd74d5d77653f42c4639086ac0d441",
+    "baseline_artifact_digest": "018bd5f1858361361d568945ae93f47a8267ed086eaf8e4d2a4566cff1c2517d",
+    "cptc_artifact_digest": "906552672967f53cf68872f2a4e5e92964fe68cc59fd2725ea358aa5f0522fb9",
+    "original_native_plan_sha256": "932fe9ee045312e1831f77f3abc1d457e9c9f1809b5f1c1c51db666edbeecb3f",
+    "original_abba_must_finish_first": true
+  },
+  "resource_policy": {
+    "gpu_slot": "a2 only",
+    "hip_indices": [
+      0,
+      1
+    ],
+    "pci": [
+      "0000:d1:00.0",
+      "0000:d4:00.0"
+    ],
+    "power_w": 175,
+    "no_overlap_with_native_timed_windows": true,
+    "no_auto_retry_after_fault": true,
+    "record_kfd_increments": true,
+    "native_timing_requires_zero_kfd_eviction": true,
+    "memory_and_storage_admission_before_run": true
+  },
+  "quality_factors": {
+    "scale_units": [
+      "log",
+      "row_u8"
+    ],
+    "projection_sweeps": [
+      1,
+      4
+    ],
+    "final_scale_lr": [
+      0.02,
+      0.002,
+      0.0002
+    ],
+    "final_shared_table_learning": [
+      false,
+      true
+    ]
+  },
+  "quality_trials": [
+    {
+      "id": "log-p1-lr2e-02-fixed",
+      "qad_parent": "log-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.02,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection.",
+      "preserved_control": {
+        "quantizer_source_sha": "995fc26317bd74d5d77653f42c4639086ac0d441",
+        "model_artifact_digest": "906552672967f53cf68872f2a4e5e92964fe68cc59fd2725ea358aa5f0522fb9",
+        "existing_model": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+        "final_kl_outcome": "200 steps executed, keep-best restored init; this model is also the reusable pre-final-KL QAD parent."
+      }
+    },
+    {
+      "id": "log-p1-lr2e-02-tables",
+      "qad_parent": "log-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.02,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p1-lr2e-03-fixed",
+      "qad_parent": "log-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.002,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p1-lr2e-03-tables",
+      "qad_parent": "log-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.002,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p1-lr2e-04-fixed",
+      "qad_parent": "log-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.0002,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p1-lr2e-04-tables",
+      "qad_parent": "log-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.0002,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p4-lr2e-02-fixed",
+      "qad_parent": "log-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.02,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p4-lr2e-02-tables",
+      "qad_parent": "log-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.02,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p4-lr2e-03-fixed",
+      "qad_parent": "log-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.002,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p4-lr2e-03-tables",
+      "qad_parent": "log-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.002,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p4-lr2e-04-fixed",
+      "qad_parent": "log-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.0002,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "log-p4-lr2e-04-tables",
+      "qad_parent": "log-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "log",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.0002,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p1-lr2e-02-fixed",
+      "qad_parent": "row_u8-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.02,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p1-lr2e-02-tables",
+      "qad_parent": "row_u8-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.02,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p1-lr2e-03-fixed",
+      "qad_parent": "row_u8-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.002,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p1-lr2e-03-tables",
+      "qad_parent": "row_u8-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.002,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p1-lr2e-04-fixed",
+      "qad_parent": "row_u8-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.0002,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p1-lr2e-04-tables",
+      "qad_parent": "row_u8-p1",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 1,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.0002,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p4-lr2e-02-fixed",
+      "qad_parent": "row_u8-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.02,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p4-lr2e-02-tables",
+      "qad_parent": "row_u8-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.02,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p4-lr2e-03-fixed",
+      "qad_parent": "row_u8-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.002,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p4-lr2e-03-tables",
+      "qad_parent": "row_u8-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.002,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p4-lr2e-04-fixed",
+      "qad_parent": "row_u8-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.0002,
+        "final_cptc_train_tables": false,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    },
+    {
+      "id": "row_u8-p4-lr2e-04-tables",
+      "qad_parent": "row_u8-p4",
+      "qad_overrides": {
+        "cptc_scale_units": "row_u8",
+        "cptc_projection_sweeps": 4,
+        "steps": 300
+      },
+      "final_overrides": {
+        "final_kl": 200,
+        "final_lr_p": 0.0002,
+        "final_cptc_train_tables": true,
+        "final_cptc_table_lr": 0.02
+      },
+      "selection": "Calibration validation KL only; benchmark held-out scores are reporting, not hyperparameter selection."
+    }
+  ],
+  "qad_parent_count": 4,
+  "qad_parent_reuse": "Reuse original log/p1 QAD state only after validating its immutable source/input/artifact provenance and default-behavior compatibility. Other parents share unchanged calibration fitting inputs but use fresh correctly fingerprinted layer-wise states.",
+  "training_constants": {
+    "preset": "production 27B DEFAULT",
+    "qad_steps_per_layer": 300,
+    "layers": 32,
+    "final_kl_steps": 200,
+    "final_table_lr_when_enabled": 0.02,
+    "other_training_configuration": "Copy exact original run configuration, calibration/train/validation IDs, seed, dtype, batch, warmup, norms, latent units and allocation settings; only declared factors change."
+  },
+  "training_efficiency": {
+    "cache_budgets_mb": [
+      0,
+      4096
+    ],
+    "quality_matrix_uses_cache": "Enable only after output, gradient, optimizer-update and export parity for both scale units and fixed/trainable tables. Otherwise retain uncached reference; no silent numerical relaxation.",
+    "timing": "Separate matched on/off measurement; raw training runs with KFD stalls are not valid speed comparisons."
+  },
+  "runtime_screen": {
+    "quality_models": "All 24 quality configurations, including the preserved control",
+    "paths": [
+      {
+        "gemv": "v1",
+        "prefill": "hip"
+      },
+      {
+        "gemv": "v1",
+        "prefill": "cptc-fused"
+      },
+      {
+        "gemv": "v2",
+        "prefill": "hip"
+      },
+      {
+        "gemv": "v2",
+        "prefill": "cptc-fused"
+      }
+    ],
+    "profile_count": 96,
+    "mtp": 0,
+    "cells": [
+      "1024:512:1:4",
+      "1024:512:8:8",
+      "16384:1024:1:4",
+      "16384:1024:8:8"
+    ],
+    "warmup": "Excluded same-shape warmup and confirmed prefix-cache reset before every timed cell.",
+    "quality_gate": "Independent native-kernel references and graph replay first; per-profile native correctness and NLL parity versus the same quantized weights. Screening is not final ABBA qualification."
+  },
+  "qualification": {
+    "quality_selection": "Freeze validation ranking before scoring benchmark holdouts. Report all 24 on the original 28 mix and seven docs windows, with full-vocabulary HF KL, NLL/PPL, paired-window intervals and raw token/hash checks. Confirm the top two validation-selected models on an independently frozen fresh holdout.",
+    "performance_finalists": "Fresh matched ABBA qualification for validation-selected quality finalists and measured runtime Pareto finalists, keeping ladder DEFAULT and CPTC DEFAULT controls. Verify combined settings rather than adding isolated gains.",
+    "mtp_modes": [
+      0,
+      2
+    ],
+    "generation_cells": [
+      "1024:512:1:4",
+      "1024:512:8:8",
+      "16384:1024:1:4",
+      "16384:1024:8:8",
+      "32768:2048:1:4",
+      "32768:2048:8:8"
+    ],
+    "prefill_only_cells": [
+      "1024:1:1:4",
+      "1024:1:8:8",
+      "16384:1:1:4",
+      "16384:1:8:8",
+      "32768:1:1:4",
+      "32768:1:8:8"
+    ],
+    "kv_bytes_per_rank": 17179869184,
+    "metrics": [
+      "full-vocabulary HF KL",
+      "HF and native NLL/PPL",
+      "per-request TTFT/TPOT/effective prompt/decode rate",
+      "streaming chunk ITL",
+      "aggregate output throughput",
+      "prefill-focused aggregate throughput",
+      "KV token capacity at fixed pool",
+      "loaded-model memory and whole-device VRAM snapshots",
+      "training implementation timing under valid guards"
+    ],
+    "limits": [
+      "Best tested finite matrix, not proof of universal optimum.",
+      "H16 adaptation, not full-paper RHT reproduction.",
+      "Fixed KV pool does not automatically convert smaller checkpoint bytes into capacity gain.",
+      "MTP streaming chunk ITL is not individual-token ITL."
+    ]
+  },
+  "execution_admission": [
+    "Pin committed implementation and exact built library before GPU execution.",
+    "Verify all current guards, lease, STOP fingerprint, topology, power, fans and quiet/boot protocols.",
+    "Validate persisted parent/head-input/calibration provenance; never bypass a cache mismatch by rewriting its fingerprint.",
+    "Every trial has a fresh output/receipt directory; no overwrites of original controls.",
+    "Freeze fresh confirmatory holdout before the first new optimization run."
+  ]
+}
