@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "original_native_complete": true,
+  "accepted_arm_count": 8,
+  "runtime_source_sha": "df548843ebca6f45149b505fb51367aded85c0ee",
+  "library_sha256": "af0f5d6194b4fdd10b787598e8dc4802735999f99f96cf9485e53cfd5d6e49d1",
+  "accepted_arms": [
+    "mtp0-baseline-A1",
+    "mtp0-baseline-A2",
+    "mtp0-candidate-C1",
+    "mtp0-candidate-C2",
+    "mtp2-baseline-A1",
+    "mtp2-baseline-A2",
+    "mtp2-candidate-C1",
+    "mtp2-candidate-C2"
+  ],
+  "cells_per_arm": 24,
+  "measured_cells_per_arm": 12,
+  "receipts": [
+    {
+      "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/serve-study/_study-gate/cptc-study-20261120T063215Z/study.json",
+      "sha256": "24713bc277b419c992bb85d374f04345d2c2c4858dd828a9cbbd58a9c9166bca"
+    },
+    {
+      "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/completed-baseline-A1-thermal-review.json",
+      "sha256": "961df0188fa7dc192eff434dd814c31391abeb6855e0ccc7301e399e43f1051c"
+    }
+  ],
+  "scope": "Original immutable DEFAULT ABBA at MTP0 and MTP2 only. Accepts seven completed boots plus the independently reviewed prior A1; no optimized kernel or ablation claims."
+}

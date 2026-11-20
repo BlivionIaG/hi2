@@ -1,0 +1,1908 @@
+{
+  "schema_version": 1,
+  "scope": "CPU re-analysis of already-completed original-native 8-arm receipts. KV/memory figures are as logged by the server; physical VRAM is whole-device sysfs and not weight-only, peak, or an automatic KV-capacity gain. Native PPL is teacher-forced over top-1 logprob responses and cannot yield full-vocabulary KL.",
+  "source_root": ".tmp/cptc-original-native-complete/serve-study",
+  "accepted_join": ".tmp/cptc-original-native-complete/original-native-8arm-accepted-20261120.json",
+  "runtime_source_sha": "df548843ebca6f45149b505fb51367aded85c0ee",
+  "library_sha256": "af0f5d6194b4fdd10b787598e8dc4802735999f99f96cf9485e53cfd5d6e49d1",
+  "kv_budget_note": "kv_cache_memory_bytes=17179869184 (16 GiB) per rank with gpu_memory_utilization=0.9 logged but bypassed (memory profiling skipped); KV capacity is therefore a manual reservation, identical budget in all arms.",
+  "kv_capacity": {
+    "by_mode": {
+      "mtp0": {
+        "distinct_kv_token_capacities": [
+          1024562
+        ],
+        "arms_at_each_capacity": {
+          "1024562": [
+            "mtp0-baseline-A1",
+            "mtp0-baseline-A2",
+            "mtp0-candidate-C1",
+            "mtp0-candidate-C2"
+          ]
+        }
+      },
+      "mtp2": {
+        "distinct_kv_token_capacities": [
+          890115
+        ],
+        "arms_at_each_capacity": {
+          "890115": [
+            "mtp2-baseline-A1",
+            "mtp2-baseline-A2",
+            "mtp2-candidate-C1",
+            "mtp2-candidate-C2"
+          ]
+        }
+      }
+    },
+    "deltas": {
+      "mtp2_minus_mtp0_tokens": -134447,
+      "mtp2_over_mtp0_ratio": 0.8687761209180118,
+      "mtp2_minus_mtp0_bytes_per_token_derived": 2532.716644979122,
+      "mtp0_effective_contexts_at_262144": 3.9083938598632812,
+      "mtp2_effective_contexts_at_262144": 3.395519256591797,
+      "candidate_minus_baseline_tokens_by_mode": {
+        "mtp0": {
+          "baseline_tokens": [
+            1024562
+          ],
+          "candidate_tokens": [
+            1024562
+          ],
+          "delta_tokens": [
+            0
+          ]
+        },
+        "mtp2": {
+          "baseline_tokens": [
+            890115
+          ],
+          "candidate_tokens": [
+            890115
+          ],
+          "delta_tokens": [
+            0
+          ]
+        }
+      }
+    }
+  },
+  "native_ppl_spread_across_boots": {
+    "mtp0-baseline-mix": {
+      "n_boots": 2,
+      "min": 4.491108518052232,
+      "max": 4.491108518052232,
+      "spread": 0.0,
+      "values": [
+        4.491108518052232,
+        4.491108518052232
+      ]
+    },
+    "mtp0-baseline-docs": {
+      "n_boots": 2,
+      "min": 7.326886444925765,
+      "max": 7.326886444925765,
+      "spread": 0.0,
+      "values": [
+        7.326886444925765,
+        7.326886444925765
+      ]
+    },
+    "mtp0-candidate-mix": {
+      "n_boots": 2,
+      "min": 5.005506200656793,
+      "max": 5.005506200656793,
+      "spread": 0.0,
+      "values": [
+        5.005506200656793,
+        5.005506200656793
+      ]
+    },
+    "mtp0-candidate-docs": {
+      "n_boots": 2,
+      "min": 7.6486279735568585,
+      "max": 7.6486279735568585,
+      "spread": 0.0,
+      "values": [
+        7.6486279735568585,
+        7.6486279735568585
+      ]
+    },
+    "mtp2-baseline-mix": {
+      "n_boots": 2,
+      "min": 4.491108518052232,
+      "max": 4.491108518052232,
+      "spread": 0.0,
+      "values": [
+        4.491108518052232,
+        4.491108518052232
+      ]
+    },
+    "mtp2-baseline-docs": {
+      "n_boots": 2,
+      "min": 7.326886444925765,
+      "max": 7.326886444925765,
+      "spread": 0.0,
+      "values": [
+        7.326886444925765,
+        7.326886444925765
+      ]
+    },
+    "mtp2-candidate-mix": {
+      "n_boots": 2,
+      "min": 5.005506200656793,
+      "max": 5.005506200656793,
+      "spread": 0.0,
+      "values": [
+        5.005506200656793,
+        5.005506200656793
+      ]
+    },
+    "mtp2-candidate-docs": {
+      "n_boots": 2,
+      "min": 7.6486279735568585,
+      "max": 7.6486279735568585,
+      "spread": 0.0,
+      "values": [
+        7.6486279735568585,
+        7.6486279735568585
+      ]
+    }
+  },
+  "hf_full_vocabulary_quality": {
+    "quality_study_path": "hi2-cptc/experiments/results/cptc_qwen35_4b_2026-11-20/quality-study.json",
+    "scope": "Completed matched HF full-vocabulary quality comparison only; not native runtime performance or task-accuracy qualification.",
+    "preset": "Production 27B DEFAULT, target 3.0 bpw, QAD 300 steps/layer and final-KL 200 steps attempted for both variants.",
+    "storage_saving_tensor_bytes": 10896080,
+    "storage_limit": "Tensor bytes exclude serialization headers; a smaller checkpoint does not establish an automatic KV-cache capacity gain.",
+    "recommendation": "This CPTC/H16 DEFAULT pipeline regresses quality on both measured cohorts. Keep experimental and opt-in; do not claim a quality win or a failure of the full paper.",
+    "variants": {
+      "baseline": {
+        "quantized_payload_bpw": 3.0245369307748806,
+        "quantized_payload_bytes": 1349355776,
+        "total_exported_tensor_data_bytes": 3530906368,
+        "whole_checkpoint_tensor_bpw": 6.0618173295921824,
+        "protected_tensor_count": 313,
+        "final_kl_kept": "best",
+        "calibration_validation_kl_after_final": 0.1358654808718711,
+        "qad_kept": {
+          "trained": 32
+        }
+      },
+      "cptc": {
+        "quantized_payload_bpw": 3.000113723088046,
+        "quantized_payload_bytes": 1338459696,
+        "total_exported_tensor_data_bytes": 3520010288,
+        "whole_checkpoint_tensor_bpw": 6.043111071287736,
+        "protected_tensor_count": 313,
+        "final_kl_kept": "init",
+        "calibration_validation_kl_after_final": 0.15967385191470385,
+        "qad_kept": {
+          "ptq": 4,
+          "trained": 28
+        }
+      }
+    },
+    "domains": {
+      "mix": {
+        "path": "hi2-cptc/experiments/results/cptc_qwen35_4b_2026-11-20/quality/mix-comparison.json",
+        "scope": "Teacher-forced full-vocabulary KL and NLL from HF dense exports; not a native-kernel KL measurement.",
+        "windows": 28,
+        "dtype": "float16",
+        "baseline": {
+          "tokens": 57316,
+          "ppl_original": 4.582276676351505,
+          "ppl_quantized": 4.491952525221066,
+          "kld_nats_per_token": 0.23642668310417383,
+          "top1_agreement": 0.8592190662293251
+        },
+        "candidate": {
+          "tokens": 57316,
+          "ppl_original": 4.582276676351505,
+          "ppl_quantized": 5.004764115319722,
+          "kld_nats_per_token": 0.28116448145700074,
+          "top1_agreement": 0.8573696699002024
+        },
+        "difference": {
+          "ppl_ratio_candidate_over_baseline": 1.1141622907231012,
+          "kld_difference_candidate_minus_baseline": 0.0447377983528269,
+          "kld_ratio_candidate_over_baseline": 1.1892248276101502,
+          "top1_difference_candidate_minus_baseline": -0.0018493963291227322
+        },
+        "paired_window_bootstrap_95pct": {
+          "ppl_ratio_candidate_over_baseline": [
+            1.0749917064174441,
+            1.1610620058466872
+          ],
+          "kld_difference_candidate_minus_baseline": [
+            0.029441058430221448,
+            0.06158322024074175
+          ],
+          "kld_ratio_candidate_over_baseline": [
+            1.140514017014397,
+            1.2367519885945244
+          ],
+          "top1_difference_candidate_minus_baseline": [
+            -0.00415241817293599,
+            0.0005238502337916221
+          ]
+        },
+        "bootstrap_draws": 5000
+      },
+      "docs": {
+        "path": "hi2-cptc/experiments/results/cptc_qwen35_4b_2026-11-20/quality/docs-comparison.json",
+        "scope": "Teacher-forced full-vocabulary KL and NLL from HF dense exports; not a native-kernel KL measurement.",
+        "windows": 7,
+        "dtype": "float16",
+        "baseline": {
+          "tokens": 14329,
+          "ppl_original": 7.21931870541803,
+          "ppl_quantized": 7.3256231189886805,
+          "kld_nats_per_token": 0.07135645983332124,
+          "top1_agreement": 0.893642263940261
+        },
+        "candidate": {
+          "tokens": 14329,
+          "ppl_original": 7.21931870541803,
+          "ppl_quantized": 7.648358846921623,
+          "kld_nats_per_token": 0.09489020712918568,
+          "top1_agreement": 0.8798939214181032
+        },
+        "difference": {
+          "ppl_ratio_candidate_over_baseline": 1.0440557373333037,
+          "kld_difference_candidate_minus_baseline": 0.023533747295864438,
+          "kld_ratio_candidate_over_baseline": 1.329805421272804,
+          "top1_difference_candidate_minus_baseline": -0.013748342522157841
+        },
+        "paired_window_bootstrap_95pct": {
+          "ppl_ratio_candidate_over_baseline": [
+            1.033077377821575,
+            1.0569484777175808
+          ],
+          "kld_difference_candidate_minus_baseline": [
+            0.01973073345575406,
+            0.027727287979866063
+          ],
+          "kld_ratio_candidate_over_baseline": [
+            1.271268126452515,
+            1.4025111209266499
+          ],
+          "top1_difference_candidate_minus_baseline": [
+            -0.019401214320608595,
+            -0.0079558936422639
+          ]
+        },
+        "bootstrap_draws": 5000
+      }
+    }
+  },
+  "arms": [
+    {
+      "arm": "mtp0-baseline-A1",
+      "mtp_mode": "mtp0",
+      "variant": "baseline",
+      "replicate": "A1",
+      "serve_log_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A1/serve.log",
+      "meta_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A1/meta.json",
+      "checkpoint_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+      "meta_overrides": "TP=2 MTP=0 SERVED_NAME=q35-4b-hi2-study MAXLEN=262144 SEQS=8 KV=17179869184",
+      "meta_start": "2026-11-20 06:50:13",
+      "speculative_config": null,
+      "aux_output_fields_logged": [],
+      "kv_cache": {
+        "configured_budget_bytes_per_rank": 17179869184,
+        "configured_budget_GiB": 16.0,
+        "initial_free_memory_GiB_logged_rounded": 29.44,
+        "reserved_for_kv_GiB_logged_rounded": 16.0,
+        "gpu_kv_cache_size_tokens_logged": 1024562,
+        "max_concurrency_262144_tokens_logged": 3.91,
+        "bytes_per_kv_token_derived": 16768.013242732017,
+        "mamba_page_size_padding_pct_logged": [
+          95.42,
+          95.42
+        ],
+        "block_size_tokens": 1024,
+        "kv_cache_group_sizes": "1024, 1024, 1024, 1024",
+        "kv_layout": "LBHNC",
+        "kv_planning_added_padding_layers_logged": 0,
+        "kv_planning_waste_bound_pct_logged": null
+      },
+      "memory_reporting": {
+        "amdsmi_total_memory_failed_fell_back_to_torch": true
+      },
+      "model_loading": {
+        "checkpoint_size_GiB_logged_rounded": [
+          3.29
+        ],
+        "model_loading_GiB_logged_rounded_by_worker": [
+          1.27,
+          1.27
+        ],
+        "model_loading_seconds_by_worker": [
+          4.431296,
+          4.501722
+        ],
+        "graph_capture_GiB_logged_rounded_by_worker": [
+          0.01,
+          0.01
+        ],
+        "graph_capture_seconds_by_worker": [
+          1,
+          1
+        ],
+        "allocator_metrics": null,
+        "allocator_metrics_absence": "no allocator/peak/reserved-torch lines in serve.log"
+      },
+      "physical_vram": {
+        "before": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A1/native-vram-before-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-benchmark-before-native-quality",
+          "utc": "2026-11-20T06:22:34.982254+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 19957473280,
+              "vram_free_bytes": 12238004224,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 19957485568,
+              "vram_free_bytes": 12237991936,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "after": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A1/native-vram-after-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-native-quality",
+          "utc": "2026-11-20T06:22:58.728350+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21232549888,
+              "vram_free_bytes": 10962927616,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21232562176,
+              "vram_free_bytes": 10962915328,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "used_delta_bytes_by_card": [
+          1275076608,
+          1275076608
+        ]
+      },
+      "native_ppl": {
+        "ppl_json_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A1/native-quality.ppl.json",
+        "ppl_json_sha256": "eda4969d40cb10baaaf76eb60510aff541241c26a14e118e923bb0bf936bf50d",
+        "npz_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A1/native-quality.npz",
+        "npz_sha256": "78aab7b871cc9677f2f15c25fdec955fac428da48c3286e81dd2e0f145fb2aaa",
+        "windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+        "request_top": 1,
+        "request_seq_len": 2048,
+        "npz_keys": [
+          "mix.act_lp",
+          "mix.act_rank",
+          "mix.top_ids",
+          "mix.top_lp",
+          "mix.act_id",
+          "docs.act_lp",
+          "docs.act_rank",
+          "docs.top_ids",
+          "docs.top_lp",
+          "docs.act_id",
+          "meta"
+        ],
+        "domains": {
+          "mix": {
+            "windows": 28,
+            "tokens": 57316,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 86094.33822410255,
+            "sum_nll_from_npz": 86094.33822410257,
+            "sum_nll_recompute_delta": 1.4551915228366852e-11,
+            "nll_nats_per_token_logged": 1.502099557263287,
+            "ppl_logged": 4.491108518052232,
+            "ppl_from_npz": 4.491108518052233,
+            "act_rank_min": 1,
+            "act_rank_max": 234658,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.32514481122199734,
+            "actual_token_rank1_fraction": 0.6748551887780027,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              28,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          },
+          "docs": {
+            "windows": 7,
+            "tokens": 14329,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 28536.92936257821,
+            "sum_nll_from_npz": 28536.92936257821,
+            "sum_nll_recompute_delta": 0.0,
+            "nll_nats_per_token_logged": 1.9915506568900976,
+            "ppl_logged": 7.326886444925765,
+            "ppl_from_npz": 7.326886444925765,
+            "act_rank_min": 1,
+            "act_rank_max": 53340,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.40770465489566615,
+            "actual_token_rank1_fraction": 0.5922953451043339,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              7,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          }
+        }
+      },
+      "functional_checks": {
+        "probe_result": "PASS (3/3)",
+        "probe_after_result": "PASS (3/3)",
+        "ppl_smoke_line": "PPL 9.73 (mean NLL 2.275 over 261 tokens) PASS",
+        "prefix_line": "cold TTFT 0.75 s, warm TTFT 0.12 s, speedup 6.2x -> PASS",
+        "prefix_hit_line": "prefix cache: queries +6386, hits +3072, warm hit rate 96.2% (hit granularity 2048 tokens)",
+        "concurrency_result": "RESULT PASS: 0 failing, 1 near-tie, 0 soft, 0 solo-noise, 47 identical of 48 checks (18.7s; tie <= 0.2, fail > 1.0 nats, lp drop > 1.5; run-to-run bit-identical, a flip fails if the solo run is sure)"
+      }
+    },
+    {
+      "arm": "mtp0-baseline-A2",
+      "mtp_mode": "mtp0",
+      "variant": "baseline",
+      "replicate": "A2",
+      "serve_log_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A2/serve.log",
+      "meta_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A2/meta.json",
+      "checkpoint_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+      "meta_overrides": "TP=2 MTP=0 SERVED_NAME=q35-4b-hi2-study MAXLEN=262144 SEQS=8 KV=17179869184",
+      "meta_start": "2026-11-20 08:41:41",
+      "speculative_config": null,
+      "aux_output_fields_logged": [],
+      "kv_cache": {
+        "configured_budget_bytes_per_rank": 17179869184,
+        "configured_budget_GiB": 16.0,
+        "initial_free_memory_GiB_logged_rounded": 29.44,
+        "reserved_for_kv_GiB_logged_rounded": 16.0,
+        "gpu_kv_cache_size_tokens_logged": 1024562,
+        "max_concurrency_262144_tokens_logged": 3.91,
+        "bytes_per_kv_token_derived": 16768.013242732017,
+        "mamba_page_size_padding_pct_logged": [
+          95.42,
+          95.42
+        ],
+        "block_size_tokens": 1024,
+        "kv_cache_group_sizes": "1024, 1024, 1024, 1024",
+        "kv_layout": "LBHNC",
+        "kv_planning_added_padding_layers_logged": 0,
+        "kv_planning_waste_bound_pct_logged": null
+      },
+      "memory_reporting": {
+        "amdsmi_total_memory_failed_fell_back_to_torch": true
+      },
+      "model_loading": {
+        "checkpoint_size_GiB_logged_rounded": [
+          3.29
+        ],
+        "model_loading_GiB_logged_rounded_by_worker": [
+          1.27,
+          1.27
+        ],
+        "model_loading_seconds_by_worker": [
+          4.34626,
+          4.409222
+        ],
+        "graph_capture_GiB_logged_rounded_by_worker": [
+          0.01,
+          0.01
+        ],
+        "graph_capture_seconds_by_worker": [
+          1,
+          1
+        ],
+        "allocator_metrics": null,
+        "allocator_metrics_absence": "no allocator/peak/reserved-torch lines in serve.log"
+      },
+      "physical_vram": {
+        "before": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A2/native-vram-before-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-benchmark-before-native-quality",
+          "utc": "2026-11-20T08:14:05.458421+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 19957456896,
+              "vram_free_bytes": 12238020608,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 19957448704,
+              "vram_free_bytes": 12238028800,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "after": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A2/native-vram-after-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-native-quality",
+          "utc": "2026-11-20T08:14:29.184135+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21232533504,
+              "vram_free_bytes": 10962944000,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21232525312,
+              "vram_free_bytes": 10962952192,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "used_delta_bytes_by_card": [
+          1275076608,
+          1275076608
+        ]
+      },
+      "native_ppl": {
+        "ppl_json_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A2/native-quality.ppl.json",
+        "ppl_json_sha256": "eda4969d40cb10baaaf76eb60510aff541241c26a14e118e923bb0bf936bf50d",
+        "npz_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-baseline-A2/native-quality.npz",
+        "npz_sha256": "72f5fb96b17cbc33ee15f21bbdf9f56080ec0d338dbd7274a1e54a798f74dbc0",
+        "windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+        "request_top": 1,
+        "request_seq_len": 2048,
+        "npz_keys": [
+          "mix.act_lp",
+          "mix.act_rank",
+          "mix.top_ids",
+          "mix.top_lp",
+          "mix.act_id",
+          "docs.act_lp",
+          "docs.act_rank",
+          "docs.top_ids",
+          "docs.top_lp",
+          "docs.act_id",
+          "meta"
+        ],
+        "domains": {
+          "mix": {
+            "windows": 28,
+            "tokens": 57316,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 86094.33822410255,
+            "sum_nll_from_npz": 86094.33822410257,
+            "sum_nll_recompute_delta": 1.4551915228366852e-11,
+            "nll_nats_per_token_logged": 1.502099557263287,
+            "ppl_logged": 4.491108518052232,
+            "ppl_from_npz": 4.491108518052233,
+            "act_rank_min": 1,
+            "act_rank_max": 234658,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.32514481122199734,
+            "actual_token_rank1_fraction": 0.6748551887780027,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              28,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          },
+          "docs": {
+            "windows": 7,
+            "tokens": 14329,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 28536.92936257821,
+            "sum_nll_from_npz": 28536.92936257821,
+            "sum_nll_recompute_delta": 0.0,
+            "nll_nats_per_token_logged": 1.9915506568900976,
+            "ppl_logged": 7.326886444925765,
+            "ppl_from_npz": 7.326886444925765,
+            "act_rank_min": 1,
+            "act_rank_max": 53340,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.40770465489566615,
+            "actual_token_rank1_fraction": 0.5922953451043339,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              7,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          }
+        }
+      },
+      "functional_checks": {
+        "probe_result": "PASS (3/3)",
+        "probe_after_result": "PASS (3/3)",
+        "ppl_smoke_line": "PPL 9.73 (mean NLL 2.275 over 261 tokens) PASS",
+        "prefix_line": "cold TTFT 0.75 s, warm TTFT 0.12 s, speedup 6.2x -> PASS",
+        "prefix_hit_line": "prefix cache: queries +6386, hits +3072, warm hit rate 96.2% (hit granularity 2048 tokens)",
+        "concurrency_result": "RESULT PASS: 0 failing, 1 near-tie, 0 soft, 0 solo-noise, 47 identical of 48 checks (18.7s; tie <= 0.2, fail > 1.0 nats, lp drop > 1.5; run-to-run bit-identical, a flip fails if the solo run is sure)"
+      }
+    },
+    {
+      "arm": "mtp0-candidate-C1",
+      "mtp_mode": "mtp0",
+      "variant": "candidate",
+      "replicate": "C1",
+      "serve_log_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C1/serve.log",
+      "meta_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C1/meta.json",
+      "checkpoint_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+      "meta_overrides": "TP=2 MTP=0 SERVED_NAME=q35-4b-hi2-study MAXLEN=262144 SEQS=8 KV=17179869184",
+      "meta_start": "2026-11-20 07:32:24",
+      "speculative_config": null,
+      "aux_output_fields_logged": [],
+      "kv_cache": {
+        "configured_budget_bytes_per_rank": 17179869184,
+        "configured_budget_GiB": 16.0,
+        "initial_free_memory_GiB_logged_rounded": 29.44,
+        "reserved_for_kv_GiB_logged_rounded": 16.0,
+        "gpu_kv_cache_size_tokens_logged": 1024562,
+        "max_concurrency_262144_tokens_logged": 3.91,
+        "bytes_per_kv_token_derived": 16768.013242732017,
+        "mamba_page_size_padding_pct_logged": [
+          95.42,
+          95.42
+        ],
+        "block_size_tokens": 1024,
+        "kv_cache_group_sizes": "1024, 1024, 1024, 1024",
+        "kv_layout": "LBHNC",
+        "kv_planning_added_padding_layers_logged": 0,
+        "kv_planning_waste_bound_pct_logged": null
+      },
+      "memory_reporting": {
+        "amdsmi_total_memory_failed_fell_back_to_torch": true
+      },
+      "model_loading": {
+        "checkpoint_size_GiB_logged_rounded": [
+          3.28
+        ],
+        "model_loading_GiB_logged_rounded_by_worker": [
+          1.26,
+          1.26
+        ],
+        "model_loading_seconds_by_worker": [
+          4.456404,
+          4.429278
+        ],
+        "graph_capture_GiB_logged_rounded_by_worker": [
+          0.02,
+          0.01
+        ],
+        "graph_capture_seconds_by_worker": [
+          1,
+          1
+        ],
+        "allocator_metrics": null,
+        "allocator_metrics_absence": "no allocator/peak/reserved-torch lines in serve.log"
+      },
+      "physical_vram": {
+        "before": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C1/native-vram-before-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-benchmark-before-native-quality",
+          "utc": "2026-11-20T07:06:15.864500+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 19991040000,
+              "vram_free_bytes": 12204437504,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 19999432704,
+              "vram_free_bytes": 12196044800,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "after": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C1/native-vram-after-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-native-quality",
+          "utc": "2026-11-20T07:06:40.655945+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21266116608,
+              "vram_free_bytes": 10929360896,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21274509312,
+              "vram_free_bytes": 10920968192,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "used_delta_bytes_by_card": [
+          1275076608,
+          1275076608
+        ]
+      },
+      "native_ppl": {
+        "ppl_json_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C1/native-quality.ppl.json",
+        "ppl_json_sha256": "f2fdd4ac7f7a6c9c40c96b1e8c1d42a79eb93b776e40ec12c748c2302e0c48da",
+        "npz_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C1/native-quality.npz",
+        "npz_sha256": "a4b53a891dd30e6b912a49cf8808b3bc6b1a9a215e3282a705bcdedf97dca69d",
+        "windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+        "request_top": 1,
+        "request_seq_len": 2048,
+        "npz_keys": [
+          "mix.act_lp",
+          "mix.act_rank",
+          "mix.top_ids",
+          "mix.top_lp",
+          "mix.act_id",
+          "docs.act_lp",
+          "docs.act_rank",
+          "docs.top_ids",
+          "docs.top_lp",
+          "docs.act_id",
+          "meta"
+        ],
+        "domains": {
+          "mix": {
+            "windows": 28,
+            "tokens": 57316,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 92309.62733952471,
+            "sum_nll_from_npz": 92309.62733952468,
+            "sum_nll_recompute_delta": -2.9103830456733704e-11,
+            "nll_nats_per_token_logged": 1.610538546645347,
+            "ppl_logged": 5.005506200656793,
+            "ppl_from_npz": 5.00550620065679,
+            "act_rank_min": 1,
+            "act_rank_max": 219354,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.3262265336031824,
+            "actual_token_rank1_fraction": 0.6737734663968177,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              28,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          },
+          "docs": {
+            "windows": 7,
+            "tokens": 14329,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 29152.727093223104,
+            "sum_nll_from_npz": 29152.727093223104,
+            "sum_nll_recompute_delta": 0.0,
+            "nll_nats_per_token_logged": 2.034526281891486,
+            "ppl_logged": 7.6486279735568585,
+            "ppl_from_npz": 7.6486279735568585,
+            "act_rank_min": 1,
+            "act_rank_max": 46328,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.4069369809477284,
+            "actual_token_rank1_fraction": 0.5930630190522717,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              7,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          }
+        }
+      },
+      "functional_checks": {
+        "probe_result": "PASS (3/3)",
+        "probe_after_result": "PASS (3/3)",
+        "ppl_smoke_line": "PPL 10.73 (mean NLL 2.373 over 261 tokens) PASS",
+        "prefix_line": "cold TTFT 0.79 s, warm TTFT 0.14 s, speedup 5.8x -> PASS",
+        "prefix_hit_line": "prefix cache: queries +6386, hits +3072, warm hit rate 96.2% (hit granularity 2048 tokens)",
+        "concurrency_result": "RESULT PASS: 0 failing, 0 near-tie, 0 soft, 0 solo-noise, 48 identical of 48 checks (21.5s; tie <= 0.2, fail > 1.0 nats, lp drop > 1.5; run-to-run bit-identical, a flip fails if the solo run is sure)"
+      }
+    },
+    {
+      "arm": "mtp0-candidate-C2",
+      "mtp_mode": "mtp0",
+      "variant": "candidate",
+      "replicate": "C2",
+      "serve_log_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C2/serve.log",
+      "meta_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C2/meta.json",
+      "checkpoint_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+      "meta_overrides": "TP=2 MTP=0 SERVED_NAME=q35-4b-hi2-study MAXLEN=262144 SEQS=8 KV=17179869184",
+      "meta_start": "2026-11-20 08:07:01",
+      "speculative_config": null,
+      "aux_output_fields_logged": [],
+      "kv_cache": {
+        "configured_budget_bytes_per_rank": 17179869184,
+        "configured_budget_GiB": 16.0,
+        "initial_free_memory_GiB_logged_rounded": 29.44,
+        "reserved_for_kv_GiB_logged_rounded": 16.0,
+        "gpu_kv_cache_size_tokens_logged": 1024562,
+        "max_concurrency_262144_tokens_logged": 3.91,
+        "bytes_per_kv_token_derived": 16768.013242732017,
+        "mamba_page_size_padding_pct_logged": [
+          95.42,
+          95.42
+        ],
+        "block_size_tokens": 1024,
+        "kv_cache_group_sizes": "1024, 1024, 1024, 1024",
+        "kv_layout": "LBHNC",
+        "kv_planning_added_padding_layers_logged": 0,
+        "kv_planning_waste_bound_pct_logged": null
+      },
+      "memory_reporting": {
+        "amdsmi_total_memory_failed_fell_back_to_torch": true
+      },
+      "model_loading": {
+        "checkpoint_size_GiB_logged_rounded": [
+          3.28
+        ],
+        "model_loading_GiB_logged_rounded_by_worker": [
+          1.26,
+          1.26
+        ],
+        "model_loading_seconds_by_worker": [
+          4.417007,
+          4.406295
+        ],
+        "graph_capture_GiB_logged_rounded_by_worker": [
+          0.01,
+          0.02
+        ],
+        "graph_capture_seconds_by_worker": [
+          1,
+          1
+        ],
+        "allocator_metrics": null,
+        "allocator_metrics_absence": "no allocator/peak/reserved-torch lines in serve.log"
+      },
+      "physical_vram": {
+        "before": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C2/native-vram-before-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-benchmark-before-native-quality",
+          "utc": "2026-11-20T07:40:54.662749+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 19991052288,
+              "vram_free_bytes": 12204425216,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 19999432704,
+              "vram_free_bytes": 12196044800,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "after": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C2/native-vram-after-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-native-quality",
+          "utc": "2026-11-20T07:41:19.524619+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21266132992,
+              "vram_free_bytes": 10929344512,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21274513408,
+              "vram_free_bytes": 10920964096,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "used_delta_bytes_by_card": [
+          1275080704,
+          1275080704
+        ]
+      },
+      "native_ppl": {
+        "ppl_json_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C2/native-quality.ppl.json",
+        "ppl_json_sha256": "f2fdd4ac7f7a6c9c40c96b1e8c1d42a79eb93b776e40ec12c748c2302e0c48da",
+        "npz_path": ".tmp/cptc-original-native-complete/serve-study/mtp0-candidate-C2/native-quality.npz",
+        "npz_sha256": "14b86ef8d34b1115bf31c55e1af562117bf85cfa1df3e572b4030ef64fb1b2f7",
+        "windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+        "request_top": 1,
+        "request_seq_len": 2048,
+        "npz_keys": [
+          "mix.act_lp",
+          "mix.act_rank",
+          "mix.top_ids",
+          "mix.top_lp",
+          "mix.act_id",
+          "docs.act_lp",
+          "docs.act_rank",
+          "docs.top_ids",
+          "docs.top_lp",
+          "docs.act_id",
+          "meta"
+        ],
+        "domains": {
+          "mix": {
+            "windows": 28,
+            "tokens": 57316,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 92309.62733952471,
+            "sum_nll_from_npz": 92309.62733952468,
+            "sum_nll_recompute_delta": -2.9103830456733704e-11,
+            "nll_nats_per_token_logged": 1.610538546645347,
+            "ppl_logged": 5.005506200656793,
+            "ppl_from_npz": 5.00550620065679,
+            "act_rank_min": 1,
+            "act_rank_max": 219354,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.3262265336031824,
+            "actual_token_rank1_fraction": 0.6737734663968177,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              28,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          },
+          "docs": {
+            "windows": 7,
+            "tokens": 14329,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 29152.727093223104,
+            "sum_nll_from_npz": 29152.727093223104,
+            "sum_nll_recompute_delta": 0.0,
+            "nll_nats_per_token_logged": 2.034526281891486,
+            "ppl_logged": 7.6486279735568585,
+            "ppl_from_npz": 7.6486279735568585,
+            "act_rank_min": 1,
+            "act_rank_max": 46328,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.4069369809477284,
+            "actual_token_rank1_fraction": 0.5930630190522717,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              7,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          }
+        }
+      },
+      "functional_checks": {
+        "probe_result": "PASS (3/3)",
+        "probe_after_result": "PASS (3/3)",
+        "ppl_smoke_line": "PPL 10.73 (mean NLL 2.373 over 261 tokens) PASS",
+        "prefix_line": "cold TTFT 0.78 s, warm TTFT 0.14 s, speedup 5.8x -> PASS",
+        "prefix_hit_line": "prefix cache: queries +6386, hits +3072, warm hit rate 96.2% (hit granularity 2048 tokens)",
+        "concurrency_result": "RESULT PASS: 0 failing, 0 near-tie, 0 soft, 0 solo-noise, 48 identical of 48 checks (21.5s; tie <= 0.2, fail > 1.0 nats, lp drop > 1.5; run-to-run bit-identical, a flip fails if the solo run is sure)"
+      }
+    },
+    {
+      "arm": "mtp2-baseline-A1",
+      "mtp_mode": "mtp2",
+      "variant": "baseline",
+      "replicate": "A1",
+      "serve_log_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A1/serve.log",
+      "meta_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A1/meta.json",
+      "checkpoint_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+      "meta_overrides": "TP=2 MTP=2 SERVED_NAME=q35-4b-hi2-study MAXLEN=262144 SEQS=8 KV=17179869184",
+      "meta_start": "2026-11-20 09:14:50",
+      "speculative_config": "{'method': 'mtp', 'num_speculative_tokens': 2, 'use_local_argmax_reduction': True}",
+      "aux_output_fields_logged": [],
+      "kv_cache": {
+        "configured_budget_bytes_per_rank": 17179869184,
+        "configured_budget_GiB": 16.0,
+        "initial_free_memory_GiB_logged_rounded": 29.44,
+        "reserved_for_kv_GiB_logged_rounded": 16.0,
+        "gpu_kv_cache_size_tokens_logged": 890115,
+        "max_concurrency_262144_tokens_logged": 3.4,
+        "bytes_per_kv_token_derived": 19300.72988771114,
+        "mamba_page_size_padding_pct_logged": [
+          92.48,
+          92.48
+        ],
+        "block_size_tokens": 1024,
+        "kv_cache_group_sizes": "1024, 1024, 1024, 1024",
+        "kv_layout": "LBHNC",
+        "kv_planning_added_padding_layers_logged": 3,
+        "kv_planning_waste_bound_pct_logged": 12.5
+      },
+      "memory_reporting": {
+        "amdsmi_total_memory_failed_fell_back_to_torch": true
+      },
+      "model_loading": {
+        "checkpoint_size_GiB_logged_rounded": [
+          3.29,
+          3.29
+        ],
+        "model_loading_GiB_logged_rounded_by_worker": [
+          1.38,
+          1.39
+        ],
+        "model_loading_seconds_by_worker": [
+          5.394411,
+          5.397206
+        ],
+        "graph_capture_GiB_logged_rounded_by_worker": [
+          -0.72,
+          -0.72
+        ],
+        "graph_capture_seconds_by_worker": [
+          2,
+          2
+        ],
+        "allocator_metrics": null,
+        "allocator_metrics_absence": "no allocator/peak/reserved-torch lines in serve.log"
+      },
+      "physical_vram": {
+        "before": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A1/native-vram-before-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-benchmark-before-native-quality",
+          "utc": "2026-11-20T08:45:56.088596+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 20195860480,
+              "vram_free_bytes": 11999617024,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 20174893056,
+              "vram_free_bytes": 12020584448,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "after": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A1/native-vram-after-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-native-quality",
+          "utc": "2026-11-20T08:46:20.344245+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21470937088,
+              "vram_free_bytes": 10724540416,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21449969664,
+              "vram_free_bytes": 10745507840,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "used_delta_bytes_by_card": [
+          1275076608,
+          1275076608
+        ]
+      },
+      "native_ppl": {
+        "ppl_json_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A1/native-quality.ppl.json",
+        "ppl_json_sha256": "eda4969d40cb10baaaf76eb60510aff541241c26a14e118e923bb0bf936bf50d",
+        "npz_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A1/native-quality.npz",
+        "npz_sha256": "70a606d9c5f758e42db85b42fe3907912502be77d8fe442ccc27af61f1fae996",
+        "windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+        "request_top": 1,
+        "request_seq_len": 2048,
+        "npz_keys": [
+          "mix.act_lp",
+          "mix.act_rank",
+          "mix.top_ids",
+          "mix.top_lp",
+          "mix.act_id",
+          "docs.act_lp",
+          "docs.act_rank",
+          "docs.top_ids",
+          "docs.top_lp",
+          "docs.act_id",
+          "meta"
+        ],
+        "domains": {
+          "mix": {
+            "windows": 28,
+            "tokens": 57316,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 86094.33822410255,
+            "sum_nll_from_npz": 86094.33822410257,
+            "sum_nll_recompute_delta": 1.4551915228366852e-11,
+            "nll_nats_per_token_logged": 1.502099557263287,
+            "ppl_logged": 4.491108518052232,
+            "ppl_from_npz": 4.491108518052233,
+            "act_rank_min": 1,
+            "act_rank_max": 234658,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.32514481122199734,
+            "actual_token_rank1_fraction": 0.6748551887780027,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              28,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          },
+          "docs": {
+            "windows": 7,
+            "tokens": 14329,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 28536.92936257821,
+            "sum_nll_from_npz": 28536.92936257821,
+            "sum_nll_recompute_delta": 0.0,
+            "nll_nats_per_token_logged": 1.9915506568900976,
+            "ppl_logged": 7.326886444925765,
+            "ppl_from_npz": 7.326886444925765,
+            "act_rank_min": 1,
+            "act_rank_max": 53340,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.40770465489566615,
+            "actual_token_rank1_fraction": 0.5922953451043339,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              7,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          }
+        }
+      },
+      "functional_checks": {
+        "probe_result": "PASS (3/3)",
+        "probe_after_result": "PASS (3/3)",
+        "ppl_smoke_line": "PPL 9.73 (mean NLL 2.275 over 261 tokens) PASS",
+        "prefix_line": "cold TTFT 0.77 s, warm TTFT 0.12 s, speedup 6.3x -> PASS",
+        "prefix_hit_line": "prefix cache: queries +6386, hits +3072, warm hit rate 96.2% (hit granularity 2048 tokens)",
+        "concurrency_result": "RESULT PASS: 0 failing, 0 near-tie, 0 soft, 0 solo-noise, 48 identical of 48 checks (15.5s; tie <= 0.2, fail > 1.0 nats, lp drop > 1.5; run-to-run bit-identical, a flip fails if the solo run is sure)"
+      }
+    },
+    {
+      "arm": "mtp2-baseline-A2",
+      "mtp_mode": "mtp2",
+      "variant": "baseline",
+      "replicate": "A2",
+      "serve_log_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A2/serve.log",
+      "meta_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A2/meta.json",
+      "checkpoint_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/baseline/model",
+      "meta_overrides": "TP=2 MTP=2 SERVED_NAME=q35-4b-hi2-study MAXLEN=262144 SEQS=8 KV=17179869184",
+      "meta_start": "2026-11-20 10:53:15",
+      "speculative_config": "{'method': 'mtp', 'num_speculative_tokens': 2, 'use_local_argmax_reduction': True}",
+      "aux_output_fields_logged": [],
+      "kv_cache": {
+        "configured_budget_bytes_per_rank": 17179869184,
+        "configured_budget_GiB": 16.0,
+        "initial_free_memory_GiB_logged_rounded": 29.44,
+        "reserved_for_kv_GiB_logged_rounded": 16.0,
+        "gpu_kv_cache_size_tokens_logged": 890115,
+        "max_concurrency_262144_tokens_logged": 3.4,
+        "bytes_per_kv_token_derived": 19300.72988771114,
+        "mamba_page_size_padding_pct_logged": [
+          92.48,
+          92.48
+        ],
+        "block_size_tokens": 1024,
+        "kv_cache_group_sizes": "1024, 1024, 1024, 1024",
+        "kv_layout": "LBHNC",
+        "kv_planning_added_padding_layers_logged": 3,
+        "kv_planning_waste_bound_pct_logged": 12.5
+      },
+      "memory_reporting": {
+        "amdsmi_total_memory_failed_fell_back_to_torch": true
+      },
+      "model_loading": {
+        "checkpoint_size_GiB_logged_rounded": [
+          3.29,
+          3.29
+        ],
+        "model_loading_GiB_logged_rounded_by_worker": [
+          1.38,
+          1.39
+        ],
+        "model_loading_seconds_by_worker": [
+          5.389585,
+          5.395628
+        ],
+        "graph_capture_GiB_logged_rounded_by_worker": [
+          -0.72,
+          -0.72
+        ],
+        "graph_capture_seconds_by_worker": [
+          2,
+          2
+        ],
+        "allocator_metrics": null,
+        "allocator_metrics_absence": "no allocator/peak/reserved-torch lines in serve.log"
+      },
+      "physical_vram": {
+        "before": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A2/native-vram-before-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-benchmark-before-native-quality",
+          "utc": "2026-11-20T10:24:19.830208+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 20195864576,
+              "vram_free_bytes": 11999612928,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 20174884864,
+              "vram_free_bytes": 12020592640,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "after": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A2/native-vram-after-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-native-quality",
+          "utc": "2026-11-20T10:24:43.705770+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21470941184,
+              "vram_free_bytes": 10724536320,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21449961472,
+              "vram_free_bytes": 10745516032,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "used_delta_bytes_by_card": [
+          1275076608,
+          1275076608
+        ]
+      },
+      "native_ppl": {
+        "ppl_json_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A2/native-quality.ppl.json",
+        "ppl_json_sha256": "eda4969d40cb10baaaf76eb60510aff541241c26a14e118e923bb0bf936bf50d",
+        "npz_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-baseline-A2/native-quality.npz",
+        "npz_sha256": "1716087ba28b01b3152a9ae0660ef9b956db0114d809d6c71a3c3b127f1a9d5e",
+        "windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+        "request_top": 1,
+        "request_seq_len": 2048,
+        "npz_keys": [
+          "mix.act_lp",
+          "mix.act_rank",
+          "mix.top_ids",
+          "mix.top_lp",
+          "mix.act_id",
+          "docs.act_lp",
+          "docs.act_rank",
+          "docs.top_ids",
+          "docs.top_lp",
+          "docs.act_id",
+          "meta"
+        ],
+        "domains": {
+          "mix": {
+            "windows": 28,
+            "tokens": 57316,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 86094.33822410255,
+            "sum_nll_from_npz": 86094.33822410257,
+            "sum_nll_recompute_delta": 1.4551915228366852e-11,
+            "nll_nats_per_token_logged": 1.502099557263287,
+            "ppl_logged": 4.491108518052232,
+            "ppl_from_npz": 4.491108518052233,
+            "act_rank_min": 1,
+            "act_rank_max": 234658,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.32514481122199734,
+            "actual_token_rank1_fraction": 0.6748551887780027,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              28,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          },
+          "docs": {
+            "windows": 7,
+            "tokens": 14329,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 28536.92936257821,
+            "sum_nll_from_npz": 28536.92936257821,
+            "sum_nll_recompute_delta": 0.0,
+            "nll_nats_per_token_logged": 1.9915506568900976,
+            "ppl_logged": 7.326886444925765,
+            "ppl_from_npz": 7.326886444925765,
+            "act_rank_min": 1,
+            "act_rank_max": 53340,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.40770465489566615,
+            "actual_token_rank1_fraction": 0.5922953451043339,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              7,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          }
+        }
+      },
+      "functional_checks": {
+        "probe_result": "PASS (3/3)",
+        "probe_after_result": "PASS (3/3)",
+        "ppl_smoke_line": "PPL 9.73 (mean NLL 2.275 over 261 tokens) PASS",
+        "prefix_line": "cold TTFT 0.77 s, warm TTFT 0.12 s, speedup 6.3x -> PASS",
+        "prefix_hit_line": "prefix cache: queries +6386, hits +3072, warm hit rate 96.2% (hit granularity 2048 tokens)",
+        "concurrency_result": "RESULT PASS: 0 failing, 0 near-tie, 0 soft, 0 solo-noise, 48 identical of 48 checks (15.4s; tie <= 0.2, fail > 1.0 nats, lp drop > 1.5; run-to-run bit-identical, a flip fails if the solo run is sure)"
+      }
+    },
+    {
+      "arm": "mtp2-candidate-C1",
+      "mtp_mode": "mtp2",
+      "variant": "candidate",
+      "replicate": "C1",
+      "serve_log_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C1/serve.log",
+      "meta_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C1/meta.json",
+      "checkpoint_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+      "meta_overrides": "TP=2 MTP=2 SERVED_NAME=q35-4b-hi2-study MAXLEN=262144 SEQS=8 KV=17179869184",
+      "meta_start": "2026-11-20 09:46:41",
+      "speculative_config": "{'method': 'mtp', 'num_speculative_tokens': 2, 'use_local_argmax_reduction': True}",
+      "aux_output_fields_logged": [],
+      "kv_cache": {
+        "configured_budget_bytes_per_rank": 17179869184,
+        "configured_budget_GiB": 16.0,
+        "initial_free_memory_GiB_logged_rounded": 29.44,
+        "reserved_for_kv_GiB_logged_rounded": 16.0,
+        "gpu_kv_cache_size_tokens_logged": 890115,
+        "max_concurrency_262144_tokens_logged": 3.4,
+        "bytes_per_kv_token_derived": 19300.72988771114,
+        "mamba_page_size_padding_pct_logged": [
+          92.48,
+          92.48
+        ],
+        "block_size_tokens": 1024,
+        "kv_cache_group_sizes": "1024, 1024, 1024, 1024",
+        "kv_layout": "LBHNC",
+        "kv_planning_added_padding_layers_logged": 3,
+        "kv_planning_waste_bound_pct_logged": 12.5
+      },
+      "memory_reporting": {
+        "amdsmi_total_memory_failed_fell_back_to_torch": true
+      },
+      "model_loading": {
+        "checkpoint_size_GiB_logged_rounded": [
+          3.28,
+          3.28
+        ],
+        "model_loading_GiB_logged_rounded_by_worker": [
+          1.38,
+          1.38
+        ],
+        "model_loading_seconds_by_worker": [
+          5.442671,
+          5.562142
+        ],
+        "graph_capture_GiB_logged_rounded_by_worker": [
+          -0.72,
+          -0.72
+        ],
+        "graph_capture_seconds_by_worker": [
+          2,
+          2
+        ],
+        "allocator_metrics": null,
+        "allocator_metrics_absence": "no allocator/peak/reserved-torch lines in serve.log"
+      },
+      "physical_vram": {
+        "before": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C1/native-vram-before-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-benchmark-before-native-quality",
+          "utc": "2026-11-20T09:19:11.797612+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 20172828672,
+              "vram_free_bytes": 12022648832,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 20187516928,
+              "vram_free_bytes": 12007960576,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "after": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C1/native-vram-after-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-native-quality",
+          "utc": "2026-11-20T09:19:37.251512+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21447905280,
+              "vram_free_bytes": 10747572224,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21462593536,
+              "vram_free_bytes": 10732883968,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "used_delta_bytes_by_card": [
+          1275076608,
+          1275076608
+        ]
+      },
+      "native_ppl": {
+        "ppl_json_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C1/native-quality.ppl.json",
+        "ppl_json_sha256": "f2fdd4ac7f7a6c9c40c96b1e8c1d42a79eb93b776e40ec12c748c2302e0c48da",
+        "npz_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C1/native-quality.npz",
+        "npz_sha256": "d31c9304022998bec1d840229d4fb39d132769ea5fcb03c5e2eae0a793546ec7",
+        "windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+        "request_top": 1,
+        "request_seq_len": 2048,
+        "npz_keys": [
+          "mix.act_lp",
+          "mix.act_rank",
+          "mix.top_ids",
+          "mix.top_lp",
+          "mix.act_id",
+          "docs.act_lp",
+          "docs.act_rank",
+          "docs.top_ids",
+          "docs.top_lp",
+          "docs.act_id",
+          "meta"
+        ],
+        "domains": {
+          "mix": {
+            "windows": 28,
+            "tokens": 57316,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 92309.62733952471,
+            "sum_nll_from_npz": 92309.62733952468,
+            "sum_nll_recompute_delta": -2.9103830456733704e-11,
+            "nll_nats_per_token_logged": 1.610538546645347,
+            "ppl_logged": 5.005506200656793,
+            "ppl_from_npz": 5.00550620065679,
+            "act_rank_min": 1,
+            "act_rank_max": 219354,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.3262265336031824,
+            "actual_token_rank1_fraction": 0.6737734663968177,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              28,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          },
+          "docs": {
+            "windows": 7,
+            "tokens": 14329,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 29152.727093223104,
+            "sum_nll_from_npz": 29152.727093223104,
+            "sum_nll_recompute_delta": 0.0,
+            "nll_nats_per_token_logged": 2.034526281891486,
+            "ppl_logged": 7.6486279735568585,
+            "ppl_from_npz": 7.6486279735568585,
+            "act_rank_min": 1,
+            "act_rank_max": 46328,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.4069369809477284,
+            "actual_token_rank1_fraction": 0.5930630190522717,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              7,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          }
+        }
+      },
+      "functional_checks": {
+        "probe_result": "PASS (3/3)",
+        "probe_after_result": "PASS (3/3)",
+        "ppl_smoke_line": "PPL 10.73 (mean NLL 2.373 over 261 tokens) PASS",
+        "prefix_line": "cold TTFT 0.81 s, warm TTFT 0.14 s, speedup 5.9x -> PASS",
+        "prefix_hit_line": "prefix cache: queries +6386, hits +3072, warm hit rate 96.2% (hit granularity 2048 tokens)",
+        "concurrency_result": "RESULT PASS: 0 failing, 0 near-tie, 0 soft, 0 solo-noise, 48 identical of 48 checks (17.3s; tie <= 0.2, fail > 1.0 nats, lp drop > 1.5; run-to-run bit-identical, a flip fails if the solo run is sure)"
+      }
+    },
+    {
+      "arm": "mtp2-candidate-C2",
+      "mtp_mode": "mtp2",
+      "variant": "candidate",
+      "replicate": "C2",
+      "serve_log_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C2/serve.log",
+      "meta_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C2/meta.json",
+      "checkpoint_root": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/full4b/run-995fc26317-default/cptc/model",
+      "meta_overrides": "TP=2 MTP=2 SERVED_NAME=q35-4b-hi2-study MAXLEN=262144 SEQS=8 KV=17179869184",
+      "meta_start": "2026-11-20 10:19:58",
+      "speculative_config": "{'method': 'mtp', 'num_speculative_tokens': 2, 'use_local_argmax_reduction': True}",
+      "aux_output_fields_logged": [],
+      "kv_cache": {
+        "configured_budget_bytes_per_rank": 17179869184,
+        "configured_budget_GiB": 16.0,
+        "initial_free_memory_GiB_logged_rounded": 29.44,
+        "reserved_for_kv_GiB_logged_rounded": 16.0,
+        "gpu_kv_cache_size_tokens_logged": 890115,
+        "max_concurrency_262144_tokens_logged": 3.4,
+        "bytes_per_kv_token_derived": 19300.72988771114,
+        "mamba_page_size_padding_pct_logged": [
+          92.48,
+          92.48
+        ],
+        "block_size_tokens": 1024,
+        "kv_cache_group_sizes": "1024, 1024, 1024, 1024",
+        "kv_layout": "LBHNC",
+        "kv_planning_added_padding_layers_logged": 3,
+        "kv_planning_waste_bound_pct_logged": 12.5
+      },
+      "memory_reporting": {
+        "amdsmi_total_memory_failed_fell_back_to_torch": true
+      },
+      "model_loading": {
+        "checkpoint_size_GiB_logged_rounded": [
+          3.28,
+          3.28
+        ],
+        "model_loading_GiB_logged_rounded_by_worker": [
+          1.38,
+          1.38
+        ],
+        "model_loading_seconds_by_worker": [
+          5.40358,
+          5.40898
+        ],
+        "graph_capture_GiB_logged_rounded_by_worker": [
+          -0.72,
+          -0.72
+        ],
+        "graph_capture_seconds_by_worker": [
+          2,
+          2
+        ],
+        "allocator_metrics": null,
+        "allocator_metrics_absence": "no allocator/peak/reserved-torch lines in serve.log"
+      },
+      "physical_vram": {
+        "before": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C2/native-vram-before-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-benchmark-before-native-quality",
+          "utc": "2026-11-20T09:52:28.818503+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 20172873728,
+              "vram_free_bytes": 12022603776,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 20187549696,
+              "vram_free_bytes": 12007927808,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "after": {
+          "path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C2/native-vram-after-quality.json",
+          "scope": "Whole-device live sysfs counters; includes KV, graphs, allocator reserves, driver and all processes. Not isolated model-weight bytes, peak VRAM, or an automatic KV-capacity gain.",
+          "phase": "post-native-quality",
+          "utc": "2026-11-20T09:52:54.272241+00:00",
+          "cards": [
+            {
+              "pci_bus": "0000:d1:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21447950336,
+              "vram_free_bytes": 10747527168,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 36110336
+            },
+            {
+              "pci_bus": "0000:d4:00.0",
+              "vram_total_bytes": 32195477504,
+              "vram_used_bytes": 21462626304,
+              "vram_free_bytes": 10732851200,
+              "gtt_total_bytes": 270330073088,
+              "gtt_used_bytes": 15032320
+            }
+          ]
+        },
+        "used_delta_bytes_by_card": [
+          1275076608,
+          1275076608
+        ]
+      },
+      "native_ppl": {
+        "ppl_json_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C2/native-quality.ppl.json",
+        "ppl_json_sha256": "f2fdd4ac7f7a6c9c40c96b1e8c1d42a79eb93b776e40ec12c748c2302e0c48da",
+        "npz_path": ".tmp/cptc-original-native-complete/serve-study/mtp2-candidate-C2/native-quality.npz",
+        "npz_sha256": "8f631966d89273b8192d53dd21c7cacf962e838304a0f0f96dccab90534ce213",
+        "windows_sha256": "f18814611aad7426f3163a64910d45ce45320a4a67d6ec81f2e5286e1d7a870f",
+        "request_top": 1,
+        "request_seq_len": 2048,
+        "npz_keys": [
+          "mix.act_lp",
+          "mix.act_rank",
+          "mix.top_ids",
+          "mix.top_lp",
+          "mix.act_id",
+          "docs.act_lp",
+          "docs.act_rank",
+          "docs.top_ids",
+          "docs.top_lp",
+          "docs.act_id",
+          "meta"
+        ],
+        "domains": {
+          "mix": {
+            "windows": 28,
+            "tokens": 57316,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 92309.62733952471,
+            "sum_nll_from_npz": 92309.62733952468,
+            "sum_nll_recompute_delta": -2.9103830456733704e-11,
+            "nll_nats_per_token_logged": 1.610538546645347,
+            "ppl_logged": 5.005506200656793,
+            "ppl_from_npz": 5.00550620065679,
+            "act_rank_min": 1,
+            "act_rank_max": 219354,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.3262265336031824,
+            "actual_token_rank1_fraction": 0.6737734663968177,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              28,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          },
+          "docs": {
+            "windows": 7,
+            "tokens": 14329,
+            "tokens_per_window": 2047,
+            "sum_nll_logged": 29152.727093223104,
+            "sum_nll_from_npz": 29152.727093223104,
+            "sum_nll_recompute_delta": 0.0,
+            "nll_nats_per_token_logged": 2.034526281891486,
+            "ppl_logged": 7.6486279735568585,
+            "ppl_from_npz": 7.6486279735568585,
+            "act_rank_min": 1,
+            "act_rank_max": 46328,
+            "act_rank_median": 1.0,
+            "act_rank_gt1_fraction": 0.4069369809477284,
+            "actual_token_rank1_fraction": 0.5930630190522717,
+            "full_vocab_kl_derivable": false,
+            "full_vocab_kl_reason": "response requested top=1; only top_ids/top_lp and act_lp/act_rank stored",
+            "top_lp_shape": [
+              7,
+              2047,
+              1
+            ],
+            "array_dtypes": {
+              "act_lp": "float64",
+              "act_rank": "int32",
+              "top_ids": "int32",
+              "top_lp": "float64"
+            }
+          }
+        }
+      },
+      "functional_checks": {
+        "probe_result": "PASS (3/3)",
+        "probe_after_result": "PASS (3/3)",
+        "ppl_smoke_line": "PPL 10.73 (mean NLL 2.373 over 261 tokens) PASS",
+        "prefix_line": "cold TTFT 0.82 s, warm TTFT 0.14 s, speedup 5.8x -> PASS",
+        "prefix_hit_line": "prefix cache: queries +6386, hits +3072, warm hit rate 96.2% (hit granularity 2048 tokens)",
+        "concurrency_result": "RESULT PASS: 0 failing, 0 near-tie, 0 soft, 0 solo-noise, 48 identical of 48 checks (17.3s; tie <= 0.2, fail > 1.0 nats, lp drop > 1.5; run-to-run bit-identical, a flip fails if the solo run is sure)"
+      }
+    }
+  ],
+  "limits": [
+    "No per-arm KV capacity difference was observed; all arms were pinned to the same 16 GiB/rank manual KV budget.",
+    "Model loading GiB and graph capture GiB are rounded (2 dp) server log lines, not allocator counters; no allocator/peak metrics exist in serve.log.",
+    "Physical VRAM is whole-device sysfs before/after the quality pass, includes KV, graphs, allocator reserves, driver and other processes.",
+    "Native PPL is exact for the observed tokens but sparse: only top-1 logprobs plus the actual-token logprob/rank are stored, so no full-vocabulary KL or distribution metrics are derivable.",
+    "HF full-vocabulary KL/PPL come from the separate prior HF dense export study and are not a native-kernel measurement.",
+    "MTP2 graph-capture line is negative (-0.72 GiB) as logged; treat it as an unreliable delta, not a memory saving.",
+    "Storage tensor-byte deltas from the prior HF study do not imply KV capacity changes."
+  ],
+  "parent_verification": {
+    "KV_capacity_arms_checked_against_logs": 8,
+    "native_domain_PPL_reconstructed_from_actual_token_logprobs": 16,
+    "native_full_vocabulary_KL_derivable": false,
+    "physical_vram_interpretation": "Before/after snapshots bracket the native-quality phase; growth is not causally isolated to allocator or KV state and is not peak or weight-only memory."
+  }
+}

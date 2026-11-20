@@ -57,6 +57,83 @@ cohorts, not a default recommendation or a verdict on the full paper.
 [Raw receipts, parameter counts, final-KL traces and reviewed scope](../experiments/results/cptc_qwen35_4b_2026-11-20/quality-study.json)
 pin the actual quantizer source at `995fc26317bd74d5d77653f42c4639086ac0d441`.
 
+### Native DEFAULT ABBA serving
+
+All eight boots completed: ladder A1 → CPTC C1 → CPTC C2 → ladder A2, separately
+at MTP0 and MTP2. TP2 on two V620s (`d1`/`d4`), FP16, FULL_AND_PIECEWISE,
+262144 maximum context, eight sequences, fixed 16 GiB KV/rank. Each shape had an
+excluded warmup and a prefix-cache reset. There are 96 measured cells and 96
+excluded warmups. The accepted gates report no new GPU faults, thermal violations
+or KFD eviction increments. Runtime source is `df548843ebca6f45149b505fb51367aded85c0ee`;
+library SHA256 is `af0f5d6194b4fdd10b787598e8dc4802735999f99f96cf9485e53cfd5d6e49d1`.
+
+Each entry is ladder → CPTC, averaged over the two boots. Rates are tok/s;
+latencies are milliseconds. Aggregate output includes prefill. Per-request decode
+is `(output_tokens-1)/(latency-TTFT)`, not aggregate throughput divided by concurrency.
+
+| MTP | Input/output, concurrency | Aggregate output | Decode/request | Mean TTFT | ITL p50 | ITL p99 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | 1k/512, c1 | 136.2 → 110.4 | 145.4 → 116.8 | 244 → 262 | 6.9 → 8.6 | 7.1 → 8.9 |
+| 0 | 1k/512, c8 | 562.5 → 417.9 | 86.1 → 60.9 | 1269 → 1338 | 10.5 → 15.2 | 12.1 → 16.3 |
+| 0 | 16k/1k, c1 | 73.1 → 64.5 | 101.5 → 86.8 | 3935 → 4083 | 9.9 → 11.5 | 10.1 → 11.8 |
+| 0 | 16k/1k, c8 | 139.2 → 125.3 | 29.1 → 25.1 | 20178 → 21161 | 23.0 → 27.7 | 315.5 → 330.7 |
+| 0 | 32k/2k, c1 | 56.9 → 51.6 | 76.6 → 67.8 | 9254 → 9537 | 13.1 → 14.8 | 13.5 → 15.2 |
+| 0 | 32k/2k, c8 | 109.7 → 100.7 | 21.7 → 19.3 | 47135 → 49092 | 32.6 → 37.5 | 391.0 → 406.3 |
+| 2 | 1k/512, c1 | 221.6 → 175.5 | 248.3 → 194.6 | 252 → 274 | 12.0 → 14.6 | 12.2 → 14.9 |
+| 2 | 1k/512, c8 | 583.2 → 427.0 | 100.7 → 69.1 | 1347 → 1435 | 25.7 → 38.3 | 260.7 → 275.0 |
+| 2 | 16k/1k, c1 | 109.2 → 96.4 | 193.9 → 160.5 | 4102 → 4247 | 15.2 → 18.0 | 15.6 → 18.4 |
+| 2 | 16k/1k, c8 | 148.1 → 134.0 | 36.0 → 30.7 | 21701 → 22692 | 51.1 → 64.3 | 357.9 → 373.9 |
+| 2 | 32k/2k, c1 | 90.6 → 81.4 | 159.3 → 135.3 | 9762 → 10041 | 18.7 → 21.8 | 19.5 → 22.5 |
+| 2 | 32k/2k, c8 | 116.6 → 103.2 | 26.4 → 22.9 | 51128 → 53072 | 78.2 → 91.4 | 460.6 → 476.0 |
+
+ITL measures streamed chunks: MTP2 can emit several tokens per chunk, so raw ITL
+cannot compare MTP0 with MTP2. Token-normalized TPOT and every request's decoded
+interval are in the [performance data](../experiments/results/cptc_qwen35_4b_2026-11-20/native-performance.json).
+TTFT includes admission, scheduling, transport and concurrent contention, not just
+GPU kernels. The causes of long recorded gaps were not isolated.
+
+Prefill-focused cells generate one token. Per-request effective prompt rate is
+`input_tokens/TTFT`; it includes overhead and is not additive under concurrency.
+
+| MTP | Input, concurrency | Aggregate prompt tok/s | Effective prompt tok/s/request | Mean TTFT (ms) |
+| --- | --- | ---: | ---: | ---: |
+| 0 | 1k, c1 | 4208 → 3952 | 4219 → 3961 | 243 → 259 |
+| 0 | 1k, c8 | 4491 → 4264 | 1203 → 1130 | 1282 → 1349 |
+| 0 | 16k, c1 | 4185 → 4041 | 4186 → 4042 | 3914 → 4054 |
+| 0 | 16k, c8 | 4221 → 4120 | 1318 → 1287 | 17969 → 18402 |
+| 0 | 32k, c1 | 3592 → 3481 | 3592 → 3481 | 9122 → 9413 |
+| 0 | 32k, c8 | 3600 → 3501 | 1176 → 1143 | 41445 → 42632 |
+| 2 | 1k, c1 | 4074 → 3794 | 4082 → 3803 | 251 → 269 |
+| 2 | 1k, c8 | 4343 → 4129 | 1165 → 1095 | 1318 → 1386 |
+| 2 | 16k, c1 | 4004 → 3875 | 4005 → 3876 | 4091 → 4227 |
+| 2 | 16k, c8 | 4038 → 3910 | 1263 → 1224 | 18774 → 19381 |
+| 2 | 32k, c1 | 3377 → 3286 | 3378 → 3286 | 9701 → 9971 |
+| 2 | 32k, c8 | 3430 → 3340 | 1125 → 1095 | 43421 → 44602 |
+
+**CPTC DEFAULT loses every measured performance comparison.** Two boots per
+variant provide descriptive spread, not confidence intervals. This says nothing
+about unrun optimized kernels or the prospective quality-factor matrix.
+
+KV capacity is identical between checkpoints: 1,024,562 tokens at MTP0 and
+890,115 at MTP2. The same fixed pool and KV layout do not convert smaller weight
+files into more cache. Automatic KV sizing was not measured. Rounded load counters
+and whole-device VRAM snapshots are not allocator peaks or isolated weight memory;
+the negative MTP2 graph-memory delta is unusable.
+
+Native teacher-forced PPL repeats exactly across boots and MTP modes: mix
+4.491109 → 5.005506, docs 7.326886 → 7.648628. This is consistent with the separate
+HF study, not a native full-vocabulary KL measurement: native receipts contain
+only top-1 and actual-token log probabilities. Greedy/prefix/concurrency probes
+pass their limited contracts; one baseline concurrency comparison is a near-tie,
+not byte-identical output.
+
+[Acceptance receipt](../experiments/results/cptc_qwen35_4b_2026-11-20/native-acceptance.json),
+[memory/quality data](../experiments/results/cptc_qwen35_4b_2026-11-20/native-memory-quality.json)
+and the performance data retain per-arm sources and hashes. Parent CPU reconstruction
+checked all 96 measured cells, 576 request records and 180 comparison metrics,
+and reproduced all 16 native domain PPLs from token log probabilities. Raw logs
+remain under `~/w4a8_runs/cptc-qwen35-4b-20261119/serve-study/` on `par1-cs25`.
+
 ### Prospective CPTC optimization study
 
 The [24-cell factor plan](../experiments/results/cptc_ablation_qwen35_4b_2026-11-20/plan.json)
