@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "manifest_sha256": "5556067093e689bf9271b0c1ada605178baba358d9799e5dd4eaaea14e13b59b",
+  "source_files_verified": 48,
+  "windows_verified": 32,
+  "scored_tokens": 65504,
+  "dedup": "No aligned 64-token shingle at any 16-token window offset matches calibration or the two old holdouts. Not semantic deduplication.",
+  "gpu_used": false
+}

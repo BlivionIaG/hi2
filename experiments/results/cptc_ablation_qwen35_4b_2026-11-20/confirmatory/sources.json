@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "selection_seed": "20261120-cptc-confirmatory",
+  "plan_sha256": "4943b5d89a9bf17fecc9449106cab882cb5164caf4b83d344e93910d5d95cf00",
+  "model_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "tokenizer_url": "https://huggingface.co/Qwen/Qwen3.5-4B/resolve/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a/tokenizer.json",
+  "wikitext_revision": "b08601e04326c79dfdd32d625aee71d232d685c3",
+  "wikitext_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/wikitext-103-raw-v1/test-00000-of-00001.parquet",
+  "cpython_revision": "ebf955df7a89ed0c7968f79faec1de49f61ed7cb",
+  "docs": [
+    {
+      "path": "Doc/tutorial/appendix.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/appendix.rst",
+      "git_blob": "5020c428741febe7b2d22fcaa2568571e19340de",
+      "size": 5698
+    },
+    {
+      "path": "Doc/tutorial/appetite.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/appetite.rst",
+      "git_blob": "3fa68097ee3665bd11039dfa2186a3bc330cdefc",
+      "size": 4507
+    },
+    {
+      "path": "Doc/tutorial/classes.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/classes.rst",
+      "git_blob": "645acdf20fb580f02efec62ef584a83e84234e81",
+      "size": 37040
+    },
+    {
+      "path": "Doc/tutorial/controlflow.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/controlflow.rst",
+      "git_blob": "5ec8789f98c7016bcaf6085f0da43c51bd207a82",
+      "size": 41308
+    },
+    {
+      "path": "Doc/tutorial/datastructures.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/datastructures.rst",
+      "git_blob": "1332c53f39687ec53c29f43828f7ffbc753943c0",
+      "size": 25221
+    },
+    {
+      "path": "Doc/tutorial/errors.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/errors.rst",
+      "git_blob": "1c20fa2f0b6ae588ab85338da29e6fda50948abe",
+      "size": 24521
+    },
+    {
+      "path": "Doc/tutorial/floatingpoint.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/floatingpoint.rst",
+      "git_blob": "dfe2d1d3a8378fa9dd44423b9d4f3c3d5d2732d5",
+      "size": 13025
+    },
+    {
+      "path": "Doc/tutorial/index.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/index.rst",
+      "git_blob": "d0bf77dc40d0a1392d2ccb33cc1c5d1eddf28391",
+      "size": 2617
+    },
+    {
+      "path": "Doc/tutorial/inputoutput.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/inputoutput.rst",
+      "git_blob": "a00f06cf46c41a3c80da449be31527562dfceeab",
+      "size": 20900
+    },
+    {
+      "path": "Doc/tutorial/interactive.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/interactive.rst",
+      "git_blob": "00e705f999f4b2aefa42495105ff35857a257b14",
+      "size": 2432
+    },
+    {
+      "path": "Doc/tutorial/interpreter.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/interpreter.rst",
+      "git_blob": "02e7de77322e99ad6a0f97e1b4e7c210749728b9",
+      "size": 6514
+    },
+    {
+      "path": "Doc/tutorial/introduction.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/introduction.rst",
+      "git_blob": "fb491149793cf793684de6463e184b4a7d2f49a0",
+      "size": 18946
+    },
+    {
+      "path": "Doc/tutorial/modules.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/modules.rst",
+      "git_blob": "f8105cd5441fec21ca256dbd0e2e43f3654d0697",
+      "size": 25559
+    },
+    {
+      "path": "Doc/tutorial/stdlib.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/stdlib.rst",
+      "git_blob": "4b3eef313e76d7202c90cadc0bb0b03af20559a2",
+      "size": 11436
+    },
+    {
+      "path": "Doc/tutorial/stdlib2.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/stdlib2.rst",
+      "git_blob": "a2f96b34b2dead3dcb636a66301bca05ead5d981",
+      "size": 15197
+    },
+    {
+      "path": "Doc/tutorial/venv.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/venv.rst",
+      "git_blob": "f362e1943b666f7b053bed08a1bb4a1df9851f83",
+      "size": 7440
+    },
+    {
+      "path": "Doc/tutorial/whatnow.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/whatnow.rst",
+      "git_blob": "dbe2d7fc09927e2192a6fc2d7a58b15f11cbd5d9",
+      "size": 3197
+    },
+    {
+      "path": "Doc/howto/a-conceptual-overview-of-asyncio.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/a-conceptual-overview-of-asyncio.rst",
+      "git_blob": "d68f7cc6921fc9be8cc6bd0110ac406922096733",
+      "size": 22889
+    },
+    {
+      "path": "Doc/howto/annotations.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/annotations.rst",
+      "git_blob": "d7deb6c6bc1768f09742eae7c7493204a2474f29",
+      "size": 10617
+    },
+    {
+      "path": "Doc/howto/argparse-optparse.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/argparse-optparse.rst",
+      "git_blob": "b684619885b4c7184821fc187758974149ac3f0a",
+      "size": 2923
+    },
+    {
+      "path": "Doc/howto/argparse.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/argparse.rst",
+      "git_blob": "902c50de00803c5a1969fe614def2d5bf5f213fa",
+      "size": 28300
+    },
+    {
+      "path": "Doc/howto/clinic.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/clinic.rst",
+      "git_blob": "060977246149cfa922fb03169e22354d3f343ef4",
+      "size": 343
+    },
+    {
+      "path": "Doc/howto/cporting.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/cporting.rst",
+      "git_blob": "cf857aed0425ec440ce3a3d0f7ede0fe428654d9",
+      "size": 944
+    },
+    {
+      "path": "Doc/howto/curses.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/curses.rst",
+      "git_blob": "6994a5328e81496d0568f2459f636697de246a6a",
+      "size": 25217
+    },
+    {
+      "path": "Doc/howto/descriptor.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/descriptor.rst",
+      "git_blob": "9d5a9ac8b718cb00e55567e7d544ab82f130a7c2",
+      "size": 55193
+    },
+    {
+      "path": "Doc/howto/enum.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/enum.rst",
+      "git_blob": "7713aede6d564a46dc89b872bbfd0817af1774bf",
+      "size": 46969
+    },
+    {
+      "path": "Doc/howto/free-threading-extensions.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/free-threading-extensions.rst",
+      "git_blob": "577e283bb9cb4c64afd7b1c99929969a185384a0",
+      "size": 17563
+    },
+    {
+      "path": "Doc/howto/free-threading-python.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/free-threading-python.rst",
+      "git_blob": "24069617c47ae18e1bc0bcb029ce202c39a95773",
+      "size": 7623
+    },
+    {
+      "path": "Doc/howto/functional.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/functional.rst",
+      "git_blob": "b0b2414a1a02c83903d2faff4ebd2218135b18cb",
+      "size": 49502
+    },
+    {
+      "path": "Doc/howto/gdb_helpers.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/gdb_helpers.rst",
+      "git_blob": "98ce813ca4ab024fb83319ceaed628c74ab8c568",
+      "size": 23649
+    },
+    {
+      "path": "Doc/howto/index.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/index.rst",
+      "git_blob": "81fc7e63f35bd79168de1461301ba617808a3814",
+      "size": 1535
+    },
+    {
+      "path": "Doc/howto/instrumentation.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/instrumentation.rst",
+      "git_blob": "b3db1189e5dcbcd5983180e1700f14abb940e27d",
+      "size": 14989
+    },
+    {
+      "path": "Doc/howto/ipaddress.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/ipaddress.rst",
+      "git_blob": "e852db98156facc8c80540bf12afba237cfdd28f",
+      "size": 11731
+    },
+    {
+      "path": "Doc/howto/isolating-extensions.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/isolating-extensions.rst",
+      "git_blob": "7da6dc8a39795e8696f013af2569c5d4bf90be96",
+      "size": 23039
+    },
+    {
+      "path": "Doc/howto/logging-cookbook.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/logging-cookbook.rst",
+      "git_blob": "52537a91df542c1996a0cb0f6a76ae50a088db18",
+      "size": 167167
+    },
+    {
+      "path": "Doc/howto/logging.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/logging.rst",
+      "git_blob": "b7225ff1c2cbfc863c7164f78d1aa3e81d23d1e9",
+      "size": 50336
+    },
+    {
+      "path": "Doc/howto/mro.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/mro.rst",
+      "git_blob": "0872bedcd3a2d340c2b4fe0c65a66087f183451e",
+      "size": 22983
+    },
+    {
+      "path": "Doc/howto/perf_profiling.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/perf_profiling.rst",
+      "git_blob": "b579d7765763655e4f36cde0b80bec6af40ea0b8",
+      "size": 13437
+    },
+    {
+      "path": "Doc/howto/pyporting.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/pyporting.rst",
+      "git_blob": "9f73c811cfcbc0d06ee8db386492c308bc244686",
+      "size": 1314
+    },
+    {
+      "path": "Doc/howto/regex.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/regex.rst",
+      "git_blob": "7486a378dbb06f6ba6db3c4f58a48bc61c8254e8",
+      "size": 62800
+    },
+    {
+      "path": "Doc/howto/remote_debugging.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/remote_debugging.rst",
+      "git_blob": "78b40bcdf7127b21a8300313c3f7599ba82b4a0f",
+      "size": 26343
+    },
+    {
+      "path": "Doc/howto/sockets.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/sockets.rst",
+      "git_blob": "cbc49d15a0771b968d0866ee38371a827bc7accf",
+      "size": 18802
+    },
+    {
+      "path": "Doc/howto/sorting.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/sorting.rst",
+      "git_blob": "70c34cde8a065929201f893181d2ce9433d6c089",
+      "size": 14609
+    },
+    {
+      "path": "Doc/howto/timerfd.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/timerfd.rst",
+      "git_blob": "b5fc06ae8c681071a6f849259df887b5f9db35fe",
+      "size": 8705
+    },
+    {
+      "path": "Doc/howto/unicode.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/unicode.rst",
+      "git_blob": "254fe7293553535e1a963a7bb2825d39fc462067",
+      "size": 31886
+    },
+    {
+      "path": "Doc/howto/urllib2.rst",
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/urllib2.rst",
+      "git_blob": "d79d1abe8d05770ea10fdec026895d8cd1d82621",
+      "size": 22151
+    }
+  ],
+  "exclusions": [
+    {
+      "path": ".tmp/cptc-inputs/calib.txt",
+      "sha256": "4f52263a8d3cbd5e1e376e43a918c3dfca814a0f5bb0187f410cf8623d000079"
+    },
+    {
+      "path": ".tmp/cptc-inputs/eval-mix.txt",
+      "sha256": "3564dc0a4eb0cd7c1360d1e95dce03903a85a5ce13b3f79c700ece27552bd69c"
+    },
+    {
+      "path": ".tmp/cptc-inputs/eval-docs-heldout.txt",
+      "sha256": "32f1301e782a53d1ef96246fd40fca6b6591788be78fca984499a716412a346d"
+    }
+  ],
+  "windows_per_domain": 16,
+  "sequence_length": 2048
+}

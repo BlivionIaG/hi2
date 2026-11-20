@@ -1,0 +1,643 @@
+{
+  "schema_version": 1,
+  "status": "data_frozen_no_quality_results",
+  "scope": "Prospective confirmation for validation-selected finalists only; not a tuning set.",
+  "factor_plan_sha256": "4943b5d89a9bf17fecc9449106cab882cb5164caf4b83d344e93910d5d95cf00",
+  "source_config_sha256": "c7fe9562b08d2218307e7b811aa8af59d61399786318738d991388a4e15ab988",
+  "model_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "tokenizers_version": "0.23.3",
+  "selection_seed": "20261120-cptc-confirmatory",
+  "sequence_length": 2048,
+  "source_revisions": {
+    "wikitext": "b08601e04326c79dfdd32d625aee71d232d685c3",
+    "cpython": "ebf955df7a89ed0c7968f79faec1de49f61ed7cb"
+  },
+  "sources": [
+    {
+      "url": "https://huggingface.co/Qwen/Qwen3.5-4B/resolve/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a/tokenizer.json",
+      "file": "raw/tokenizer.json",
+      "bytes": 12807982,
+      "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+      "git_blob": null
+    },
+    {
+      "url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/wikitext-103-raw-v1/test-00000-of-00001.parquet",
+      "file": "raw/wikitext-test.parquet",
+      "bytes": 732610,
+      "sha256": "5f1bea067869d04849c0f975a2b29c4ff47d867f484f5010ea5e861eab246d91",
+      "git_blob": null
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/appendix.rst",
+      "file": "raw/Doc__tutorial__appendix.rst",
+      "bytes": 5698,
+      "sha256": "f127830ecf8a386a35a361398c7c8fc25c3b788ad3c4f33487c7ec8714e281f2",
+      "git_blob": "5020c428741febe7b2d22fcaa2568571e19340de"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/appetite.rst",
+      "file": "raw/Doc__tutorial__appetite.rst",
+      "bytes": 4507,
+      "sha256": "c5766ddd864601b50b54a1882f2fbec67945d421339ddea67cd545d3b0ffad55",
+      "git_blob": "3fa68097ee3665bd11039dfa2186a3bc330cdefc"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/classes.rst",
+      "file": "raw/Doc__tutorial__classes.rst",
+      "bytes": 37040,
+      "sha256": "adabb31741f73aed4455db62af748b16b85d71e2e635adf5199741c91e61f36f",
+      "git_blob": "645acdf20fb580f02efec62ef584a83e84234e81"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/controlflow.rst",
+      "file": "raw/Doc__tutorial__controlflow.rst",
+      "bytes": 41308,
+      "sha256": "4c6ec199adf8c583337c45216d9244aba4b68566b12491edc48068b10cbe0089",
+      "git_blob": "5ec8789f98c7016bcaf6085f0da43c51bd207a82"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/datastructures.rst",
+      "file": "raw/Doc__tutorial__datastructures.rst",
+      "bytes": 25221,
+      "sha256": "40bd987c256c89b45db77e84af8506c9f4c94eec6d6c7e0dd35ac598dd1e695c",
+      "git_blob": "1332c53f39687ec53c29f43828f7ffbc753943c0"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/errors.rst",
+      "file": "raw/Doc__tutorial__errors.rst",
+      "bytes": 24521,
+      "sha256": "c50e45241725d9683ba8416fd00aee5fd6553c0273e47b3929a15b60516bacf2",
+      "git_blob": "1c20fa2f0b6ae588ab85338da29e6fda50948abe"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/floatingpoint.rst",
+      "file": "raw/Doc__tutorial__floatingpoint.rst",
+      "bytes": 13025,
+      "sha256": "8e648340d27e4ad469e40a53f8b47389d8490a7b10ea828f0bc76186c3863a55",
+      "git_blob": "dfe2d1d3a8378fa9dd44423b9d4f3c3d5d2732d5"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/index.rst",
+      "file": "raw/Doc__tutorial__index.rst",
+      "bytes": 2617,
+      "sha256": "356757546eb9f28e3b7311c5ee7a7e8275ab3a67013effb6f4362900c1eee063",
+      "git_blob": "d0bf77dc40d0a1392d2ccb33cc1c5d1eddf28391"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/inputoutput.rst",
+      "file": "raw/Doc__tutorial__inputoutput.rst",
+      "bytes": 20900,
+      "sha256": "0aa8b4dc7bd711fd80fbbe7b287a392f6dc77d754bed9aa51ae380ac8312fb57",
+      "git_blob": "a00f06cf46c41a3c80da449be31527562dfceeab"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/interactive.rst",
+      "file": "raw/Doc__tutorial__interactive.rst",
+      "bytes": 2432,
+      "sha256": "f40d6ccbcf144187a21500855e019edccb91223fae1ce9e254d1385c479dddcc",
+      "git_blob": "00e705f999f4b2aefa42495105ff35857a257b14"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/interpreter.rst",
+      "file": "raw/Doc__tutorial__interpreter.rst",
+      "bytes": 6514,
+      "sha256": "a48fc6e5a6871038813cfeda0a2755f65bd9ad5420dfaf9e10286d26abbe4a89",
+      "git_blob": "02e7de77322e99ad6a0f97e1b4e7c210749728b9"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/introduction.rst",
+      "file": "raw/Doc__tutorial__introduction.rst",
+      "bytes": 18946,
+      "sha256": "82285dea19d4257d0bcbba2d963d7cca40eefcde256642b95bc0899948025ad0",
+      "git_blob": "fb491149793cf793684de6463e184b4a7d2f49a0"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/modules.rst",
+      "file": "raw/Doc__tutorial__modules.rst",
+      "bytes": 25559,
+      "sha256": "919ed939a797cfdfbc2be6f18ff8f860692a8b7ac7bbd37b012307954d19e39c",
+      "git_blob": "f8105cd5441fec21ca256dbd0e2e43f3654d0697"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/stdlib.rst",
+      "file": "raw/Doc__tutorial__stdlib.rst",
+      "bytes": 11436,
+      "sha256": "86ff822f47fbed6c7c0348ce9d57218c5c1041e066ad91eb9234bce79b9be5ed",
+      "git_blob": "4b3eef313e76d7202c90cadc0bb0b03af20559a2"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/stdlib2.rst",
+      "file": "raw/Doc__tutorial__stdlib2.rst",
+      "bytes": 15197,
+      "sha256": "a4085a33e72c4958db47cf1d7924bbb08f92fdb14cb4e4925c6899bcbf026443",
+      "git_blob": "a2f96b34b2dead3dcb636a66301bca05ead5d981"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/venv.rst",
+      "file": "raw/Doc__tutorial__venv.rst",
+      "bytes": 7440,
+      "sha256": "4ed8f090773d5a7311b7e617119ee50dffdb49f0a0ce21c0baef36ce58313906",
+      "git_blob": "f362e1943b666f7b053bed08a1bb4a1df9851f83"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/tutorial/whatnow.rst",
+      "file": "raw/Doc__tutorial__whatnow.rst",
+      "bytes": 3197,
+      "sha256": "f2f4243d916a0403c405cfc74f643e715af121223b771fd620ff7361cfbeff38",
+      "git_blob": "dbe2d7fc09927e2192a6fc2d7a58b15f11cbd5d9"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/a-conceptual-overview-of-asyncio.rst",
+      "file": "raw/Doc__howto__a-conceptual-overview-of-asyncio.rst",
+      "bytes": 22889,
+      "sha256": "567a9f4b69d92668a3a4fd3b9ad223210879bcee7e74808bbb52d8c92be81473",
+      "git_blob": "d68f7cc6921fc9be8cc6bd0110ac406922096733"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/annotations.rst",
+      "file": "raw/Doc__howto__annotations.rst",
+      "bytes": 10617,
+      "sha256": "97d695b30205a66625ba12d4dc43807eeee78232147080b0e5a35a57ace213e7",
+      "git_blob": "d7deb6c6bc1768f09742eae7c7493204a2474f29"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/argparse-optparse.rst",
+      "file": "raw/Doc__howto__argparse-optparse.rst",
+      "bytes": 2923,
+      "sha256": "aa73b37f942103cc3d4e00bdfebac909c5728b11f16578b5fda75025e844f9af",
+      "git_blob": "b684619885b4c7184821fc187758974149ac3f0a"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/argparse.rst",
+      "file": "raw/Doc__howto__argparse.rst",
+      "bytes": 28300,
+      "sha256": "b1d9195f239ad23ccfac10f6612be0b6c4f6a2a86a744efa549f3852c8ed8686",
+      "git_blob": "902c50de00803c5a1969fe614def2d5bf5f213fa"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/clinic.rst",
+      "file": "raw/Doc__howto__clinic.rst",
+      "bytes": 343,
+      "sha256": "1ac95a02c346fff5cc8000206bcada3152bbf7460c22d08ca479a56d34b571f7",
+      "git_blob": "060977246149cfa922fb03169e22354d3f343ef4"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/cporting.rst",
+      "file": "raw/Doc__howto__cporting.rst",
+      "bytes": 944,
+      "sha256": "a7957ece975d1deb17f51a9f4b4fae1c7c966ed6538699c3242ca4a75f1fdb04",
+      "git_blob": "cf857aed0425ec440ce3a3d0f7ede0fe428654d9"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/curses.rst",
+      "file": "raw/Doc__howto__curses.rst",
+      "bytes": 25217,
+      "sha256": "3294a81731bbe510d8d06044a94a51fe09bc14cb88c5240c18646e973ed81526",
+      "git_blob": "6994a5328e81496d0568f2459f636697de246a6a"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/descriptor.rst",
+      "file": "raw/Doc__howto__descriptor.rst",
+      "bytes": 55193,
+      "sha256": "1228c4d365e18f384aacc6e482e8b328bffcc2ce571286cd1b462ac303f8aa94",
+      "git_blob": "9d5a9ac8b718cb00e55567e7d544ab82f130a7c2"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/enum.rst",
+      "file": "raw/Doc__howto__enum.rst",
+      "bytes": 46969,
+      "sha256": "6fcc3ac5ea14515229095dcedcb47fe106c8512810c3e0e5cce78898f72f8cbb",
+      "git_blob": "7713aede6d564a46dc89b872bbfd0817af1774bf"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/free-threading-extensions.rst",
+      "file": "raw/Doc__howto__free-threading-extensions.rst",
+      "bytes": 17563,
+      "sha256": "abc4ab331243eebe5ceaf0d2a7c885700ba931d94a4316d739f1ab1534a9830d",
+      "git_blob": "577e283bb9cb4c64afd7b1c99929969a185384a0"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/free-threading-python.rst",
+      "file": "raw/Doc__howto__free-threading-python.rst",
+      "bytes": 7623,
+      "sha256": "baea2cde15bb105ecc20cccd3c8ee2fd22f2956061bece3bdcb73082242f42b5",
+      "git_blob": "24069617c47ae18e1bc0bcb029ce202c39a95773"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/functional.rst",
+      "file": "raw/Doc__howto__functional.rst",
+      "bytes": 49502,
+      "sha256": "0e63b44d38942c63bf7d57b2e4f4f3df7eae471f542b61a8a2a2c7c419beff90",
+      "git_blob": "b0b2414a1a02c83903d2faff4ebd2218135b18cb"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/gdb_helpers.rst",
+      "file": "raw/Doc__howto__gdb_helpers.rst",
+      "bytes": 23649,
+      "sha256": "aff3210b873e4f32bb40c8859abcfd3b214ec23f802d2eef834835014c4c5ee7",
+      "git_blob": "98ce813ca4ab024fb83319ceaed628c74ab8c568"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/index.rst",
+      "file": "raw/Doc__howto__index.rst",
+      "bytes": 1535,
+      "sha256": "f997bf04f5a8844abd09803599879f3403aaf00517d7b0301b9c05367f6b6333",
+      "git_blob": "81fc7e63f35bd79168de1461301ba617808a3814"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/instrumentation.rst",
+      "file": "raw/Doc__howto__instrumentation.rst",
+      "bytes": 14989,
+      "sha256": "5201cb65d11a029712ac15edd2a58c98f3657355445035c7269bc8f2da43dda9",
+      "git_blob": "b3db1189e5dcbcd5983180e1700f14abb940e27d"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/ipaddress.rst",
+      "file": "raw/Doc__howto__ipaddress.rst",
+      "bytes": 11731,
+      "sha256": "b709a6233364441fd0a651f32e26bb148b303db9706012aa2c2a43aeda6f5b12",
+      "git_blob": "e852db98156facc8c80540bf12afba237cfdd28f"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/isolating-extensions.rst",
+      "file": "raw/Doc__howto__isolating-extensions.rst",
+      "bytes": 23039,
+      "sha256": "f5379c0bfefe71bdb7908dcdde5fea1c147721983c0a13be477dc3bdf789c066",
+      "git_blob": "7da6dc8a39795e8696f013af2569c5d4bf90be96"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/logging-cookbook.rst",
+      "file": "raw/Doc__howto__logging-cookbook.rst",
+      "bytes": 167167,
+      "sha256": "27f35e99ae528a6bf328a10dbbab757cfefefd19fd19377563643e600606d884",
+      "git_blob": "52537a91df542c1996a0cb0f6a76ae50a088db18"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/logging.rst",
+      "file": "raw/Doc__howto__logging.rst",
+      "bytes": 50336,
+      "sha256": "6912fe7b3f3495569f1893dddaed0c345155b8c885e3369c9d78e63eb298f9b5",
+      "git_blob": "b7225ff1c2cbfc863c7164f78d1aa3e81d23d1e9"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/mro.rst",
+      "file": "raw/Doc__howto__mro.rst",
+      "bytes": 22983,
+      "sha256": "fc41688199989abc4cd4a0c39a6f3f4c9fbeada6ec09d9b8bed03e9cbf2bdece",
+      "git_blob": "0872bedcd3a2d340c2b4fe0c65a66087f183451e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/perf_profiling.rst",
+      "file": "raw/Doc__howto__perf_profiling.rst",
+      "bytes": 13437,
+      "sha256": "6f4f8193af48b2cdd5f178d2ab47e2454702d6584039123fab4a579e991175d6",
+      "git_blob": "b579d7765763655e4f36cde0b80bec6af40ea0b8"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/pyporting.rst",
+      "file": "raw/Doc__howto__pyporting.rst",
+      "bytes": 1314,
+      "sha256": "c896d18556a7434410f68af377868a5d02876e9ba7d6c30d33ddf505c2337511",
+      "git_blob": "9f73c811cfcbc0d06ee8db386492c308bc244686"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/regex.rst",
+      "file": "raw/Doc__howto__regex.rst",
+      "bytes": 62800,
+      "sha256": "0a3b4a2bb1750cf5257ad16d1df5fb15e16ac7d696d87434bb8bd1b0da5b5b80",
+      "git_blob": "7486a378dbb06f6ba6db3c4f58a48bc61c8254e8"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/remote_debugging.rst",
+      "file": "raw/Doc__howto__remote_debugging.rst",
+      "bytes": 26343,
+      "sha256": "3cedcb2514c43a4a9508f4a8eba3e7c8d1554d9ec5c4aab7c32b524781a04550",
+      "git_blob": "78b40bcdf7127b21a8300313c3f7599ba82b4a0f"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/sockets.rst",
+      "file": "raw/Doc__howto__sockets.rst",
+      "bytes": 18802,
+      "sha256": "0387dc74ce7c45a72c138a8ce78683efb632e06c8f2c2d362c3f381b0669ab38",
+      "git_blob": "cbc49d15a0771b968d0866ee38371a827bc7accf"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/sorting.rst",
+      "file": "raw/Doc__howto__sorting.rst",
+      "bytes": 14609,
+      "sha256": "b16ccb0459ce1170700900a7f5c3878479f1879649bcece03f27010898956cd1",
+      "git_blob": "70c34cde8a065929201f893181d2ce9433d6c089"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/timerfd.rst",
+      "file": "raw/Doc__howto__timerfd.rst",
+      "bytes": 8705,
+      "sha256": "ee5c776f84b793e90c33de3e7774ec5a20e52b9ccd4ee2adcdd8b74f1cfc3ade",
+      "git_blob": "b5fc06ae8c681071a6f849259df887b5f9db35fe"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/unicode.rst",
+      "file": "raw/Doc__howto__unicode.rst",
+      "bytes": 31886,
+      "sha256": "c5cf5081618e2b06a519d2ede00fb52a53922c5a8d636c4be337810fed2bd17c",
+      "git_blob": "254fe7293553535e1a963a7bb2825d39fc462067"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/python/cpython/ebf955df7a89ed0c7968f79faec1de49f61ed7cb/Doc/howto/urllib2.rst",
+      "file": "raw/Doc__howto__urllib2.rst",
+      "bytes": 22151,
+      "sha256": "2f2a5f0abdfa6eb47510a39357e294637bcefe8112fcd2693c20c91fab9054f6",
+      "git_blob": "d79d1abe8d05770ea10fdec026895d8cd1d82621"
+    }
+  ],
+  "exclusions": [
+    {
+      "path": ".tmp/cptc-inputs/calib.txt",
+      "sha256": "4f52263a8d3cbd5e1e376e43a918c3dfca814a0f5bb0187f410cf8623d000079"
+    },
+    {
+      "path": ".tmp/cptc-inputs/eval-mix.txt",
+      "sha256": "3564dc0a4eb0cd7c1360d1e95dce03903a85a5ce13b3f79c700ece27552bd69c"
+    },
+    {
+      "path": ".tmp/cptc-inputs/eval-docs-heldout.txt",
+      "sha256": "32f1301e782a53d1ef96246fd40fca6b6591788be78fca984499a716412a346d"
+    }
+  ],
+  "deduplication": "Reject source passages containing a matching 64-token shingle at any 16-token passage offset in calibration or either old held-out corpus. Not semantic deduplication.",
+  "interval_scope": "Paired windows conditional on these corpora; windows can straddle source-document boundaries.",
+  "domains": {
+    "wiki_test": {
+      "file": "wiki_test.txt",
+      "sha256": "7ff2f3a27423f0b0c9b485a8de3aecb7ce8ed86a4afee776c2c61223c382a911",
+      "windows": 16,
+      "scored_tokens": 32752,
+      "window_ids_sha256_int64le": [
+        "9232444e881df54033a35bb5e9f79dad17e8ed6657077cc4d3e6ea028482b1d5",
+        "05595de5f23703ae22d3d7b5cd1884fe71f2c92021dc4dde8a758c383eef036b",
+        "10c4594d5e2994366b7c8462ee4284c177dd4df91163030f43d8eefefee4a4bc",
+        "0d351c6495eb8b8056c5df3d1d1bcad5aa938cddbb30bf63eb581cd2396296e7",
+        "140548187d463cb1003f1f2fc822421836f342e259b8e769faf787e4a8fa3cda",
+        "587979cafc012726d277f09cb46ca4e71aa9b834a07cc9767db34185715be39c",
+        "9449bd3918fe168f33624cfddb4d0769688740025b49a8101a100ef56df36d16",
+        "31a3afab3562e035e64cba0a807f8823949ddb8079a601e0926107ce21b61209",
+        "9590c0b62544565bdd72817b31aa57fe6c1fb42eace386be2b308406168ea914",
+        "6279183fc046208be9538c5cd92f92e600a856099318e6938414c0707f6279dc",
+        "adb373054910cdbf770bbbacbe32b4c30a8dfda625cf2004e3a6821361454b69",
+        "6bb1584c6a003f5d9d3c70aeceaae40fc32bc4d59adcba2dd05f81592cd888b1",
+        "d59b4cdd417214d25bea926e5db686e668597f3a6d9f185483fe248fa2f26fd2",
+        "6edb92457fbe042aaf1b431bf75001ef0756b45c2375921c305765ba5e920624",
+        "838cd30cb038b1474cca27cd82db268625013ef0eb22ddd59e195c7078dad34a",
+        "836d5107c2ac652875ffa577b32f6c56a796daecd8690babac738a19d174e7d2"
+      ],
+      "selected_documents": [
+        {
+          "document": "= Bintulu =",
+          "source_sha256": "c1591824a31b4d77ee06a7235df218616a5726822c53c19a44b5cb992d65e1cb",
+          "passage_ids_sha256_u32le": "005e1b83f18d9b418f773783f6d2ef9e67ec248783fff51ef5760deca64acb47"
+        },
+        {
+          "document": "= Brock Lesnar =",
+          "source_sha256": "daaec44f0d7062b140bde4b9e96242bcbff367ac9143c682bc5f738b9c5ea71d",
+          "passage_ids_sha256_u32le": "779c588ddb902fd02ce66633b70191c28c8e2de6e6104eedb6bff2fd96bfcdab"
+        },
+        {
+          "document": "= Ironclad warship =",
+          "source_sha256": "93e572d2f1d09aee81e93d8ad3851ab6d2df58935d646580d5f62431a7f4f435",
+          "passage_ids_sha256_u32le": "5425678e8cf791f0fdfe409bde83a0881fbfbc5317cb20c8e20850c2b76735d2"
+        },
+        {
+          "document": "= Attalea ( palm ) =",
+          "source_sha256": "32a7479ba1ec3be77bd2d5974d8e52173b60c3e7201b2af536281fa24d7206af",
+          "passage_ids_sha256_u32le": "c34d40d490ba91b92cb2b7162a55cbae2fc7a0939c945520811aa30ceba87b43"
+        },
+        {
+          "document": "= Ben Amos =",
+          "source_sha256": "5193ec1cf9b091f640677c899cbd932937fdc2ea471f896d367be91c8ad06ca3",
+          "passage_ids_sha256_u32le": "6e47eb8ec4796ac147a8e43ea0fed6c54b9f097ab4ce6f8cb65afc8212b53dad"
+        },
+        {
+          "document": "= Imagism =",
+          "source_sha256": "93a05da1103e04c902909326cd2946cf4426ab37d6a1e90341b90dbda268979d",
+          "passage_ids_sha256_u32le": "6304c86f3f897c2feecb2f02dc0c1bea23ee52768b78cb3eaead9dd03391071d"
+        },
+        {
+          "document": "= Dick Rifenburg =",
+          "source_sha256": "65541c419587de7cc3cca306bcd82b1fd509ed9be3f30a7d18e38eb9f86f1595",
+          "passage_ids_sha256_u32le": "e806637b62a8387eb44275b3331692349e7411b9bbb7ccb965dd523086fe88dc"
+        },
+        {
+          "document": "= The Hustler ( film ) =",
+          "source_sha256": "c10b5100b0181cc148fa30970a9acaac0780277653f3288ee4883ed1c85bb78f",
+          "passage_ids_sha256_u32le": "f45bc151ba302d7973b0d995b4b730278231ffb01cdac0cfb44a131661c5ce8c"
+        },
+        {
+          "document": "= American Beauty ( 1999 film ) =",
+          "source_sha256": "da07ce965a2d5286cc9d8deacb860a8182854167449677d93687dacdc26ddc2f",
+          "passage_ids_sha256_u32le": "9e33cda7f1b5ff497d39b29a22c20e1e2aface99021d88033a7ff97af95598ab"
+        },
+        {
+          "document": "= 1933 Treasure Coast hurricane =",
+          "source_sha256": "7c15c8c44cd4a8063a5f0cf2d309a4846ce8f41c96640636328c580e6f9648d5",
+          "passage_ids_sha256_u32le": "1124be847d81897e0cc92918f140019d4d1fb9a1134a06caa8aa5c8dea0a6861"
+        },
+        {
+          "document": "= Manila =",
+          "source_sha256": "8ca7ac1f75195fb76c22a0370151597da13ffc64add17b1f3ea8acc804cc25fe",
+          "passage_ids_sha256_u32le": "6320ef0f0cfb0b5c9d83523ff055f66b0c0a39561cbbbc1b6e1f3c4554515b2d"
+        },
+        {
+          "document": "= Free Derry =",
+          "source_sha256": "40eeb89daea61c81cbed68f1c228c576957d9c2cab00fc00f3b9e74b6e9e0338",
+          "passage_ids_sha256_u32le": "a34874bf31b0c4ca5b3c615553a6a4f95739368113876c0f55e9f2a33d10703d"
+        },
+        {
+          "document": "= Olmec colossal heads =",
+          "source_sha256": "87f2828a1958c2b2a198974f57fd36d9114c73db78c69064efb965a53feb3547",
+          "passage_ids_sha256_u32le": "4ab801b2d94b489211bc8c0883c2d54a3585202dfae2469c1729a233356b20be"
+        },
+        {
+          "document": "= Temnospondyli =",
+          "source_sha256": "2a673e64049a4052ef5b2d87cb78a6b5371a677fa6a8576bd1f52d97ca7ece8d",
+          "passage_ids_sha256_u32le": "ab3726190f9ca0b1deb153df78d31a5d97474fa50fd80abb92344933031f47a0"
+        },
+        {
+          "document": "= Dvorak technique =",
+          "source_sha256": "cdc897d9dab71b1fd4ee92b8f5084c3dcb6d70c6e342e2bea48f7046b1ab5f85",
+          "passage_ids_sha256_u32le": "0e143e0d6b6e853ff86cb19e7c7ff2cb3868319dee77175615b2d03c9cc3ff42"
+        },
+        {
+          "document": "= 2003 Pacific typhoon season =",
+          "source_sha256": "c2ba898835125cfc00b399a03db7e005fc709f3d05f0c6b6e6d4309fe919b526",
+          "passage_ids_sha256_u32le": "0ef41e30782ec6ff0abc5c6bede9d9bcd1c3c7d12e575d60d11aae674440e885"
+        }
+      ],
+      "rejected_documents": [
+        {
+          "document": "= Shackleton ( crater ) =",
+          "reason": "short"
+        },
+        {
+          "document": "= View of the World from 9th Avenue =",
+          "reason": "short"
+        },
+        {
+          "document": "= Operation USA =",
+          "reason": "short"
+        },
+        {
+          "document": "= New York State Route 31B =",
+          "reason": "short"
+        },
+        {
+          "document": "= Chad at the 2008 Summer Olympics =",
+          "reason": "short"
+        },
+        {
+          "document": "= Little Gidding ( poem ) =",
+          "reason": "short"
+        },
+        {
+          "document": "= Typhoon Krosa ( 2013 ) =",
+          "reason": "short"
+        },
+        {
+          "document": "= The Heart of Ezra Greer =",
+          "reason": "short"
+        },
+        {
+          "document": "= Tatwine =",
+          "reason": "short"
+        }
+      ]
+    },
+    "python_docs": {
+      "file": "python_docs.txt",
+      "sha256": "f27338f0084e16b9c6c0ac315325ed62eea999294ca2b5d665572d6227e95b7d",
+      "windows": 16,
+      "scored_tokens": 32752,
+      "window_ids_sha256_int64le": [
+        "a92cd0832444e4df6431121a3c72c198096a5f29a6fcd7aed3c86db7f6128596",
+        "965fde0403748245acb37a95dca02a23f0630d27f80e0381f4c2711c4886b9e0",
+        "ce08d267a0a20faaaf6782336a51b9ed11f18423271dcf2abb68708f50694f94",
+        "3bd4b71ac25d301783f2632cd4d405738509dba2d85468272a02102f05e160dd",
+        "11915f0adb7c5e6d314313df3615d06f3230c8eb1cf8537778505811a0b51434",
+        "cdb58629369393527b26ba0673be6c7adfd0edef54b85612d003b1d1363f0e71",
+        "e19fed0e697043458eda5d58c3f08b37354e65778b419e23dfe2a3e0abd54462",
+        "45e41cfc27e074032ab77304874b2f284591f2a5c67fd132a84e3ab2fabb1db4",
+        "9134c18a15ce0cd5ebdd9399f33fb44410b69f3c8daed820da36869cd3823a2f",
+        "11591745a9c09e41dbec4427ada9de0571b98c58e1d9ddcc3153d893a97fb978",
+        "f538d6e44d2bc11b53e990ccdcfd674692c090d5d141fe92867cf83241f82612",
+        "00be8447e598d8a9786a40d6c3cf3e58f83d594242abf3051f6833fabbdf68d1",
+        "179c58cdc5f2c124b2bc73b4a3e4aa7a026e1732f8df7b32f34808f58c7367c5",
+        "71de0a5f58693731adf7f5a444dd81393711268b3169b4828a4b817e96fa038f",
+        "db5739672ba977388990d25f3df31a4ef031d3f961aa1bb0297f0d8cc96b7991",
+        "61338db3ad19b048f14c944683a6839449107abeffb6fd2c1e57981231e9d0e7"
+      ],
+      "selected_documents": [
+        {
+          "document": "Doc/tutorial/floatingpoint.rst",
+          "source_sha256": "8e648340d27e4ad469e40a53f8b47389d8490a7b10ea828f0bc76186c3863a55",
+          "passage_ids_sha256_u32le": "03ccd0a54256656d3442136a83d7da8cc81a8568f1f54aec295863eb5c3566a1"
+        },
+        {
+          "document": "Doc/tutorial/modules.rst",
+          "source_sha256": "919ed939a797cfdfbc2be6f18ff8f860692a8b7ac7bbd37b012307954d19e39c",
+          "passage_ids_sha256_u32le": "3e5dbc21f6020a9c2f717c2685de508aef27d8d5a397f03161b96f31f040810c"
+        },
+        {
+          "document": "Doc/howto/urllib2.rst",
+          "source_sha256": "2f2a5f0abdfa6eb47510a39357e294637bcefe8112fcd2693c20c91fab9054f6",
+          "passage_ids_sha256_u32le": "4b51d0724b768ec6be0969e800b099f4e667a3824466da26314194a51cb789c7"
+        },
+        {
+          "document": "Doc/howto/descriptor.rst",
+          "source_sha256": "1228c4d365e18f384aacc6e482e8b328bffcc2ce571286cd1b462ac303f8aa94",
+          "passage_ids_sha256_u32le": "250c61edca3f2bee890d2573cffaea9ce06bba3c9d400a94d7c19b8518d76585"
+        },
+        {
+          "document": "Doc/howto/argparse.rst",
+          "source_sha256": "b1d9195f239ad23ccfac10f6612be0b6c4f6a2a86a744efa549f3852c8ed8686",
+          "passage_ids_sha256_u32le": "498e30ae17590c5fe07b7a992eabce91546f4e5760c5767ff64f4fbb49fc28d8"
+        },
+        {
+          "document": "Doc/howto/free-threading-extensions.rst",
+          "source_sha256": "abc4ab331243eebe5ceaf0d2a7c885700ba931d94a4316d739f1ab1534a9830d",
+          "passage_ids_sha256_u32le": "fb075097f36894829a8b4ac50ca4f4b2f89136550cee8165192308f5cb314b66"
+        },
+        {
+          "document": "Doc/howto/curses.rst",
+          "source_sha256": "3294a81731bbe510d8d06044a94a51fe09bc14cb88c5240c18646e973ed81526",
+          "passage_ids_sha256_u32le": "13dc8601ceaa60a841f0019963d9331eb09f9c11c92a9b97774237703533ed36"
+        },
+        {
+          "document": "Doc/tutorial/classes.rst",
+          "source_sha256": "adabb31741f73aed4455db62af748b16b85d71e2e635adf5199741c91e61f36f",
+          "passage_ids_sha256_u32le": "3ec0af5a44285b897e1a28b5572fe35f22160646fe41a7bfd28467b225b0de05"
+        },
+        {
+          "document": "Doc/tutorial/introduction.rst",
+          "source_sha256": "82285dea19d4257d0bcbba2d963d7cca40eefcde256642b95bc0899948025ad0",
+          "passage_ids_sha256_u32le": "c0bea0839e2739cb7600091fa44e302757687551085bd3ba3d3ee6f38efed177"
+        },
+        {
+          "document": "Doc/howto/logging-cookbook.rst",
+          "source_sha256": "27f35e99ae528a6bf328a10dbbab757cfefefd19fd19377563643e600606d884",
+          "passage_ids_sha256_u32le": "1ab2b5190f5d72c644ddb56de59a9a99af3b0f722f8bb6e1536bfff38eb43db6"
+        },
+        {
+          "document": "Doc/howto/gdb_helpers.rst",
+          "source_sha256": "aff3210b873e4f32bb40c8859abcfd3b214ec23f802d2eef834835014c4c5ee7",
+          "passage_ids_sha256_u32le": "3cd1755beaca164f64a4db24a4841a8b5d1f2202b14aac35c87ab0207aa279da"
+        },
+        {
+          "document": "Doc/tutorial/inputoutput.rst",
+          "source_sha256": "0aa8b4dc7bd711fd80fbbe7b287a392f6dc77d754bed9aa51ae380ac8312fb57",
+          "passage_ids_sha256_u32le": "9e5d072a56ed2af74f7ff267af45a6c8972663567d087e07afe29ad722a15062"
+        },
+        {
+          "document": "Doc/howto/isolating-extensions.rst",
+          "source_sha256": "f5379c0bfefe71bdb7908dcdde5fea1c147721983c0a13be477dc3bdf789c066",
+          "passage_ids_sha256_u32le": "0887b5e7761718bab1b588c248b9f65bdcada462b795bb150fc73a9e23badce4"
+        },
+        {
+          "document": "Doc/tutorial/stdlib.rst",
+          "source_sha256": "86ff822f47fbed6c7c0348ce9d57218c5c1041e066ad91eb9234bce79b9be5ed",
+          "passage_ids_sha256_u32le": "71881f1b5251c25fd4c54511c0e50bcab76c0c3f85145c302fb2c7bf3cc8d496"
+        },
+        {
+          "document": "Doc/howto/unicode.rst",
+          "source_sha256": "c5cf5081618e2b06a519d2ede00fb52a53922c5a8d636c4be337810fed2bd17c",
+          "passage_ids_sha256_u32le": "93b7565e85d46b9a3873a7d14d7c439e85d202b98bb36b8787a5fbffc87cc5c0"
+        },
+        {
+          "document": "Doc/howto/remote_debugging.rst",
+          "source_sha256": "3cedcb2514c43a4a9508f4a8eba3e7c8d1554d9ec5c4aab7c32b524781a04550",
+          "passage_ids_sha256_u32le": "1f8d96486ab92957050fbe3583b02ac649bac2244e7cbfb1f4974cd905de9096"
+        }
+      ],
+      "rejected_documents": [
+        {
+          "document": "Doc/howto/pyporting.rst",
+          "reason": "short"
+        },
+        {
+          "document": "Doc/tutorial/index.rst",
+          "reason": "short"
+        },
+        {
+          "document": "Doc/tutorial/interactive.rst",
+          "reason": "short"
+        },
+        {
+          "document": "Doc/howto/free-threading-python.rst",
+          "reason": "short"
+        },
+        {
+          "document": "Doc/howto/cporting.rst",
+          "reason": "short"
+        }
+      ]
+    }
+  }
+}

@@ -57,6 +57,18 @@ cohorts, not a default recommendation or a verdict on the full paper.
 [Raw receipts, parameter counts, final-KL traces and reviewed scope](../experiments/results/cptc_qwen35_4b_2026-11-20/quality-study.json)
 pin the actual quantizer source at `995fc26317bd74d5d77653f42c4639086ac0d441`.
 
+### Prospective CPTC optimization study
+
+The [24-cell factor plan](../experiments/results/cptc_ablation_qwen35_4b_2026-11-20/plan.json)
+preserves these DEFAULT controls. Trials are selected by calibration validation
+KL, not by the benchmark holdouts. A separate
+[confirmatory corpus](../experiments/results/cptc_ablation_qwen35_4b_2026-11-20/confirmatory/manifest.json)
+was frozen before new training: 16 WikiText test windows and 16 CPython documentation
+windows, 65,504 scored tokens total. Source revisions, tokenizer and window hashes
+are pinned; a CPU check excludes matching 64-token shingles at every 16-token
+window offset against calibration and both old holdouts. This is not semantic
+deduplication. These are prospective inputs, not optimization results.
+
 ## Qwen3.5-4B (unquantized PPL 7.067 on docs)
 
 Sizes: "body" is the quantized decoder linears only; "file" is the whole checkpoint
