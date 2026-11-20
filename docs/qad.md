@@ -376,6 +376,50 @@ So the order of work is:
    2 % on its own.
 
 
+## CPTC options (opt-in `--cptc`)
+
+The CPTC format (format-spec section 14) has its own QAD/final-KL options. They are
+inactive on the ladder path, and a run without `--cptc` rejects them instead of
+silently ignoring them. The defaults reproduce the previously measured CPTC
+pipeline exactly: log scales, one projection sweep, fixed tables, no index cache.
+
+| `QadConfig` field / flag | Default | Meaning |
+| --- | --- | --- |
+| `cptc_scale_units` / `--qad-cptc-scale-units log\|row_u8` | `log` | Per-block scale parameterisation in both QAD and final-KL. `log`: `scale0 * exp(delta)`, `delta` in `[-0.5, 0.5]` (unchanged). `row_u8`: `scale0 + delta * unit`, where `unit` is the row's initial maximum block scale divided by 255 and expanded to every block of that row. Both keep the same `exp(+/-0.5)` relative trust region, nonnegative scales, and the exact PTQ values at a zero delta (zero and subnormal fp16 scales included; no exported floor). |
+| `cptc_projection_sweeps` / `--qad-cptc-projection-sweeps N` | `1` | Bounded sweeps of the deterministic CPTC code projection in each QAD forward and in `export()`; `N >= 1`. |
+| `final_cptc_train_tables` / `--[no-]qad-final-cptc-train-tables` | `False` | Final-KL trains the ONE global pair of signed-int8 mirror half-tables shared by every CPTC Linear. Coefficients, depth and the fp16 `table_scale` stay fixed; the half-table entries project to `[-127, 127]` with a straight-through rounding and keep the last low-half entry exactly 0. Requires `--cptc` and `--qad-final-kl > 0`. |
+| `final_cptc_table_lr` / `--qad-final-cptc-table-lr F` | `0.02` | AdamW learning rate of the shared table entries, in int8 levels per step. It is independent of `final_lr_p`, which stays the scale/byte learning rate. |
+| `final_cptc_cache_mb` / `--qad-final-cptc-cache-mb M` | `0` | Explicit byte budget (MiB) for immutable per-weight CPTC table indices in final-KL. Off by default. |
+
+The table owner is a single master parameter set on the first final-KL device; it is
+not registered as a submodule of each Linear, so model/device staging cannot duplicate
+it. Each Linear's LUT materializes the live selected master values on that Linear's
+device with a differentiable copy, so gradients from a layer-wise shard return to the
+one master and its single optimizer group; this also supports the default two-device
+final-KL placement. Keep-best snapshots and restores the table together with the
+per-block scales and norms. Every exported CPTC tensor carries the same selected table
+values, and `hi2 quantize` builds the checkpoint's one global `cptc` config from those
+exported tensors (fail closed if two tensors disagree). The input/PTQ codec objects
+are copied for export and never mutated.
+
+The cache stores only the immutable `decode_index` values (0..126, one uint8 per
+stored weight) of the frozen code stream. PyTorch reads uint8 advanced indices as a
+boolean mask, so each gather casts only one bounded chunk to int64. Trainable-table
+autograd saves the uint8 indices and repeats bounded conversions in backward;
+no whole-tensor int64 index is retained. `used_bytes` accounts every cache-owned uint8
+index buffer (row classes and weight bytes are model buffers that exist without the
+cache), and no decoded table, scale or weight cache is kept: trainable tables
+rebuild their 127-entry LUT from the live selected values every forward, so a
+changed table cannot be served stale. The LUT carries the exact runtime fp16 values
+in fp32 with an fp32 straight-through surrogate: the forward is bit-identical to the
+old half LUT, but tiny table gradients accumulate in fp32 instead of underflowing
+through a half gather. Moving a cached module to another device replaces its one
+slot on that device; the budget still counts one slot per cached index group, never
+both copies. It is training-only, never used by inference, and the final-KL report
+records `budget_bytes`, `used_bytes`, `entries` and
+`free_bytes`. Changing the budget must not change weights, gradients or optimizer
+updates, and is excluded from the final-phase numerical fingerprint.
+
 ## Interface
 
 | Flag | Meaning |

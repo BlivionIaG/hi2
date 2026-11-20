@@ -615,3 +615,544 @@ def test_checkpoint_tensor_io_and_consumer_numerics(tmp_path):
     assert set(to_tensors(t, "layer")) == {
         f"layer.hi2_{f}" for f in CPTC_FIELDS
     }
+
+
+def _scale_fixture(rows=4, k=32, nbits=2, block=16):
+    """A CPTC tensor whose scale rows cover zero, subnormal and normal fp16 values."""
+    codec = get_codec(16, nbits, rounds=0)
+    w = torch.randn(rows, k, generator=torch.Generator().manual_seed(83))
+    codes, scales, _ = encode_rows_cptc(
+        w, torch.ones(k), nbits, block, codec, effort="fast"
+    )
+    scales = scales.clone()
+    scales[0, :] = 0.0  # a completely zero row
+    scales[1, 0] = 0.0
+    scales[1, 1] = torch.tensor(5.960464477539063e-08, dtype=torch.float16)
+    scales[3, 0] = 0.0
+    t = assemble_cptc(
+        [(torch.arange(rows), codes, scales)],
+        torch.full((rows,), nbits, dtype=torch.uint8),
+        torch.full((rows,), block, dtype=torch.uint8),
+        torch.zeros(k // 16, dtype=torch.uint8),
+        k,
+        {nbits: codec},
+    )
+    return w, t
+
+
+def test_cptc_row_u8_scale_units_keep_initialization_and_trust_region():
+    import math
+
+    from hi2.qad import CptcFakeQuantLinear, CptcFrozenCodeLinear
+
+    w, t = _scale_fixture()
+    frozen = CptcFrozenCodeLinear(t, scale_units="row_u8")
+    off = frozen.param_off.to(torch.int64)
+    scale0 = frozen.scale0
+    # The unit is exactly the row's initial maximum block scale / 255, repeated
+    # over the row's block positions; a zero row gets unit 0.
+    for row in range(off.numel() - 1):
+        lo, hi = int(off[row]), int(off[row + 1])
+        want = scale0[lo:hi].max() / 255.0
+        assert torch.equal(
+            frozen.scale_unit[lo:hi], want.expand(hi - lo)
+        ), row
+    assert float(frozen.scale_unit[off[1] : off[2]].max()) > 0
+    assert torch.equal(frozen.scales(), scale0)  # exact at delta = 0
+    out = frozen.export()
+    assert torch.equal(out.scale, t.scale)
+    assert bool((out.scale == 0).any())
+    assert bool((out.scale == torch.tensor(5.960464477539063e-08, dtype=torch.float16)).any())
+    assert torch.equal(cptc.dequantize_stored_cptc(out)[0], torch.zeros(32, dtype=torch.float64))
+
+    with torch.no_grad():
+        frozen.delta[int(off[1])] = 1.0
+        frozen.delta[int(off[1]) + 1] = -2.0
+        frozen.delta[int(off[2])] = 50.0
+    want = (scale0 + frozen.delta * frozen.scale_unit).clamp(0.0, 65504.0)
+    assert torch.equal(frozen.scales(), want)
+
+    with torch.no_grad():
+        frozen.delta.fill_(1e9)
+        frozen.project()
+    scales = frozen.scales()
+    positive = scale0 > 0
+    assert bool((scales >= 0).all())
+    assert bool(
+        (scales[positive] <= scale0[positive] * (math.exp(0.5) + 1e-6)).all()
+    )
+    assert bool(
+        (scales[positive] >= scale0[positive] * (math.exp(-0.5) - 1e-6)).all()
+    )
+    assert bool((scales[scale0 == 0] == 0).all())
+    assert torch.equal(frozen.export().scale, scales.half())
+
+    log = CptcFrozenCodeLinear(t)  # default log path is unchanged
+    with torch.no_grad():
+        log.delta.fill_(1e9)
+        log.project()
+    assert torch.equal(log.delta, torch.full_like(log.delta, 0.5))
+    assert torch.allclose(
+        log.scales(),
+        (scale0 * math.exp(0.5)).clamp(0.0, 65504.0),
+        rtol=1e-6,
+        atol=0.0,
+    )
+
+    lat = CptcFakeQuantLinear(
+        w, t, None, "ptq", "abs", sweeps=1, scale_units="row_u8"
+    )
+    lat_out = lat.export()
+    assert torch.equal(lat_out.scale, t.scale)
+    assert torch.equal(
+        cptc.dequantize_stored_cptc(lat_out).float(), lat.stored(False)
+    )
+    assert torch.equal(lat.stored(False)[0], torch.zeros(32))
+    normal = int(lat.param_off[2])
+    with torch.no_grad():
+        lat.delta[normal].add_(0.5)
+        lat.latent[2].add_(0.01)
+    moved = lat.export()
+    expected = (t.scale[normal].float() + 0.5 * lat.scale_unit[normal]).half()
+    assert expected > t.scale[normal]
+    assert moved.scale[normal] == expected
+    assert torch.equal(cptc.dequantize_stored_cptc(moved).float(), lat.stored(False))
+
+
+def _two_width_tensors():
+    codecs = {k: get_codec(16, k, rounds=0) for k in (2, 4)}
+    out = {}
+    for nbits, block in ((2, 16), (4, 32)):
+        w = torch.randn(3, 64, generator=torch.Generator().manual_seed(90 + nbits))
+        codes, scales, _ = encode_rows_cptc(
+            w, torch.ones(64), nbits, block, codecs[nbits], effort="fast"
+        )
+        out[nbits] = assemble_cptc(
+            [(torch.arange(3), codes, scales)],
+            torch.full((3,), nbits, dtype=torch.uint8),
+            torch.full((3,), block, dtype=torch.uint8),
+            torch.zeros(4, dtype=torch.uint8),
+            64,
+            {nbits: codecs[nbits]},
+        )
+    return codecs, out
+
+
+def test_cptc_shared_tables_are_one_global_pair_and_exports_agree():
+    import copy
+
+    from hi2.finalkl import CptcLinear
+    from hi2.qad import CptcSharedTables, cptc_codecs_from_tensors
+
+    codecs, tensors = _two_width_tensors()
+    initial = {k: c.table.clone() for k, c in codecs.items()}
+    book = CptcSharedTables(codecs)
+    m2 = CptcLinear(tensors[2], tables=book)
+    m4 = CptcLinear(tensors[4], tables=book)
+    assert m2.tables is book and m4.tables is book
+    # Model/device staging must not duplicate or replace the one master copy.
+    params = list(book.parameters())
+    m2.to(torch.device("cpu"))
+    assert m2.tables is book and m4.tables is book
+    for before, after in zip(params, book.parameters()):
+        assert before is after
+
+    loss = m2.weight().square().sum() + m4.weight().square().sum()
+    loss.backward()
+    for p in book.parameters():
+        assert p.grad is not None and torch.isfinite(p.grad).all()
+    assert sum(float(p.grad.abs().sum()) for p in book.parameters()) > 0
+    # Fixed metadata is frozen and the input/PTQ codecs are never mutated.
+    for k, codec in codecs.items():
+        assert torch.equal(codec.table, initial[k])
+        assert torch.equal(book._codecs[k].table_scale, codec.table_scale)
+        assert book._codecs[k].a0 == codec.a0 and book._codecs[k].a1 == codec.a1
+
+    with torch.no_grad():
+        book.table_u[2][0] += 0.6
+        book.table_u[4][1] -= 0.6
+        book.project()
+    out2, out4 = m2.export(), m4.export()
+    selected = {k: book.selected_int8(k) for k in (2, 4)}
+    assert set(out2.codecs) == {2} and set(out4.codecs) == {4}
+    for out, used in ((out2, (2,)), (out4, (4,))):
+        for k in used:
+            assert torch.equal(out.codecs[k].table, selected[k])
+            assert out.codecs[k].table_scale.item() == codecs[k].table_scale.item()
+            assert out.codecs[k].a0 == codecs[k].a0
+            assert int(out.codecs[k].table[-1]) == 0
+            assert out.codecs[k].table.dtype == torch.int8
+            assert bool((out.codecs[k].table <= 127).all())
+            assert bool((out.codecs[k].table >= -127).all())
+    assert out2.codecs[2] is not tensors[2].codecs[2]
+    assert not torch.equal(out2.codecs[2].table, initial[2])
+
+    # Every exported tensor's K tables and the ONE global config agree exactly.
+    from hi2.cptc import checkpoint_config, codecs_from_checkpoint_config
+
+    seen = cptc_codecs_from_tensors({"a": out2, "b": out4})
+    cfg = checkpoint_config(seen)
+    back = codecs_from_checkpoint_config(copy.deepcopy(cfg))
+    import base64
+
+    for k in (2, 4):
+        raw = base64.b64decode(cfg["tables"][str(k)]["tbl_b64"])
+        assert raw == selected[k].to(torch.int8).numpy().tobytes()
+        assert torch.equal(back[k].table, selected[k])
+        exported = out2.codecs[2] if k == 2 else out4.codecs[4]
+        assert torch.equal(back[k].table, exported.table)
+
+
+def test_cptc_shared_table_lut_preserves_tiny_fp32_gradients():
+    """The LUT forward is the exact runtime fp16 value, but the lookup carries an
+    fp32 surrogate; a tiny per-weight gradient must not underflow through half."""
+    from hi2.qad import CptcSharedTables
+
+    codec = get_codec(16, 2)
+    book = CptcSharedTables({2: codec})
+    lut = book.lut(2, "cpu")
+    assert lut.dtype == torch.float32
+    # Hard-forward values are exactly the fp16 runtime table.
+    want_lut = cptc.index_table_value(
+        torch.arange(127), book.selected_int8(2), codec.table_scale
+    ).float()
+    assert torch.equal(lut, want_lut)
+    assert int(codec.table[10]) == -74  # not at the clamp boundary
+
+    idx = torch.full((8192,), 10, dtype=torch.int64)
+    (lut[idx].float().sum() * 1e-10).backward()
+    grad = book.table_u[2].grad
+    assert grad is not None
+    # Compare the same FP32 accumulation, not a real-arithmetic sum: repeated
+    # float32 additions legitimately round before the table-scale derivative.
+    reference = codec.table.float().clone().requires_grad_()
+    ((reference * float(codec.table_scale))[idx].sum() * 1e-10).backward()
+    assert reference.grad is not None
+    assert torch.equal(grad, reference.grad)
+    assert grad[10] > 0
+
+
+def test_cptc_fixed_and_shared_tables_keep_hard_forward_and_scale_grads():
+    """The default fixed-table path and the live-table path must agree exactly on
+    forward values and on the block-scale gradients."""
+    from hi2.qad import CptcFrozenCodeLinear, CptcSharedTables
+
+    codecs, tensors = _two_width_tensors()
+    t = tensors[2]
+    fixed = CptcFrozenCodeLinear(t)
+    book = CptcSharedTables({2: codecs[2]})
+    shared = CptcFrozenCodeLinear(t, tables=book)
+    assert torch.equal(fixed.stored(False), shared.stored(False))
+
+    delta = torch.linspace(-0.2, 0.2, fixed.delta.numel()).reshape_as(fixed.delta)
+    with torch.no_grad():
+        fixed.delta.copy_(delta)
+        shared.delta.copy_(delta)
+    assert torch.equal(fixed.stored(False), shared.stored(False))
+
+    fixed_loss = fixed.stored(True).square().sum()
+    shared_loss = shared.stored(True).square().sum()
+    fixed_loss.backward()
+    shared_loss.backward()
+    assert torch.equal(fixed.delta.grad, shared.delta.grad)
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="needs two GPUs for the sharded table"
+)
+def test_cptc_shared_tables_train_across_two_devices_with_one_master():
+    """The global table lives on device 0; a layer on device 1 reads a differentiable
+    copy, so both shard gradients land on the one master and one AdamW update."""
+    from hi2.finalkl import CptcLinear
+    from hi2.qad import CptcIndexCache, CptcSharedTables
+
+    dev0, dev1 = torch.device("cuda:0"), torch.device("cuda:1")
+    codecs, tensors = _two_width_tensors()
+    book = CptcSharedTables(codecs).to(dev0)
+    ref = CptcSharedTables(codecs).to(dev0)
+    cache = CptcIndexCache(1 << 20)
+    ref_cache = CptcIndexCache(1 << 20)
+    m2 = CptcLinear(tensors[2], tables=book, index_cache=cache).to(dev0)
+    m4 = CptcLinear(tensors[4], tables=book, index_cache=cache).to(dev1)
+    r2 = CptcLinear(tensors[2], tables=ref, index_cache=ref_cache).to(dev0)
+    r4 = CptcLinear(tensors[4], tables=ref, index_cache=ref_cache).to(dev0)
+    d2 = torch.linspace(-0.2, 0.2, m2.delta.numel()).reshape_as(m2.delta)
+    d4 = torch.linspace(-0.2, 0.2, m4.delta.numel()).reshape_as(m4.delta)
+    with torch.no_grad():
+        m2.delta.copy_(d2)
+        m4.delta.copy_(d4.to(dev1))
+        r2.delta.copy_(d2)
+        r4.delta.copy_(d4)
+
+    loss = m2.weight().square().sum() + m4.weight().to(dev0).square().sum()
+    ref_loss = r2.weight().square().sum() + r4.weight().square().sum()
+    loss.backward()
+    ref_loss.backward()
+
+    torch.testing.assert_close(m2.weight(), r2.weight(), rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(
+        m4.weight().to(dev0), r4.weight(), rtol=1e-4, atol=1e-5
+    )
+    assert cache.used_bytes > 0 and cache.used_bytes == ref_cache.used_bytes
+    assert cache.entries == ref_cache.entries
+    assert sum(
+        int(s.numel()) for m in (m2, m4) for s in m._index_slots if s is not None
+    ) == cache.used_bytes
+    assert m2._index_slots[0].device == dev0
+    assert m4._index_slots[0].device == dev1
+    assert m2.delta.grad is not None and m2.delta.grad.device == dev0
+    assert m4.delta.grad is not None and m4.delta.grad.device == dev1
+    torch.testing.assert_close(m2.delta.grad, r2.delta.grad, rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(
+        m4.delta.grad.to(dev0), r4.delta.grad, rtol=1e-4, atol=1e-5
+    )
+    for p, q in zip(book.parameters(), ref.parameters()):
+        assert p.device == dev0
+        assert p.grad is not None and p.grad.device == dev0
+        torch.testing.assert_close(p.grad, q.grad, rtol=1e-4, atol=1e-5)
+
+    opt = torch.optim.AdamW(book.parameters(), lr=0.05)
+    ref_opt = torch.optim.AdamW(ref.parameters(), lr=0.05)
+    opt.step()
+    ref_opt.step()
+    for p, q in zip(book.parameters(), ref.parameters()):
+        torch.testing.assert_close(p, q, rtol=1e-4, atol=1e-5)
+    # Use one exact table state for the live-read check; the update was compared above.
+    with torch.no_grad():
+        for p, q in zip(book.parameters(), ref.parameters()):
+            q.copy_(p)
+
+    # The cached indices are immutable, but the table values they index are live.
+    before2, before4 = m2.weight().detach().clone(), m4.weight().detach().clone()
+    with torch.no_grad():
+        book.table_u[2][1].add_(2.0)
+        book.table_u[4][1].add_(2.0)
+        ref.table_u[2][1].add_(2.0)
+        ref.table_u[4][1].add_(2.0)
+    torch.testing.assert_close(
+        m2.weight(), r2.weight(), rtol=1e-4, atol=1e-5
+    )
+    torch.testing.assert_close(
+        m4.weight().to(dev0), r4.weight(), rtol=1e-4, atol=1e-5
+    )
+    assert not torch.equal(before2, m2.weight().detach())
+    assert not torch.equal(before4, m4.weight().detach())
+    assert cache.used_bytes == ref_cache.used_bytes
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 1, reason="needs a CUDA device")
+def test_cptc_index_cache_slot_move_replaces_without_double_counting():
+    """A device move replaces the one cached index slot; the budget does not grow and
+    the retained slot bytes remain exactly the accounted bytes."""
+    from hi2.qad import CptcFrozenCodeLinear, CptcIndexCache
+
+    _, tensors = _two_width_tensors()
+    t = tensors[2]
+    cache = CptcIndexCache(1 << 20)
+    m = CptcFrozenCodeLinear(t, index_cache=cache)
+    m.stored(False)
+    used = cache.used_bytes
+    assert used == t.shape[0] * t.shape[1]
+    assert cache.entries == 1
+    assert m._index_slots[0] is not None and m._index_slots[0].device.type == "cpu"
+
+    dev = torch.device("cuda:0")
+    m.to(dev)
+    m.stored(False)
+    assert cache.used_bytes == used and cache.entries == 1
+    assert m._index_slots[0].device == dev
+    assert m._index_slots[0].dtype == torch.uint8
+    assert sum(s.numel() for s in m._index_slots if s is not None) == used
+
+
+def test_cptc_final_table_projection_pins_last_entry():
+    from hi2.qad import CptcSharedTables
+
+    codecs, _ = _two_width_tensors()
+    book = CptcSharedTables(codecs)
+    with torch.no_grad():
+        for p in book.parameters():
+            p.fill_(1000.0)
+        book.project()
+    for p in book.parameters():
+        assert float(p.max()) <= 127.0 and float(p.min()) >= -127.0
+        assert float(p[-1]) == 0.0
+    for k in (2, 4):
+        table = book.selected_int8(k)
+        assert int(table[-1]) == 0 and table.dtype == torch.int8
+
+
+def test_cptc_index_cache_budget_is_bounded_and_matches_both_paths():
+    from hi2.finalkl import CptcLinear
+    from hi2.qad import (
+        CptcFrozenCodeLinear,
+        CptcIndexCache,
+        CptcSharedTables,
+    )
+
+    codecs, tensors = _two_width_tensors()
+    t = tensors[2]
+    rows, k = t.shape
+    per_group = rows * k  # one uint8 index per stored weight
+
+    exact = CptcIndexCache(per_group)
+    cached = CptcFrozenCodeLinear(t, index_cache=exact)
+    plain = CptcFrozenCodeLinear(t)
+    with torch.no_grad():
+        cached.delta.copy_(torch.linspace(-0.2, 0.3, cached.delta.numel()))
+        plain.delta.copy_(cached.delta)
+    assert torch.equal(cached.stored(True), plain.stored(True))
+    cached.stored(True).square().sum().backward()
+    plain.stored(True).square().sum().backward()
+    assert torch.equal(cached.delta.grad, plain.delta.grad)
+    assert exact.used_bytes == per_group and exact.entries == 1
+    assert exact.used_bytes <= exact.budget_bytes
+    assert cached._index_slots[0].dtype == torch.uint8
+
+    too_small = CptcIndexCache(per_group - 1)
+    refused = CptcFrozenCodeLinear(t, index_cache=too_small)
+    with torch.no_grad():
+        refused.delta.copy_(cached.delta)
+    refused.stored(False)
+    assert too_small.used_bytes == 0 and too_small.entries == 0
+    for m in (cached, plain, refused):
+        assert torch.equal(m.stored(False), cached.stored(False))
+
+    # Trainable tables: cached indices must not hide a changed table, and the
+    # weights, table/scale gradients and one optimizer step must match exactly.
+    book_a = CptcSharedTables(codecs)
+    book_b = CptcSharedTables(codecs)
+    cache = CptcIndexCache(8 * per_group)
+    a = CptcLinear(t, tables=book_a, index_cache=cache)
+    b = CptcLinear(t, tables=book_b)
+    with torch.no_grad():
+        a.delta.copy_(torch.linspace(-0.4, 0.4, a.delta.numel()))
+        b.delta.copy_(a.delta)
+        for kk in (2, 4):
+            book_a.table_u[kk].copy_(torch.linspace(-20, 20, 64))
+            book_b.table_u[kk].copy_(book_a.table_u[kk])
+    assert torch.equal(a.weight(), b.weight())
+    a.weight().square().sum().backward()
+    b.weight().square().sum().backward()
+    assert torch.equal(a.delta.grad, b.delta.grad)
+    for pa, pb in zip(book_a.parameters(), book_b.parameters()):
+        if pa.grad is None or pb.grad is None:
+            assert pa.grad is None and pb.grad is None
+        else:
+            assert torch.equal(pa.grad, pb.grad)
+    opt_a = torch.optim.AdamW([a.delta, *book_a.parameters()], lr=0.1)
+    opt_b = torch.optim.AdamW([b.delta, *book_b.parameters()], lr=0.1)
+    opt_a.step()
+    opt_b.step()
+    assert torch.equal(a.delta, b.delta)
+    for pa, pb in zip(book_a.parameters(), book_b.parameters()):
+        assert torch.equal(pa, pb)
+    assert cache.used_bytes == per_group and cache.used_bytes <= cache.budget_bytes
+
+    # Move the table after the indices were cached: the cached module must decode
+    # with the new table exactly like the uncached one.
+    with torch.no_grad():
+        for kk in (2, 4):
+            book_a.table_u[kk].add_(3.0)
+            book_b.table_u[kk].add_(3.0)
+    assert torch.equal(a.weight(), b.weight())
+
+
+@pytest.mark.parametrize("magnitude", [1e-4, 1e-10])
+def test_cptc_stored_table_gradient_matches_fp32_reference(magnitude):
+    from hi2.qad import CptcFrozenCodeLinear, CptcSharedTables
+
+    codecs, tensors = _two_width_tensors()
+    book = CptcSharedTables(codecs)
+    module = CptcFrozenCodeLinear(tensors[2], tables=book)
+    upstream = torch.randn(
+        module.shape, generator=torch.Generator().manual_seed(104)
+    ) * magnitude
+    (module.stored(True) * upstream).sum().backward()
+
+    master = book.table_u[2].detach().clone().requires_grad_()
+    low = torch.cat([master.clamp(-127, 127)[:-1], master.new_zeros(1)])
+    lut = torch.cat([low, -low[:-1].flip(0)]) * codecs[2].table_scale.float()
+    rows = module.rows[0]
+    nbits, block = module.groups[0]
+    idx = module._build_index(rows, nbits, block, codecs[2]).long()
+    nblk = module.shape[1] // block
+    pidx = module.param_off[rows].long().unsqueeze(1) + torch.arange(nblk)
+    scales = module.scales().detach()[pidx].unsqueeze(-1)
+    ref = (scales * lut[idx]).reshape(module.shape)
+    (ref * upstream).sum().backward()
+    torch.testing.assert_close(book.table_u[2].grad, master.grad, rtol=2e-6, atol=1e-14)
+
+
+def test_cptc_table_gather_saves_compact_indices_and_accumulates_chunks():
+    from hi2.qad import _CptcTableGather
+
+    indices = (torch.arange((2 << 20) // 8 + 19) % 127).to(torch.uint8)
+    lut = torch.linspace(-1, 1, 127).requires_grad_()
+    reference = lut.detach().clone().requires_grad_()
+    saved = []
+
+    def pack(tensor):
+        saved.append((tensor.dtype, tensor.numel() * tensor.element_size()))
+        return tensor
+
+    with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
+        values = _CptcTableGather.apply(lut, indices)
+    assert saved == [(torch.uint8, indices.numel())]
+    # Binary-exact contributions make differing parallel reduction orders irrelevant.
+    upstream = ((torch.arange(indices.numel()) % 17) - 8).float() * (2.0 ** -20)
+    values.backward(upstream)
+    expected = reference[indices.long()]
+    expected.backward(upstream)
+    assert torch.equal(values, expected)
+    assert torch.equal(lut.grad, reference.grad)
+
+
+def test_cptc_pipeline_metadata_uses_changed_exported_tables_and_rejects_disagreement():
+    from hi2.calibrate import Config
+    from hi2.cptc import codecs_from_checkpoint_config
+    from hi2.pipeline import _cptc_checkpoint_metadata
+    from hi2.qad import CptcFrozenCodeLinear, CptcSharedTables
+
+    codecs, tensors = _two_width_tensors()
+    book = CptcSharedTables(codecs)
+    module = CptcFrozenCodeLinear(tensors[2], tables=book)
+    with torch.no_grad():
+        book.table_u[2][10].add_(4)
+    exported = module.export()
+    assert not torch.equal(exported.codecs[2].table, codecs[2].table)
+    cfg = Config(cptc=True, cptc_depth=16, cptc_table_rounds=0)
+    parsed = codecs_from_checkpoint_config(
+        _cptc_checkpoint_metadata(cfg, {"selected": exported})
+    )
+    assert torch.equal(parsed[2].table, exported.codecs[2].table)
+    with pytest.raises(ValueError, match="disagree"):
+        _cptc_checkpoint_metadata(
+            cfg, {"selected": exported, "stale": tensors[2]}
+        )
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 1, reason="needs a CUDA device")
+def test_cptc_table_gather_gpu_gradients_repeat_exactly_with_rebuilt_indices():
+    from hi2.qad import _CptcTableGather
+
+    gen = torch.Generator().manual_seed(118)
+    count = (2 << 20) // 8 + 19
+    indices = torch.randint(0, 127, (count,), generator=gen, dtype=torch.uint8).cuda()
+    upstream = (torch.randn(count, generator=gen) * 1e-4).cuda()
+    initial = torch.linspace(-1, 1, 127).cuda()
+    expected = initial[indices.long()]
+    gradients = []
+    updates = []
+    for rebuilt in (False, True, False, True):
+        lut = initial.clone().requires_grad_()
+        optimizer = torch.optim.AdamW([lut], lr=0.02)
+        values = _CptcTableGather.apply(lut, indices.clone() if rebuilt else indices)
+        assert torch.equal(values, expected)
+        values.backward(upstream)
+        gradients.append(lut.grad.detach().clone())
+        optimizer.step()
+        updates.append(lut.detach().clone())
+    for gradient, update in zip(gradients[1:], updates[1:]):
+        assert torch.equal(gradient, gradients[0])
+        assert torch.equal(update, updates[0])

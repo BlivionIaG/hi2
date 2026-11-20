@@ -32,7 +32,15 @@ from torch.utils.checkpoint import checkpoint
 
 from .format import HI2Tensor, assemble, decode_params, fwht_groups, ladder_dequantize
 from .pinned import PinnedWindow, module_to_device, module_to_host
-from .qad import CptcFrozenCodeLinear, _ste, is_norm_param
+from .qad import (
+    CptcFrozenCodeLinear,
+    CptcIndexCache,
+    CptcSharedTables,
+    _ste,
+    check_cptc_options,
+    cptc_codecs_from_tensors,
+    is_norm_param,
+)
 
 LOSS_CHUNK = 256  # positions per LM-head chunk in the loss
 
@@ -42,10 +50,20 @@ class _Stop(Exception):
 
 
 class CptcLinear(CptcFrozenCodeLinear):
-    """The final-KL student for CPTC: frozen codes, trainable per-block scales."""
+    """The final-KL student for CPTC: frozen codes, trainable per-block scales and
+    (optionally) the one global shared table pair."""
 
-    def __init__(self, t, bias=None):
-        super().__init__(t)
+    def __init__(
+        self,
+        t,
+        bias=None,
+        scale_units="log",
+        tables=None,
+        index_cache=None,
+    ):
+        super().__init__(
+            t, scale_units=scale_units, tables=tables, index_cache=index_cache
+        )
         self.bias = (
             None
             if bias is None
@@ -274,6 +292,10 @@ def final_kl(
     torch.manual_seed(qc.seed)
     lm = model.get_output_embeddings()
     stager = PinnedWindow()
+    # Validate CPTC-specific settings and the one-global-table invariant before any
+    # teacher/student placement work.
+    codecs = cptc_codecs_from_tensors(tensors)
+    check_cptc_options(qc, bool(codecs), final_only=True)
     # 1. teacher: the LM head's input on every window (unquantized model, on the GPU),
     # or the head inputs the layer-wise phase saved (no teacher placement).
     if head_inputs is not None:
@@ -291,23 +313,50 @@ def final_kl(
             h.remove()
         module_to_host(model, stager)
         t_teacher = time.time() - t0
-    # 2. student: quantized Linears -> LadderLinear, norms from the layer-wise phase
-    mods = {}
+    # 2. student: quantized Linears -> LadderLinear/CptcLinear, norms from the
+    # layer-wise phase.
+    quantized = []
     for name, mod in list(model.named_modules()):
         if isinstance(mod, nn.Linear):
             ckpt = resolve(f"{name}.weight")
             if ckpt in tensors:
                 b = mod.bias.detach().float() if mod.bias is not None else None
-                from .cptc import CptcTensor
+                quantized.append((name, ckpt, b, tensors[ckpt]))
+    book = CptcSharedTables(codecs) if qc.final_cptc_train_tables else None
+    cache = (
+        CptcIndexCache(qc.final_cptc_cache_mb << 20)
+        if qc.final_cptc_cache_mb
+        else None
+    )
+    mods = {}
+    for name, ckpt, b, t in quantized:
+        from .cptc import CptcTensor
 
-                cls = (
-                    CptcLinear
-                    if isinstance(tensors[ckpt], CptcTensor)
-                    else LadderLinear
-                )
-                ll = cls(tensors[ckpt], b)
-                model.set_submodule(name, ll)
-                mods[ckpt] = ll
+        if isinstance(t, CptcTensor):
+            ll = CptcLinear(
+                t,
+                b,
+                scale_units=qc.cptc_scale_units,
+                tables=book,
+                index_cache=cache,
+            )
+        else:
+            ll = LadderLinear(t, b)
+        model.set_submodule(name, ll)
+        mods[ckpt] = ll
+    if book is not None:
+        from .cptc import CptcTensor
+
+        missing = sorted(
+            ckpt
+            for ckpt, t in tensors.items()
+            if isinstance(t, CptcTensor) and ckpt not in mods
+        )
+        if missing:
+            raise ValueError(
+                "CPTC shared-table training cannot export these CPTC tensors: "
+                f"{missing[:3]}; they have no Linear in the student model"
+            )
     norms = {}
     for name, p in model.named_parameters():
         if is_norm_param(name, p):
@@ -329,12 +378,18 @@ def final_kl(
             p.requires_grad_(True)
         if cptc_p:
             groups.append({"params": cptc_p, "lr": qc.final_lr_p})
+    if book is not None:
+        # The table LR is independent of the scale/byte factor (final_lr_p).
+        groups.append({"params": book.parameters(), "lr": qc.final_cptc_table_lr})
     if qc.final_norms:
         for p in norms.values():
             p.data = p.data.float()
             p.requires_grad_(True)
         groups.append({"params": list(norms.values()), "lr": qc.final_lr_norm})
     place()
+    if book is not None:
+        # Not a submodule of any Linear: stage the one master copy explicitly.
+        book.to(dev)
     model.eval()
     _, layers = find_layers(model)
     opt = torch.optim.AdamW(groups, weight_decay=0.0)
@@ -381,10 +436,17 @@ def final_kl(
             torch.cuda.reset_peak_memory_stats(d)
     v0 = val_kl()
     best, best_state = v0, snapshot()
+    extra = (
+        f", {len(book.widths())} shared CPTC table(s) K={list(book.widths())} "
+        f"(lr {qc.final_cptc_table_lr:g})"
+        if book is not None
+        else ""
+    )
     log(
         f"final KL: {len(mods)} quantized Linears, {len(norms)} norms, "
         f"{sum(p.numel() for p in trainable) / 1e6:.1f}M trainable values, {steps} steps x "
         f"{qc.final_batch} windows, held-out KL {v0:.4f} (teacher pass {t_teacher:.0f} s)"
+        f"{extra}"
     )
     every = max(1, steps // max(1, qc.final_evals))
     order: list[int] = []
@@ -412,6 +474,8 @@ def final_kl(
             opt.zero_grad(set_to_none=True)
             for m in mods.values():
                 m.project()
+            if book is not None:
+                book.project()
             if (step + 1) % every == 0 or step + 1 == steps:
                 vl = val_kl()
                 trace.append((step + 1, tot, vl))
@@ -450,6 +514,9 @@ def final_kl(
         if on_gpu
         else None,
         "trace": trace,
+        "cptc_train_tables": book is not None,
+        "cptc_table_lr": qc.final_cptc_table_lr if book is not None else None,
+        "cptc_index_cache": cache.summary() if cache is not None else None,
     }
     log(
         f"final KL: held-out KL {v0:.4f} -> {best:.4f} ({100 * (best / max(v0, 1e-30) - 1):+.1f}%), "

@@ -27,6 +27,22 @@ from .executor import Executor
 from .moe import expert_parts, expert_weights, group_key, probe_units
 from .runtime import RunSession, atomic_json, atomic_torch_save
 
+def _cptc_checkpoint_metadata(cfg, tensors):
+    from .cptc import checkpoint_config, get_codec
+    from .qad import cptc_codecs_from_tensors
+
+    codecs = {
+        k: get_codec(
+            cfg.cptc_depth, k,
+            rounds=cfg.cptc_table_rounds, samples=cfg.cptc_table_samples,
+        )
+        for k in (2, 4)
+    }
+    if tensors:
+        codecs.update(cptc_codecs_from_tensors(tensors))
+    return checkpoint_config(codecs)
+
+
 # Quality target when neither --max-error-ratio nor --target-bpw is given. Measured on
 # Qwen3.5-0.8B/4B and OLMoE (docs/results.md): ratio 6 with QAD gives about 3.4-3.5 bpw
 # at 1.02-1.03 x the unquantized perplexity; without QAD the same ratio is 1.075 x, so
@@ -638,7 +654,12 @@ def _final_kl_fits(rc, ex, model, tensors, have_head_inputs, log) -> bool:
             # Dense parameters keep the model's compute dtype (float32 by default), not
             # an assumed 2 bytes; the old 2 * rest estimate under-counted a 4B model.
             rest += p.numel() * p.element_size()
-    student = 1.1 * quant + rest + 2 * largest_quant
+    student = (
+        1.1 * quant
+        + rest
+        + 2 * largest_quant
+        + rc.qad.final_cptc_cache_mb * 2**20
+    )
     n = len(devs)
     need = (
         student if have_head_inputs else max(student, teacher)
@@ -657,16 +678,14 @@ def _final_kl_fits(rc, ex, model, tensors, have_head_inputs, log) -> bool:
 def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag="", head_inputs=None):
     """Phase 3k: the final logit-KL phase (:mod:`hi2.finalkl`) on top of the layer-wise
     result, resumable from ``workdir/qad<tag>/final_kl.pt``."""
-    from dataclasses import asdict
-
     from .finalkl import final_kl
-    from .qad import FINAL_FIELDS, fingerprint, split_indices
+    from .qad import final_fingerprint_fields, fingerprint, split_indices
 
     qc = rc.qad
     ffp = fingerprint(
         {
             "layerwise": fp,
-            "final": {k: v for k, v in asdict(qc).items() if k in FINAL_FIELDS},
+            "final": final_fingerprint_fields(qc),
             "warmup": qc.warmup,
             "seed": qc.seed,
         }
@@ -1189,18 +1208,7 @@ def _run_resolved(rc: RunConfig, log) -> dict:
             pre = _sequential_encode(rc, ex, tables, alloc.picks, log)
         cptc_meta = None
         if rc.cfg.cptc:
-            from .cptc import checkpoint_config, get_codec
-
-            codecs = {
-                k: get_codec(
-                    rc.cfg.cptc_depth,
-                    k,
-                    rounds=rc.cfg.cptc_table_rounds,
-                    samples=rc.cfg.cptc_table_samples,
-                )
-                for k in (2, 4)
-            }
-            cptc_meta = checkpoint_config(codecs)
+            cptc_meta = _cptc_checkpoint_metadata(rc.cfg, pre)
             meta = {}
         else:
             meta = {}

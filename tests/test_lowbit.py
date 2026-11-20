@@ -51,15 +51,40 @@ def test_new_qad_fields_leave_default_config_and_fingerprint_unchanged():
             "kl_weight",
             "kl_tokens",
             "data_parallel",
+            "cptc_scale_units",
+            "cptc_projection_sweeps",
         )
     }
     assert set(qad_meta(qc)) == old
     assert set(qad_fingerprint_fields(qc)) <= old
+    # The CPTC-specific fields are absent at their defaults, so old artifacts stay
+    # reusable and the default checkpoint config is byte-identical.
+    assert "cptc_scale_units" not in qad_meta(qc)
+    assert "cptc_projection_sweeps" not in qad_meta(qc)
+    assert "cptc_scale_units" not in qad_fingerprint_fields(qc)
+    assert "cptc_projection_sweeps" not in qad_fingerprint_fields(qc)
     on = make_config("default", {"final_kl": 5, "train_norms": "true"})
     assert on.train_norms is True and on.final_kl == 5
     assert "final_kl" not in qad_fingerprint_fields(on)  # layer artifacts stay reusable
     assert qad_fingerprint_fields(on)["train_norms"] is True
     assert qad_meta(on)["final_kl"] == 5
+    cptc_on = make_config(
+        "default",
+        {
+            "cptc_scale_units": "row_u8",
+            "cptc_projection_sweeps": 4,
+            "final_kl": 5,
+            "final_cptc_train_tables": True,
+            "final_cptc_table_lr": 0.5,
+            "final_cptc_cache_mb": 3,
+        },
+    )
+    assert qad_meta(cptc_on)["cptc_scale_units"] == "row_u8"
+    assert qad_meta(cptc_on)["cptc_projection_sweeps"] == 4
+    assert qad_meta(cptc_on)["final_cptc_train_tables"] is True
+    assert qad_meta(cptc_on)["final_cptc_table_lr"] == 0.5
+    assert qad_meta(cptc_on)["final_cptc_cache_mb"] == 3
+    assert qad_fingerprint_fields(cptc_on)["cptc_projection_sweeps"] == 4
 
 
 @pytest.fixture(scope="module")
@@ -335,3 +360,156 @@ def test_final_kl_splits_the_network_over_two_devices(tiny, tmp_path):
     a, b = _hi2(one.dst), _hi2(two.dst)
     for k in a:
         assert torch.equal(a[k].codes, b[k].codes)
+
+
+def _hi2_cptc(dst):
+    from safetensors import safe_open
+
+    from hi2.checkpoint import from_tensors, read_tensors, weight_map
+    from hi2.cptc import codecs_from_checkpoint_config
+
+    qcfg = json.loads((dst / "config.json").read_text())["quantization_config"]
+    codecs = codecs_from_checkpoint_config(qcfg["cptc"])
+    wmap = weight_map(dst)
+    out = {}
+    for k, shard in wmap.items():
+        if k.endswith(".hi2_codes"):
+            base = k.removesuffix(".hi2_codes")
+            with safe_open(dst / shard, "pt") as f:
+                out[base] = from_tensors(read_tensors(f, base), base, codecs)
+    return out, codecs
+
+
+def test_cptc_final_table_learning_keep_best_and_index_cache(tiny, tmp_path):
+    """The CPTC final phase trains ONE shared table pair, restores it with keep-best,
+    accounts the bounded index cache, and writes tensors/config with one table."""
+    from hi2.cptc import CptcTensor
+    from hi2.pipeline import run
+
+    cfg = Config(
+        candidates=[(2, 32), (4, 32)],
+        effort="fast",
+        cptc=True,
+        cptc_depth=8,
+        cptc_table_rounds=0,
+    )
+    qc = make_config(
+        "fast",
+        {
+            "steps": 2,
+            "samples": 8,
+            "val": 2,
+            "batch": 2,
+            "final_kl": 1,
+            "final_cptc_train_tables": True,
+            "final_cptc_table_lr": 1e6,
+            "final_lr_p": 1e6,
+            "final_lr_norm": 1e6,
+            "final_cptc_cache_mb": 1,
+        },
+    )
+    rc = _rc(
+        tiny,
+        tmp_path,
+        "cptc-tables",
+        qad=asdict(qc),
+        cfg=cfg,
+        target_bpw=None,
+        max_error_ratio=6.0,
+    )
+    run(rc, log=lambda *_: None)
+
+    qcfg = json.loads((rc.dst / "config.json").read_text())["quantization_config"]
+    assert qcfg["version"] == "3.3" and qcfg["cptc"]["name"] == "cptc"
+    tensors, parsed = _hi2_cptc(rc.dst)
+    assert tensors and all(isinstance(t, CptcTensor) for t in tensors.values())
+    from hi2.qad import cptc_codecs_from_tensors
+
+    selected = cptc_codecs_from_tensors(
+        torch.load(rc.workdir / "qad" / "final_kl.pt", weights_only=False)["tensors"]
+    )
+    for k, codec in selected.items():
+        assert torch.equal(codec.table, parsed[k].table)
+        assert codec.a0 == parsed[k].a0 and codec.a1 == parsed[k].a1
+        assert codec.table_scale.item() == parsed[k].table_scale.item()
+        assert int(codec.table[-1]) == 0
+    info = json.loads((rc.workdir / "final_kl.json").read_text())
+    assert info["cptc_train_tables"] is True
+    assert info["cptc_table_lr"] == 1e6
+    cache = info["cptc_index_cache"]
+    assert cache["budget_bytes"] == 1 << 20
+    assert 0 < cache["used_bytes"] <= cache["budget_bytes"]
+    assert cache["free_bytes"] == cache["budget_bytes"] - cache["used_bytes"]
+    # A catastrophic held-out step must keep the initial state, which includes the
+    # selected global tables, not only the per-block scales.
+    assert info["kept"] == "init"
+    layer = torch.load(rc.workdir / "qad" / "layer000.pt", weights_only=False)
+    before = {
+        k: t for k, t in layer["tensors"].items() if isinstance(t, CptcTensor)
+    }
+    assert before
+    for name, t0 in before.items():
+        t1 = tensors[name.removesuffix(".weight")]
+        for k in set(t0.codecs) & set(t1.codecs):
+            assert torch.equal(t0.codecs[k].table, t1.codecs[k].table)
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="needs two GPUs for the layer-wise split"
+)
+def test_cptc_final_table_learning_runs_sharded(tiny, tmp_path):
+    """The table master stays on device 0 while final-KL's default two-device,
+    layer-wise student reads it on both devices; export stays one global table."""
+    from hi2.pipeline import run
+
+    cfg = Config(
+        candidates=[(2, 32), (4, 32)],
+        effort="fast",
+        cptc=True,
+        cptc_depth=8,
+        cptc_table_rounds=0,
+    )
+    qc = make_config(
+        "fast",
+        {
+            "steps": 2,
+            "samples": 8,
+            "val": 2,
+            "batch": 2,
+            "final_kl": 1,
+            "final_cptc_train_tables": True,
+            "final_cptc_table_lr": 1.0,
+            "final_lr_p": 0.5,
+            "final_lr_norm": 1e-4,
+            "final_cptc_cache_mb": 1,
+        },
+    )
+    rc = _rc(
+        tiny,
+        tmp_path,
+        "cptc-tables-sharded",
+        qad=asdict(qc),
+        cfg=cfg,
+        target_bpw=None,
+        max_error_ratio=6.0,
+        devices=["cuda:0", "cuda:1"],
+    )
+    run(rc, log=lambda *_: None)
+
+    qcfg = json.loads((rc.dst / "config.json").read_text())["quantization_config"]
+    assert qcfg["version"] == "3.3" and qcfg["cptc"]["name"] == "cptc"
+    tensors, parsed = _hi2_cptc(rc.dst)
+    assert tensors
+    from hi2.qad import cptc_codecs_from_tensors
+
+    selected = cptc_codecs_from_tensors(
+        torch.load(rc.workdir / "qad" / "final_kl.pt", weights_only=False)["tensors"]
+    )
+    for k, codec in selected.items():
+        assert torch.equal(codec.table, parsed[k].table)
+        assert int(codec.table[-1]) == 0
+    info = json.loads((rc.workdir / "final_kl.json").read_text())
+    assert info["cptc_train_tables"] is True
+    cache = info["cptc_index_cache"]
+    assert 0 < cache["used_bytes"] <= cache["budget_bytes"]
+    assert cache["entries"] > 0

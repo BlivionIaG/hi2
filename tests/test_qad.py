@@ -806,3 +806,86 @@ def test_data_parallel_step_matches_the_single_device_run():
         assert torch.equal(
             dequantize_stored(m.export()), m.stored(False).double().cpu()
         )
+
+
+def test_cptc_qad_options_validate_and_reject_on_non_cptc_runs():
+    from hi2.qad import QadConfig, check_cptc_options, final_fingerprint_fields
+
+    for bad in (
+        {"cptc_scale_units": "linear"},
+        {"cptc_projection_sweeps": 0},
+        {"final_cptc_cache_mb": -1},
+        {"final_cptc_table_lr": 0.0},
+    ):
+        with pytest.raises(SystemExit):
+            make_config("default", bad)
+    # A final-phase-only option without a final phase is not silently ignored.
+    with pytest.raises(SystemExit):
+        make_config("fast", {"final_cptc_train_tables": True})
+    with pytest.raises(SystemExit):
+        make_config("fast", {"final_cptc_cache_mb": 1})
+
+    qc = make_config(
+        "default",
+        {
+            "cptc_scale_units": "row_u8",
+            "cptc_projection_sweeps": 4,
+            "final_cptc_train_tables": True,
+            "final_cptc_table_lr": 0.5,
+            "final_cptc_cache_mb": 8,
+        },
+    )
+    check_cptc_options(qc, True)
+    with pytest.raises(SystemExit, match="cptc_scale_units"):
+        check_cptc_options(qc, False)
+    with pytest.raises(SystemExit, match="cptc_scale_units"):
+        check_cptc_options(qc, False, final_only=True)
+    # The cache budget cannot change the final-phase result, so it is not part of
+    # its numerical fingerprint; every other final option is.
+    ffp = final_fingerprint_fields(qc)
+    assert "final_cptc_cache_mb" not in ffp
+    assert ffp["final_cptc_train_tables"] is True
+    assert ffp["final_cptc_table_lr"] == 0.5
+    assert ffp["final_kl"] == 200
+    default_ffp = final_fingerprint_fields(QadConfig())
+    assert "final_cptc_train_tables" not in default_ffp
+    assert "final_cptc_table_lr" not in default_ffp
+    assert "final_cptc_cache_mb" not in default_ffp
+    assert default_ffp["final_kl"] == QadConfig().final_kl
+
+
+
+
+def test_final_kl_fit_estimator_reads_qad_cache_budget(monkeypatch, tmp_path):
+    """A cache that exceeds the remaining VRAM must skip final-KL before allocation."""
+    from types import SimpleNamespace
+
+    from hi2 import pipeline
+    from hi2.qad import QadConfig
+
+    model = nn.Sequential(nn.Linear(2, 2))
+    rc = SimpleNamespace(
+        src=tmp_path,
+        qad=QadConfig(final_kl=1, final_cptc_cache_mb=0),
+    )
+    ex = SimpleNamespace(devices=[torch.device("cuda:0")])
+    monkeypatch.setattr(pipeline, "weight_map", lambda src: {})
+    monkeypatch.setattr(
+        pipeline, "make_resolver", lambda wmap: (lambda name: name)
+    )
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_properties",
+        lambda dev: SimpleNamespace(total_memory=8 << 30),
+    )
+    messages = []
+    assert (
+        pipeline._final_kl_fits(
+            rc, ex, model, {"0.weight"}, True, messages.append
+        )
+        is True
+    )
+    rc.qad.final_cptc_cache_mb = 4096
+    assert not pipeline._final_kl_fits(
+        rc, ex, model, {"0.weight"}, True, messages.append
+    )

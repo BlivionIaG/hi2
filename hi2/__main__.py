@@ -155,6 +155,11 @@ def _qad_overrides(a) -> dict:
         ("kl_layers", a.qad_kl_layers),
         ("train_norms", a.qad_train_norms),
         ("dtype", a.qad_dtype),
+        ("cptc_scale_units", a.qad_cptc_scale_units),
+        ("cptc_projection_sweeps", a.qad_cptc_projection_sweeps),
+        ("final_cptc_train_tables", a.qad_final_cptc_train_tables),
+        ("final_cptc_table_lr", a.qad_final_cptc_table_lr),
+        ("final_cptc_cache_mb", a.qad_final_cptc_cache_mb),
     ):
         if val is not None:
             over[key] = val
@@ -702,6 +707,41 @@ def build_parser() -> argparse.ArgumentParser:
         g.add_argument(
             flag, type=typ, default=None, help=f"{description} (preset default)"
         )
+    g.add_argument(
+        "--qad-cptc-scale-units",
+        choices=("log", "row_u8"),
+        default=None,
+        help="CPTC block-scale parameterisation in QAD and final-KL (default log); "
+        "row_u8 uses scale0 + delta x (row max PTQ scale / 255). Requires --cptc",
+    )
+    g.add_argument(
+        "--qad-cptc-projection-sweeps",
+        type=int,
+        default=None,
+        help="bounded CPTC code-projection sweeps per QAD forward (default 1); "
+        "requires --cptc",
+    )
+    g.add_argument(
+        "--qad-final-cptc-train-tables",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="final-KL trains the ONE shared CPTC table pair (default off); "
+        "coefficients and fp16 table scale stay fixed. Requires --cptc and final-KL",
+    )
+    g.add_argument(
+        "--qad-final-cptc-table-lr",
+        type=float,
+        default=None,
+        help="AdamW lr of the shared CPTC table entries in int8 levels "
+        "(default 0.02); independent of --qad-lr-params/final_lr_p",
+    )
+    g.add_argument(
+        "--qad-final-cptc-cache-mb",
+        type=int,
+        default=None,
+        help="bounded byte budget (MiB) for immutable CPTC table indices in "
+        "final-KL (default 0 = off); training-only and result-preserving",
+    )
     samples, length = q.get_default("calib_samples"), q.get_default("seq_len")
     q.epilog = (
         f"Default cost: --devices {q.get_default('devices')} selects every visible GPU,\n"
@@ -1099,7 +1139,7 @@ def dispatch_command(a) -> dict:
         from .calibrate import SELECTABLE, Config
         from .checkpoint import DEFAULT_EXCLUDE
         from .pipeline import RunConfig, plan, run
-        from .qad import make_config
+        from .qad import check_cptc_options, make_config
 
         ratios = a.max_error_ratio
         cands = [
@@ -1112,6 +1152,8 @@ def dispatch_command(a) -> dict:
         if not cands:
             raise SystemExit("--bits/--blocks leave no candidate configuration")
         qc = make_config(a.qad_preset, _qad_overrides(a)) if a.qad else None
+        if qc is not None:
+            check_cptc_options(qc, bool(a.cptc))
         sens = a.sensitivity or ("probe" if a.qad and a.calib else "none")
         rc = RunConfig(
             src=a.src,

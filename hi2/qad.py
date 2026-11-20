@@ -121,6 +121,23 @@ class QadConfig:
     final_bytes: bool = True
     final_tokens: int = 0  # positions per sequence in the loss (0 = all)
     final_evals: int = 4
+    # ---- CPTC options (--cptc only); every default is the pre-factorial path ----
+    # Per-block scale parameterisation of CPTC QAD and final-KL: "log" keeps
+    # scale0 * exp(delta) with delta in [-.5, .5]; "row_u8" uses
+    # scale0 + delta * (row max block scale / 255), projected to the same
+    # relative trust region. No exported scale is floored: zero and subnormal
+    # fp16 scales survive an unchanged export exactly.
+    cptc_scale_units: str = "log"
+    # Bounded projection sweeps of the CPTC code coordinate descent in QAD.
+    cptc_projection_sweeps: int = 1
+    # Final-KL: train the ONE global mirrored-int8 table pair shared by every CPTC
+    # Linear (coefficients and fp16 table_scale stay fixed). Off by default.
+    final_cptc_train_tables: bool = False
+    # AdamW lr of the shared table entries, in int8 levels per step. This is
+    # deliberately independent of final_lr_p (the scale/byte learning rate).
+    final_cptc_table_lr: float = 0.02
+    # Final-KL: explicit byte budget for immutable CPTC table indices; 0 = off.
+    final_cptc_cache_mb: int = 0
 
 
 # Fields of the final logit-KL phase: never part of the layer-wise fingerprint (they do
@@ -170,6 +187,24 @@ def make_config(preset: str = "default", overrides: dict | None = None) -> QadCo
         raise SystemExit("QAD dtype must be 'float32', 'float16' or 'bfloat16'")
     if qc.samples < 1 or qc.steps < 0 or qc.batch < 1 or qc.val < 1:
         raise SystemExit("QAD samples/batch/val must be >= 1 and steps >= 0")
+    if qc.cptc_scale_units not in ("log", "row_u8"):
+        raise SystemExit("QAD cptc_scale_units must be 'log' or 'row_u8'")
+    if qc.cptc_projection_sweeps < 1:
+        raise SystemExit("QAD cptc_projection_sweeps must be >= 1")
+    if qc.final_cptc_cache_mb < 0:
+        raise SystemExit("QAD final_cptc_cache_mb must be >= 0")
+    if qc.final_cptc_table_lr <= 0 or not math.isfinite(qc.final_cptc_table_lr):
+        raise SystemExit("QAD final_cptc_table_lr must be finite and positive")
+    if qc.final_cptc_table_lr != QadConfig.final_cptc_table_lr and not (
+        qc.final_cptc_train_tables
+    ):
+        raise SystemExit(
+            "QAD final_cptc_table_lr is only used with final_cptc_train_tables=true"
+        )
+    if (qc.final_cptc_train_tables or qc.final_cptc_cache_mb) and qc.final_kl <= 0:
+        raise SystemExit(
+            "QAD final_cptc_train_tables/final_cptc_cache_mb need --qad-final-kl > 0"
+        )
     return qc
 
 
@@ -249,6 +284,344 @@ def _ste(value: torch.Tensor, surrogate: torch.Tensor) -> torch.Tensor:
     """``value`` exactly in the forward, the gradient of ``surrogate`` in the backward
     (``s - s.detach()`` is exactly zero in floating point)."""
     return value + (surrogate - surrogate.detach())
+
+
+class _CptcTableGather(torch.autograd.Function):
+    """Keep only compact indices for backward; bound temporary int64 indices."""
+
+    @staticmethod
+    def forward(ctx, lut, indices):
+        ctx.save_for_backward(indices)
+        ctx.lut_size = lut.numel()
+        ctx.lut_dtype = lut.dtype
+        flat = indices.reshape(-1)
+        out = torch.empty(indices.shape, dtype=lut.dtype, device=lut.device)
+        values = out.reshape(-1)
+        chunk = (2 << 20) // 8
+        for start in range(0, flat.numel(), chunk):
+            end = start + chunk
+            values[start:end] = lut[flat[start:end].to(torch.int64)]
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        (indices,) = ctx.saved_tensors
+        flat = indices.reshape(-1)
+        grad = grad_output.reshape(-1)
+        result = torch.zeros(
+            ctx.lut_size, dtype=ctx.lut_dtype, device=grad_output.device
+        )
+        chunk = (2 << 20) // 8
+        for start in range(0, flat.numel(), chunk):
+            end = start + chunk
+            ix = flat[start:end].to(torch.int64)
+            if grad_output.is_cuda:
+                # Match advanced-index backward's sorted accumulation on HIP/CUDA,
+                # rather than contended, order-dependent floating-point atomics.
+                result.index_put_((ix,), grad[start:end], accumulate=True)
+            else:
+                result.index_add_(0, ix, grad[start:end])
+        return result, None
+
+
+# The existing log-scale trust region: a CPTC block scale may move by at most
+# exp(+/-0.5) of its PTQ value, and never below zero. "row_u8" only changes the
+# parameterisation of the same region (additive uint8-step deltas instead of logs).
+_CPTC_SCALE_REL = (math.exp(-0.5) - 1.0, math.exp(0.5) - 1.0)
+
+
+def _cptc_scale_unit(scale0: torch.Tensor, param_off, row_block) -> torch.Tensor:
+    """Per-block "row_u8" unit: the row's initial maximum block scale / 255.
+
+    ``unit`` has the flat layout of ``scale0`` (one value per block, ordered by
+    ``param_off``). Every block of a row receives the same unit, so a delta is
+    measured in 1/255 of the largest scale that row had at PTQ time. A completely
+    zero row gets unit 0, which keeps it exactly zero under every delta.
+    """
+    unit = torch.zeros_like(scale0)
+    bs = row_block.to(torch.int64)
+    off = param_off.to(torch.int64)
+    for block in sorted(set(bs.tolist())):
+        rows = (bs == block).nonzero().flatten()
+        if rows.numel() == 0:
+            continue
+        nblk = int(off[rows[0] + 1] - off[rows[0]])
+        pidx = off[rows].unsqueeze(1) + torch.arange(nblk, device=off.device)
+        row_max = scale0[pidx].max(dim=1, keepdim=True).values
+        unit[pidx] = (row_max / 255.0).expand_as(pidx)
+    return unit
+
+
+def _cptc_scales(scale0, delta, unit, scale_units: str) -> torch.Tensor:
+    """The CPTC block scales of a delta state: ``scale0*exp(delta)`` (log) or
+    ``scale0 + delta*unit`` (row_u8), within fp16's positive range.
+
+    Zero and subnormal ``scale0`` values are carried through exactly when the
+    delta is zero; the export applies its own fp16 rounding, never a floor."""
+    if scale_units == "row_u8":
+        scale = scale0 + delta * unit
+    else:
+        scale = scale0 * torch.exp(delta)
+    return scale.clamp(0.0, 65504.0)
+
+
+def _cptc_project_scales(delta, scale0, unit, scale_units: str) -> None:
+    """Project a scale delta into the existing relative trust region."""
+    if scale_units == "row_u8":
+        lo = torch.where(
+            unit > 0, scale0 * _CPTC_SCALE_REL[0] / unit.clamp_min(1e-30), 0.0
+        )
+        hi = torch.where(
+            unit > 0, scale0 * _CPTC_SCALE_REL[1] / unit.clamp_min(1e-30), 0.0
+        )
+        delta.copy_(delta.clamp(min=lo, max=hi))
+    else:
+        delta.clamp_(-0.5, 0.5)
+
+
+def _clone_codecs(codecs) -> dict:
+    """Fresh codec objects with copied tables, so exports never share or mutate the
+    input/PTQ codecs."""
+    from .cptc import CptcCodec
+
+    return {
+        int(k): CptcCodec(
+            c.nbits,
+            c.depth,
+            c.a0,
+            c.a1,
+            c.table.cpu().clone(),
+            c.table_scale.cpu().clone(),
+            c.tap_q,
+            c.shift,
+        )
+        for k, c in codecs.items()
+    }
+
+
+def _same_codec(a, b) -> bool:
+    return (
+        a.nbits == b.nbits
+        and a.depth == b.depth
+        and a.tap_q == b.tap_q
+        and a.shift == b.shift
+        and a.a0 == b.a0
+        and a.a1 == b.a1
+        and torch.equal(a.table.cpu(), b.table.cpu())
+        and torch.equal(a.table_scale.cpu(), b.table_scale.cpu())
+    )
+
+
+def cptc_codecs_from_tensors(tensors: dict) -> dict:
+    """The verified per-K codecs of an exported CPTC tensor set.
+
+    A v3.3 checkpoint carries exactly ONE table, coefficient pair and fp16 table
+    scale per K, so every tensor must agree. This fails closed instead of writing a
+    global config that would silently decode some tensors with the wrong table.
+    """
+    from .cptc import CptcTensor
+
+    seen: dict = {}
+    for name, t in tensors.items():
+        if not isinstance(t, CptcTensor):
+            continue
+        for k, codec in t.codecs.items():
+            k = int(k)
+            previous = seen.get(k)
+            if previous is None:
+                seen[k] = codec
+            elif not _same_codec(previous, codec):
+                raise ValueError(
+                    f"CPTC tensors disagree on the K={k} table/coefficients "
+                    f"({name}); one global model config cannot represent both"
+                )
+    return seen
+
+
+def check_cptc_options(qc: "QadConfig", cptc: bool, final_only: bool = False) -> None:
+    """Reject CPTC-specific settings on a non-CPTC run instead of ignoring them."""
+    if cptc:
+        return
+    chosen = []
+    if qc.cptc_scale_units != "log":
+        chosen.append("cptc_scale_units")
+    if not final_only and qc.cptc_projection_sweeps != 1:
+        chosen.append("cptc_projection_sweeps")
+    if qc.final_cptc_train_tables:
+        chosen.append("final_cptc_train_tables")
+    if qc.final_cptc_cache_mb:
+        chosen.append("final_cptc_cache_mb")
+    if (
+        qc.final_cptc_table_lr != QadConfig.final_cptc_table_lr
+        and not qc.final_cptc_train_tables
+    ):
+        chosen.append("final_cptc_table_lr")
+    if chosen:
+        where = "final-KL" if final_only else "QAD"
+        raise SystemExit(
+            f"{where}: {', '.join(chosen)} only apply to --cptc tensors; "
+            "enable --cptc or remove these settings"
+        )
+
+
+def final_fingerprint_fields(qc: "QadConfig") -> dict:
+    """Final-phase settings that can change its numerical result.
+
+    ``final_cptc_cache_mb`` is deliberately absent: the cache only stores immutable
+    table indices, so changing the budget must not invalidate a finished artifact.
+    The CPTC training fields are omitted at their defaults, which leaves the
+    fingerprint of a pre-factorial final-KL artifact unchanged.
+    """
+    legacy = {
+        "final_cptc_train_tables": False,
+        "final_cptc_table_lr": 0.02,
+    }
+    return {
+        k: v
+        for k, v in asdict(qc).items()
+        if k in FINAL_FIELDS
+        and k != "final_cptc_cache_mb"
+        and legacy.get(k, object()) != v
+    }
+
+
+class CptcIndexCache:
+    """Explicitly budgeted, training-only cache of immutable CPTC table indices.
+
+    Entries are the exact ``decode_index`` values (0..126) of a tensor's frozen code
+    stream, one uint8 per stored weight. They do not depend on table values or block
+    scales, so a trainable table can rebuild its LUT every forward without a stale
+    decoded-weight cache. The object is shared by every CPTC Linear of a final-KL
+    run; ``reserve`` accounts every cache-owned tensor (the uint8 index buffers) and
+    refuses allocations beyond ``budget_bytes``. A module/device move replaces its
+    slot on the new device, so one logical index group stays one reservation. No
+    decoded table, scale or int64 index is kept: row classes and weight bytes are the
+    model's normal buffers and exist with or without the cache. It is never used by
+    inference.
+    """
+
+    def __init__(self, budget_bytes: int = 0):
+        self.budget_bytes = max(0, int(budget_bytes))
+        self.used_bytes = 0
+        self.entries = 0
+
+    def reserve(self, nbytes: int) -> bool:
+        nbytes = int(nbytes)
+        if nbytes <= 0 or self.used_bytes + nbytes > self.budget_bytes:
+            return False
+        self.used_bytes += nbytes
+        self.entries += 1
+        return True
+
+    def summary(self) -> dict:
+        return {
+            "budget_bytes": self.budget_bytes,
+            "used_bytes": self.used_bytes,
+            "entries": self.entries,
+            "free_bytes": self.budget_bytes - self.used_bytes,
+        }
+
+
+class CptcSharedTables:
+    """The ONE global trainable pair of mirrored-int8 CPTC half-tables.
+
+    A final-KL run shares this owner by reference across every CPTC Linear; no
+    per-layer codebook is created. Coefficients, depth and the fp16 ``table_scale``
+    stay fixed; only the 64 signed-int8 levels per K train. Entries use a
+    straight-through rounding and project to [-127, 127] with the last low-half
+    entry pinned to 0 (the serialized mirror contract).
+
+    This is deliberately not an ``nn.Module``: attaching the same module to every
+    Linear would make model/device staging duplicate or move one global parameter
+    set unpredictably. final-KL keeps the one master copy on the first training
+    device; ``lut`` materializes its live selected values on each Linear's device so
+    sharded gradients return to that master and one optimizer group.
+    """
+
+    def __init__(self, codecs: dict):
+        if not codecs:
+            raise ValueError("CptcSharedTables needs at least one CPTC codec")
+        self._codecs = {}
+        self.table_u = {}
+        for k in sorted(int(k) for k in codecs):
+            codec = codecs[k]
+            if int(codec.nbits) != k or k not in (2, 4):
+                raise ValueError("CPTC shared tables require K=2 and/or K=4 codecs")
+            self._codecs[k] = codec
+            self.table_u[k] = nn.Parameter(codec.table.float().clone())
+
+    def widths(self) -> tuple[int, ...]:
+        return tuple(sorted(self._codecs))
+
+    def parameters(self) -> list[nn.Parameter]:
+        return [self.table_u[k] for k in self.widths()]
+
+    def to(self, device) -> "CptcSharedTables":
+        """Move the one master copy; module staging must never copy it per Linear."""
+        for p in self.parameters():
+            p.data = p.data.to(device)
+        return self
+
+    def _selected(self, k: int) -> torch.Tensor:
+        """The 64 table entries as STE values in [-127, 127], last entry exactly 0."""
+        p = self.table_u[int(k)]
+        hard = torch.round(p.detach()).clamp(-127, 127)
+        hard = torch.cat([hard[:-1], hard.new_zeros(1)])
+        soft = torch.cat([p.clamp(-127, 127)[:-1], p.new_zeros(1)])
+        return _ste(hard, soft)
+
+    def selected_int8(self, k: int) -> torch.Tensor:
+        """The serialized hard table of one K (no graph)."""
+        p = self.table_u[int(k)].detach()
+        table = torch.round(p).clamp(-127, 127)
+        table = torch.cat([table[:-1], table.new_zeros(1)])
+        return table.to(torch.int8)
+
+    def lut(self, k: int, device) -> torch.Tensor:
+        """The runtime fp16 LUT values carried in fp32 with an fp32 surrogate graph.
+
+        The forward values are exactly the old ``to(torch.float16)`` values, but the
+        lookup keeps the live selected fp32 entries and a straight-through fp32 graph
+        until the final cast, so tiny gradients are accumulated in fp32 instead of
+        underflowing through a half gather.
+        """
+        k = int(k)
+        index = torch.arange(2**7 - 1, device=device, dtype=torch.int64)
+        lower = index < 2**6
+        pos = index.clamp(max=2**6 - 1)
+        neg = (2**7 - 2 - index).clamp(min=0, max=2**6 - 1)
+        # Materialize the live master values on the using Linear's device with a
+        # differentiable copy: backward sums the shard gradient into the one master.
+        table = self._selected(k).to(device)
+        i8 = torch.where(lower, table[pos], -table[neg])
+        scaled = i8.float() * float(self._codecs[k].table_scale)
+        # Exact runtime fp16 forward values, fp32 surrogate gradient for the lookup.
+        return _ste(scaled.detach().half().float(), scaled)
+
+    @torch.no_grad()
+    def project(self) -> None:
+        for k in self.widths():
+            p = self.table_u[k].data
+            p.clamp_(-127, 127)
+            p[-1] = 0
+
+    def codecs_out(self) -> dict:
+        """Selected table values as fresh codec objects for every exported tensor."""
+        from .cptc import CptcCodec
+
+        return {
+            k: CptcCodec(
+                c.nbits,
+                c.depth,
+                c.a0,
+                c.a1,
+                self.selected_int8(k).cpu(),
+                c.table_scale.clone().cpu(),
+                c.tap_q,
+                c.shift,
+            )
+            for k, c in self._codecs.items()
+        }
 
 
 class _Group(nn.Module):
@@ -452,21 +825,29 @@ class FakeQuantLinear(nn.Module):
 
 
 class CptcFrozenCodeLinear(nn.Module):
-    """The final-KL CPTC student: frozen codes and tables, trainable per-block scales.
+    """The final-KL CPTC student: frozen codes, trainable per-block scales.
 
-    This is the baseline final phase exactly (codes frozen, block parameters/norms
-    trainable), with no fp32 weight latent and no code projection. Only the fp16 scale
-    the runtime multiplies the LUT by is distilled.
+    Codes are frozen (1 byte per weight on the device, no fp32 latent). Row classes
+    are computed once, and only the exact fp16 scale/LUT product is recomputed per
+    forward. ``scale_units`` selects the same log or row_u8 parameterisation as QAD.
+    ``tables`` optionally points at the one global trainable table owner; every
+    Linear shares it rather than keeping a per-layer codebook. ``index_cache`` is an
+    optional explicitly budgeted store of immutable table indices (uint8).
     """
 
-    def __init__(self, t0):
+    def __init__(self, t0, scale_units="log", tables=None, index_cache=None):
         super().__init__()
         from .cptc import CptcTensor
 
         if not isinstance(t0, CptcTensor):
             raise TypeError("CptcFrozenCodeLinear needs a CptcTensor")
+        if scale_units not in ("log", "row_u8"):
+            raise ValueError("CPTC scale_units must be 'log' or 'row_u8'")
         self.shape = t0.shape
         self.codecs = dict(t0.codecs)
+        self.scale_units = scale_units
+        self.tables = tables
+        self.index_cache = index_cache
         self.register_buffer("codes", t0.codes.clone())
         self.register_buffer("code_off", t0.code_off.clone())
         self.register_buffer("param_off", t0.param_off.clone())
@@ -481,71 +862,153 @@ class CptcFrozenCodeLinear(nn.Module):
         self.has_scale = cs is not None
         self.has_had = bool(t0.had.any())
         self.register_buffer("scale0", t0.scale.float().clone())
+        self.register_buffer(
+            "scale_unit",
+            _cptc_scale_unit(self.scale0, self.param_off, self.row_block)
+            if scale_units == "row_u8"
+            else torch.ones(0),
+        )
         self.delta = nn.Parameter(torch.zeros_like(self.scale0))
+        # Row classes are immutable: never call .tolist()/nonzero() per forward.
+        nb = t0.row_nbits.to(torch.int64)
+        bl = t0.row_block.to(torch.int64)
+        self.groups = []
+        self.rows = []
+        for nbits in sorted(set(nb.tolist())):
+            for bs in sorted(set(bl.tolist())):
+                rows = ((nb == nbits) & (bl == bs)).nonzero().flatten()
+                if rows.numel() == 0:
+                    continue
+                self.rows.append(rows)
+                self.groups.append((int(nbits), int(bs)))
+        self._index_slots = [None] * len(self.groups)
 
     def scales(self) -> torch.Tensor:
         # Zero and subnormal PTQ scales are valid and must survive a zero-step
-        # export exactly; only the latent-normalisation unit uses a 2^-14 floor.
-        return (self.scale0 * torch.exp(self.delta)).clamp(0.0, 65504)
+        # export exactly; no floor is applied to exported values.
+        return _cptc_scales(self.scale0, self.delta, self.scale_unit, self.scale_units)
 
     def _align_devices(self):
         dev = self.delta.device
-        for name in (
+        names = [
             "codes", "code_off", "param_off", "row_nbits", "row_block",
-            "had", "scale0",
-        ):
+            "had", "scale0", "scale_unit",
+        ]
+        for name in names:
             value = getattr(self, name)
             if value.device != dev:
                 setattr(self, name, value.to(dev))
+        for i, rows in enumerate(self.rows):
+            if rows.device != dev:
+                self.rows[i] = rows.to(dev)
         if self.has_scale and self.col_scale.device != dev:
             self.col_scale = self.col_scale.to(dev)
+        for i, slot in enumerate(self._index_slots):
+            if slot is not None and slot.device != dev:
+                # Replace the cache-owned buffer in place: the old device copy is
+                # released after this assignment, so used_bytes still counts one
+                # logical slot and there is no retained duplicate.
+                self._index_slots[i] = slot.to(dev)
+                del slot
 
     def param_groups(self):
         return [], [self.delta]
 
     @torch.no_grad()
     def project(self):
-        self.delta.clamp_(-0.5, 0.5)
+        _cptc_project_scales(
+            self.delta, self.scale0, self.scale_unit, self.scale_units
+        )
+
+    def _lut(self, nbits: int, codec, device) -> torch.Tensor:
+        """The exact runtime LUT. A fixed table is fp16; the shared table is fp32 with
+        its forward values already rounded exactly like the fp16 carrier."""
+        if self.tables is not None:
+            return self.tables.lut(nbits, device)
+        from .cptc import index_table_value
+
+        return index_table_value(
+            torch.arange(127, device=device),
+            codec.table.to(device),
+            float(codec.table_scale),
+        )
+
+    def _build_index(self, rows, nbits: int, bs: int, codec) -> torch.Tensor:
+        from .cptc import decode_index, unpack_codes, window_indices
+
+        k = self.shape[1]
+        nblk = k // bs
+        n = rows.numel()
+        out = torch.empty(n, nblk, bs, dtype=torch.uint8, device=self.delta.device)
+        wr = k * nbits // 32
+        # Build in bounded row chunks too: the uint8 cache should not require an
+        # equally sized int64 working copy of the whole tensor.
+        chunk_rows = max(1, (2 << 20) // max(1, k * 8))
+        for c0 in range(0, n, chunk_rows):
+            rr = rows[c0 : c0 + chunk_rows]
+            widx = self.code_off[rr].long().unsqueeze(1) + torch.arange(
+                wr, device=self.delta.device
+            )
+            codes = unpack_codes(self.codes[widx], nbits).reshape(
+                rr.numel(), nblk, bs
+            )
+            q = window_indices(codes.reshape(-1, bs), nbits, codec.depth, bs)
+            idx = decode_index(q, codec.a0, codec.a1, codec.tap_q).reshape(
+                rr.numel(), nblk, bs
+            )
+            out[c0 : c0 + rr.numel()] = idx.to(torch.uint8)
+        return out
+
+    def _indices(self, gi: int, rows, nbits: int, bs: int, codec) -> torch.Tensor:
+        """Immutable table indices (uint8), cached only under the explicit budget."""
+        slot = self._index_slots[gi]
+        if slot is not None:
+            return slot
+        slot = self._build_index(rows, nbits, bs, codec)
+        if self.index_cache is not None and self.index_cache.reserve(
+            rows.numel() * self.shape[1]
+        ):
+            self._index_slots[gi] = slot
+        return slot
+
+    @staticmethod
+    def _table_values(lut: torch.Tensor, idx: torch.Tensor) -> torch.Tensor:
+        if lut.requires_grad and torch.is_grad_enabled():
+            return _CptcTableGather.apply(lut, idx)
+        chunk_rows = max(1, (2 << 20) // max(1, idx[0].numel() * 8))
+        return torch.cat([
+            lut[idx[c0 : c0 + chunk_rows].to(torch.int64)]
+            for c0 in range(0, idx.shape[0], chunk_rows)
+        ], dim=0)
 
     def stored(self, grad: bool = True) -> torch.Tensor:
-        from .cptc import decode_index, index_table_value, unpack_codes, window_indices
-
         self._align_devices()
         r, k = self.shape
         out = torch.empty(r, k, dtype=torch.float32, device=self.delta.device)
-        nb = self.row_nbits.to(torch.int64)
-        bl = self.row_block.to(torch.int64)
-        for nbits in sorted(set(nb.tolist())):
-            for bs in sorted(set(bl.tolist())):
-                rows = ((nb == nbits) & (bl == bs)).nonzero().flatten().to(
-                    self.delta.device
-                )
-                if rows.numel() == 0:
-                    continue
-                codec = self.codecs[int(nbits)]
-                wr = k * nbits // 32
-                widx = self.code_off[rows].long().unsqueeze(1) + torch.arange(
-                    wr, device=self.delta.device
-                )
-                codes = unpack_codes(self.codes[widx], nbits).reshape(
-                    rows.numel(), k // bs, bs
-                )
-                q = window_indices(codes.reshape(-1, bs), nbits, codec.depth, bs)
-                lut = index_table_value(
-                    decode_index(q, codec.a0, codec.a1, codec.tap_q),
-                    codec.table.to(self.delta.device),
-                    float(codec.table_scale),
-                ).float()
-                vals = lut.reshape(rows.numel(), k // bs, bs)
-                pidx = self.param_off[rows].long().unsqueeze(1) + torch.arange(
-                    k // bs, device=self.delta.device
-                )
-                s = self.scales()[pidx].float()
-                s_h = s.half().float().unsqueeze(-1)
-                wq = (s_h * vals.half().float()).half().float()
-                if grad:
-                    wq = _ste(wq, s.unsqueeze(-1) * vals)
-                out[rows] = wq.reshape(rows.numel(), k)
+        for gi, (nbits, bs) in enumerate(self.groups):
+            rows = self.rows[gi]
+            codec = self.codecs[nbits]
+            nblk = k // bs
+            sc = self.scales()
+            idx = self._indices(gi, rows, nbits, bs, codec)
+            lut = self._lut(nbits, codec, self.delta.device)
+            # The differentiable gather saves uint8 indices, not a full model's
+            # worth of int64 indices. Both directions bound their conversion.
+            vals = self._table_values(lut, idx)
+            if vals.dtype != torch.float32:
+                vals = vals.float()
+            pidx = self.param_off[rows].long().unsqueeze(1) + torch.arange(
+                nblk, device=self.delta.device
+            )
+            s = sc[pidx].float()
+            s_h = s.half().float().unsqueeze(-1)
+            # vals already holds the exact fp16 LUT values as fp32; keeping it there
+            # preserves fp32 surrogate gradients while leaving every forward value
+            # (including the final fp16 product) bit-identical to the old path.
+            wq = (s_h * vals.detach()).half().float()
+            if grad:
+                wq = _ste(wq, s.unsqueeze(-1) * vals)
+            out[rows] = wq.reshape(rows.numel(), k)
         return out
 
     def weight(self) -> torch.Tensor:
@@ -558,6 +1021,17 @@ class CptcFrozenCodeLinear(nn.Module):
 
     def forward(self) -> torch.Tensor:
         return self.weight()
+
+    def _export_codecs(self) -> dict:
+        if self.tables is None:
+            return _clone_codecs(self.codecs)
+        missing = set(self.codecs) - set(self.tables.widths())
+        if missing:
+            raise ValueError(
+                f"shared CPTC tables have no codec for K={sorted(missing)}"
+            )
+        tables = self.tables.codecs_out()
+        return {k: tables[k] for k in self.codecs}
 
     @torch.no_grad()
     def export(self, stager=None):
@@ -580,7 +1054,7 @@ class CptcFrozenCodeLinear(nn.Module):
             row_block=to_host(self.row_block),
             had=to_host(self.had),
             shape=self.shape,
-            codecs=self.codecs,
+            codecs=self._export_codecs(),
             col_scale=to_host(self.col_scale) if self.has_scale else None,
         )
 
@@ -591,13 +1065,15 @@ class CptcFakeQuantLinear(nn.Module):
     The latent is the stored-basis weight ``H (W s)`` in fp32. Every forward starts the
     block-local coordinate projection from the immutable PTQ code stream, evaluates all
     ``2**K`` symbols for each position in ``t mod period`` phases, and decodes with the
-    exact fp16 table/scale roundings the runtime uses. The hard codes are a straight-
-    through value for the latent and the per-block log-scales, so the optimizer can move
-    both the weights and the code assignment. ``export()`` runs the same projection on
-    the final latent/scales; it is not a frozen-code or scale-only path.
+    exact fp16 table/scale roundings the runtime uses. ``scale_units`` selects log deltas
+    (unchanged default) or the additive row_u8 parameterisation. The hard codes are a
+    straight-through value for the latent and the per-block scales, so the optimizer can
+    move both the weights and the code assignment. ``export()`` runs the same projection
+    on the final latent/scales; it is not a frozen-code or scale-only path.
     """
 
-    def __init__(self, w, t0, comp=None, init="ptq", units="abs", sweeps=1):
+    def __init__(self, w, t0, comp=None, init="ptq", units="abs", sweeps=1,
+                 scale_units="log"):
         super().__init__()
         from .cptc import (
             CptcTensor,
@@ -607,11 +1083,14 @@ class CptcFakeQuantLinear(nn.Module):
 
         if not isinstance(t0, CptcTensor):
             raise TypeError("CptcFakeQuantLinear needs a CptcTensor")
+        if scale_units not in ("log", "row_u8"):
+            raise ValueError("CPTC scale_units must be 'log' or 'row_u8'")
         r, k = t0.shape
         dev = w.device if w is not None else t0.scale.device
         self.shape = (r, k)
         self.codecs = dict(t0.codecs)
         self.sweeps = int(sweeps)
+        self.scale_units = scale_units
         self.register_buffer("codes0", t0.codes.clone())
         self.register_buffer("code_off", t0.code_off.clone())
         self.register_buffer("param_off", t0.param_off.clone())
@@ -655,6 +1134,12 @@ class CptcFakeQuantLinear(nn.Module):
                 s = self.scale0[pidx].clamp_min(2**-14).reshape(rows.numel(), nblk)
                 unit[rows] = s.repeat_interleave(bs, dim=1).to(unit.device)
         self.register_buffer("unit", unit if self.step_units else torch.ones(0))
+        self.register_buffer(
+            "scale_unit",
+            _cptc_scale_unit(self.scale0, self.param_off, self.row_block)
+            if self.scale_units == "row_u8"
+            else torch.ones(0),
+        )
         if init == "weights" or comp is None:
             if w is None:
                 v = dequantize_stored_cptc(t0, dev).float()
@@ -671,7 +1156,7 @@ class CptcFakeQuantLinear(nn.Module):
     def scales(self) -> torch.Tensor:
         # Zero and subnormal PTQ scales are valid and must survive a zero-step
         # export exactly; only the latent-normalisation unit uses a 2^-14 floor.
-        return (self.scale0 * torch.exp(self.delta)).clamp(0.0, 65504)
+        return _cptc_scales(self.scale0, self.delta, self.scale_unit, self.scale_units)
 
     def _align_devices(self):
         """QAD may construct this module from host tensors then move it; keep every
@@ -680,7 +1165,7 @@ class CptcFakeQuantLinear(nn.Module):
         dev = self.latent.device
         for name in (
             "codes0", "code_off", "param_off", "row_nbits", "row_block",
-            "had", "scale0", "unit", "inv_perm",
+            "had", "scale0", "unit", "scale_unit", "inv_perm",
         ):
             value = getattr(self, name)
             if value.device != dev:
@@ -695,8 +1180,12 @@ class CptcFakeQuantLinear(nn.Module):
 
     @torch.no_grad()
     def project(self):
-        # Trust region around the PTQ block scale: QAD refines, never re-scales the tensor.
-        self.delta.clamp_(-0.5, 0.5)
+        # Trust region around the PTQ block scale: QAD refines, never re-scales the
+        # tensor. "row_u8" projects the additive delta into the same exp(+/-.5)
+        # relative band, which also keeps every block scale nonnegative.
+        _cptc_project_scales(
+            self.delta, self.scale0, self.scale_unit, self.scale_units
+        )
         if self.step_units:
             # keep the latent finite when a very aggressive step is requested
             self.latent.data.clamp_(-65504.0, 65504.0)
@@ -879,7 +1368,7 @@ class CptcFakeQuantLinear(nn.Module):
             to_host(self.row_block),
             to_host(self.had),
             k,
-            self.codecs,
+            _clone_codecs(self.codecs),
             to_host(self.col_scale) if self.has_scale else None,
         )
 
@@ -1277,6 +1766,8 @@ LEGACY_DEFAULTS = {
     "kl_weight": 1.0,
     "kl_tokens": 256,
     "dtype": "float32",
+    "cptc_scale_units": "log",
+    "cptc_projection_sweeps": 1,
 }
 
 
@@ -1291,6 +1782,8 @@ def qad_meta(qc: QadConfig) -> dict:
         "kl_layers",
         "kl_weight",
         "kl_tokens",
+        "cptc_scale_units",
+        "cptc_projection_sweeps",
     }
     return {k: v for k, v in asdict(qc).items() if k not in new or v != getattr(d, k)}
 
@@ -1476,6 +1969,7 @@ def qad_layerwise(
     from .layerwise import capture_inputs, find_layers
     from .stats import ColumnStats
 
+    check_cptc_options(qc, bool(getattr(cfg, "cptc", False)))
     path, layers = find_layers(model)
     prefix = path + "."
     n_layers = len(layers) if limit_layers is None else min(limit_layers, len(layers))
@@ -1585,22 +2079,25 @@ def qad_layerwise(
             if li in train_set and linears:
                 from .cptc import CptcTensor
 
-                fq = {
-                    name: (
-                        CptcFakeQuantLinear
-                        if isinstance(inits[name], CptcTensor)
-                        else FakeQuantLinear
-                    )(
-                        wstager.to_host(
-                            layer.get_submodule(name).weight.detach().float()
-                        ),
-                        inits[name],
-                        comps[name],
-                        qc.init,
-                        qc.latent_units,
+                def _fake_quant(name):
+                    w = wstager.to_host(
+                        layer.get_submodule(name).weight.detach().float()
                     )
-                    for name in linears
-                }
+                    if isinstance(inits[name], CptcTensor):
+                        return CptcFakeQuantLinear(
+                            w,
+                            inits[name],
+                            comps[name],
+                            qc.init,
+                            qc.latent_units,
+                            sweeps=qc.cptc_projection_sweeps,
+                            scale_units=qc.cptc_scale_units,
+                        )
+                    return FakeQuantLinear(
+                        w, inits[name], comps[name], qc.init, qc.latent_units
+                    )
+
+                fq = {name: _fake_quant(name) for name in linears}
                 fb = _ptq_fallback(layer, linears, inits, comps, qc, wstager)
                 info = train_layer(
                     layer,
