@@ -886,8 +886,8 @@ def test_cptc_shared_tables_train_across_two_devices_with_one_master():
 
     loss = m2.weight().square().sum() + m4.weight().to(dev0).square().sum()
     ref_loss = r2.weight().square().sum() + r4.weight().square().sum()
-    loss.backward()
-    ref_loss.backward()
+    book.backward(loss)
+    ref.backward(ref_loss)
 
     torch.testing.assert_close(m2.weight(), r2.weight(), rtol=1e-4, atol=1e-5)
     torch.testing.assert_close(
@@ -1157,3 +1157,59 @@ def test_cptc_table_gather_gpu_gradients_repeat_exactly_with_rebuilt_indices():
     for gradient, update in zip(gradients[1:], updates[1:]):
         assert torch.equal(gradient, gradients[0])
         assert torch.equal(update, updates[0])
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+def test_cptc_shared_table_gradients_and_updates_match_across_cache_repeats():
+    """Multiple groups on both shards must not reorder the global FP32 gradient."""
+    from hi2.cptc import assemble_cptc
+    from hi2.qad import CptcFrozenCodeLinear, CptcIndexCache, CptcSharedTables
+
+    gen = torch.Generator().manual_seed(20261120)
+    rows, width = 64, 4096
+    widths = torch.tensor(([2] * 16 + [4] * 16) * 2, dtype=torch.uint8)
+    blocks = torch.tensor([32] * 32 + [64] * 32, dtype=torch.uint8)
+    codecs = {bits: get_codec(16, bits) for bits in (2, 4)}
+    pieces = []
+    for bits, block in ((2, 32), (4, 32), (2, 64), (4, 64)):
+        rr = ((widths == bits) & (blocks == block)).nonzero().flatten()
+        codes = torch.randint(0, 2**bits, (len(rr), width), generator=gen)
+        scales = torch.linspace(0.1, 1.3, width // block).half().repeat(len(rr), 1)
+        pieces.append((rr, codes, scales))
+    tensor = assemble_cptc(
+        pieces, widths, blocks,
+        torch.tensor([0, 1] * (width // 32), dtype=torch.uint8),
+        width, codecs, col_scale=torch.linspace(0.5, 1.5, width).half(),
+    )
+    devices = ("cuda:0", "cuda:1")
+    inputs = [torch.randn(16, width, generator=gen).to(d) for d in devices]
+    targets = [torch.randn(16, rows, generator=gen).to(d) for d in devices]
+    reference = None
+    for budget in (0, 0, 1 << 20, 1 << 20):
+        book = CptcSharedTables(codecs).to(devices[0])
+        cache = CptcIndexCache(budget)
+        modules = [
+            CptcFrozenCodeLinear(tensor, tables=book, index_cache=cache).to(d)
+            for d in devices
+        ]
+        weights = [m.weight() for m in modules]
+        outputs = [torch.nn.functional.linear(x, w) for x, w in zip(inputs, weights)]
+        losses = [(y - target).square().mean() for y, target in zip(outputs, targets)]
+        loss = losses[0] + losses[1].to(devices[0])
+        assert torch.isfinite(loss)
+        book.backward(loss)
+        gradients = [p.grad.detach().cpu().clone() for p in book.parameters()]
+        optimizer = torch.optim.AdamW(book.parameters(), lr=0.02)
+        optimizer.step()
+        record = (
+            [w.detach().cpu().clone() for w in weights],
+            [y.detach().cpu().clone() for y in outputs],
+            gradients,
+            [p.detach().cpu().clone() for p in book.parameters()],
+        )
+        if reference is None:
+            reference = record
+        else:
+            for expected, actual in zip(reference, record):
+                for a, b in zip(expected, actual):
+                    assert torch.equal(a, b)

@@ -562,6 +562,15 @@ class CptcSharedTables:
             p.data = p.data.to(device)
         return self
 
+    def backward(self, output: torch.Tensor, gradient=None) -> None:
+        """Accumulate shared FP32 shard gradients in a stable autograd order.
+
+        Parallel engine scheduling can change the addition order at the one
+        master parameter even when each shard's gradient is unchanged.
+        """
+        with torch.autograd.set_multithreading_enabled(False):
+            output.backward(gradient)
+
     def _selected(self, k: int) -> torch.Tensor:
         """The 64 table entries as STE values in [-127, 127], last entry exactly 0."""
         p = self.table_u[int(k)]

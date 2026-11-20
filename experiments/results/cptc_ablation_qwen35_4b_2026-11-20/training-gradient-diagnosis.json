@@ -1,0 +1,359 @@
+{
+  "diagnostic_only": true,
+  "scope": "Controlled same-cache repeats, cross-cache comparison and master-precision/threading interventions. Not a cache qualification or speed result.",
+  "source_manifest": {
+    "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/dev/quantizer-opt-f6f692a007/tree/SOURCE-MANIFEST.json",
+    "sha256": "f1c2636c34806ae4a5be7748d4ad8461e37bfbc8ca5cff98a20593a21b6d5be5"
+  },
+  "cases": [
+    {
+      "master_dtype": "torch.float32",
+      "autograd_multithreading": true,
+      "runs": 4,
+      "pairs": [
+        {
+          "left": 0,
+          "right": 1,
+          "comparison": "off-off",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": false,
+              "max_abs_diff": 2.384185791015625e-07,
+              "different_elements": 26
+            }
+          }
+        },
+        {
+          "left": 2,
+          "right": 3,
+          "comparison": "on-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        },
+        {
+          "left": 0,
+          "right": 2,
+          "comparison": "off-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": false,
+              "max_abs_diff": 2.384185791015625e-07,
+              "different_elements": 40
+            }
+          }
+        },
+        {
+          "left": 0,
+          "right": 3,
+          "comparison": "off-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": false,
+              "max_abs_diff": 2.384185791015625e-07,
+              "different_elements": 40
+            }
+          }
+        }
+      ]
+    },
+    {
+      "master_dtype": "torch.float32",
+      "autograd_multithreading": false,
+      "runs": 4,
+      "pairs": [
+        {
+          "left": 0,
+          "right": 1,
+          "comparison": "off-off",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        },
+        {
+          "left": 2,
+          "right": 3,
+          "comparison": "on-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        },
+        {
+          "left": 0,
+          "right": 2,
+          "comparison": "off-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        },
+        {
+          "left": 0,
+          "right": 3,
+          "comparison": "off-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "master_dtype": "torch.float64",
+      "autograd_multithreading": true,
+      "runs": 4,
+      "pairs": [
+        {
+          "left": 0,
+          "right": 1,
+          "comparison": "off-off",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        },
+        {
+          "left": 2,
+          "right": 3,
+          "comparison": "on-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        },
+        {
+          "left": 0,
+          "right": 2,
+          "comparison": "off-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        },
+        {
+          "left": 0,
+          "right": 3,
+          "comparison": "off-on",
+          "fields": {
+            "weights": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "outputs": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "scale_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            },
+            "table_grads": {
+              "exact": true,
+              "max_abs_diff": 0.0,
+              "different_elements": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "raw_tensors": {
+    "path": "/home/chenco_adm/w4a8_runs/cptc-qwen35-4b-20261119/native-opt-d6b4ba74f0/gpu-table-gradient-diagnosis-f6-d6-r2/table-gradient-diagnostic.pt",
+    "sha256": "af3d84b902846baca4d827f6898b59b6cb7873d629758875b6ca8ef38657b2a2"
+  }
+}

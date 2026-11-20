@@ -402,6 +402,13 @@ values, and `hi2 quantize` builds the checkpoint's one global `cptc` config from
 exported tensors (fail closed if two tensors disagree). The input/PTQ codec objects
 are copied for export and never mutated.
 
+For trainable tables, final-KL uses `CptcSharedTables.backward` to serialize
+autograd's scheduling of FP32 contributions to the shared master. Parallel
+scheduling changed the sum even between two cache-off repeats on two V620s;
+the controlled single-threaded schedule removed that variation. This is not an
+FP64 optimizer or a claim of universally deterministic GPU kernels. Fixed-table
+and DEFAULT backward execution are unchanged.
+
 The cache stores only the immutable `decode_index` values (0..126, one uint8 per
 stored weight) of the frozen code stream. PyTorch reads uint8 advanced indices as a
 boolean mask, so each gather casts only one bounded chunk to int64. Trainable-table

@@ -465,7 +465,10 @@ def final_kl(
                 hs = _head_input(model, ids[i : i + 1].to(dev)).float()
                 hd = hs.detach().requires_grad_(True)
                 tot += _kl_loss(lm, hd, teach[i].to(last), positions()) / len(batch)
-                hs.backward(hd.grad / len(batch))
+                if book is None:
+                    hs.backward(hd.grad / len(batch))
+                else:
+                    book.backward(hs, hd.grad / len(batch))
             # norms outside the decoder path (e.g. a vision tower) get no gradient
             if step == 0:
                 touched = {c for c, p in norms.items() if p.grad is not None}
