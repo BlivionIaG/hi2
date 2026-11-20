@@ -146,6 +146,11 @@ are pinned; a CPU check excludes matching 64-token shingles at every 16-token
 window offset against calibration and both old holdouts. This is not semantic
 deduplication. These are prospective inputs, not optimization results.
 
+The original run predates the new CPTC config fields. The study worker compares
+full resolved QAD settings when reusing that parent: omitted defaults are accepted,
+but explicit different factors remain errors. It does not rewrite the preserved
+run, cache keys or layer artifacts. Seven CPU lifecycle cases cover this boundary.
+
 ## Qwen3.5-4B (unquantized PPL 7.067 on docs)
 
 Sizes: "body" is the quantized decoder linears only; "file" is the whole checkpoint

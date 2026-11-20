@@ -264,10 +264,22 @@ def expected_config(defaults, dst, workdir, qad):
 def assert_config(document, expected):
     """A run config must match the frozen DEFAULT config on every setting except
     the explicitly substituted destination, workdir and declared QAD values."""
+    from dataclasses import asdict
+
+    from hi2.service import config_from_dict
+
     if set(document) != set(expected):
         raise ValueError('run config keys differ from the DEFAULT config')
     for key in expected:
         if key in ('dst', 'workdir'):
+            continue
+        if key == 'qad' and isinstance(document[key], dict) and isinstance(expected[key], dict):
+            # Persisted runs predating the opt-in factors omit their default fields.
+            # Compare the full resolved configuration, not a partial fingerprint.
+            actual_qad = config_from_dict({'schema_version': 1, 'config': document}).qad
+            expected_qad = config_from_dict({'schema_version': 1, 'config': expected}).qad
+            if asdict(actual_qad) != asdict(expected_qad):
+                raise ValueError('run config differs from DEFAULT on qad')
             continue
         if document[key] != expected[key]:
             raise ValueError(f'run config differs from DEFAULT on {key}')

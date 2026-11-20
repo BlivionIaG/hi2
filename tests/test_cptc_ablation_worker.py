@@ -257,6 +257,25 @@ def test_parent_manifest_reuses_common_teacher_without_head(tiny_study):
     assert repeat == record
 
 
+def test_legacy_qad_defaults_are_resolved_without_accepting_different_factors(tiny_study):
+    expected = copy.deepcopy(tiny_study['defaults']['config'])
+    legacy = copy.deepcopy(expected)
+    legacy['qad'].pop('cptc_scale_units')
+    legacy['qad'].pop('cptc_projection_sweeps')
+    before = copy.deepcopy(legacy)
+    worker.assert_config(legacy, expected)
+    assert legacy == before
+
+    different = copy.deepcopy(legacy)
+    different['qad']['cptc_scale_units'] = 'row_u8'
+    with pytest.raises(ValueError, match='differs from DEFAULT on qad'):
+        worker.assert_config(different, expected)
+    different = copy.deepcopy(legacy)
+    different['qad']['cptc_projection_sweeps'] = 4
+    with pytest.raises(ValueError, match='differs from DEFAULT on qad'):
+        worker.assert_config(different, expected)
+
+
 def test_preserved_control_is_refused_before_any_work():
     trial = {
         'id': 'log-p1-lr02-fixed',
