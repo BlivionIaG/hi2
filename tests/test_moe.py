@@ -19,6 +19,7 @@ from hi2.moe import (  # noqa: E402
     UnfusedExperts,
     expert_parts,
     expert_weights,
+    is_gated_activation,
     unfuse_experts,
 )
 from hi2.stats import ColumnStats  # noqa: E402
@@ -45,6 +46,42 @@ class FusedExperts(nn.Module):
             y = nn.functional.linear(self.act_fn(g) * u, self.down_proj[e])
             out.index_add_(0, tok, y * wts[tok, pos, None])
         return out
+
+
+class SoftcappedSwiGLU(nn.Module):
+    """The experts' activation of Inkling-2: the sigmoid sees the raw gate, the soft caps
+    bound the linear gate factor and ``up``; float32 inside, cast back."""
+
+    def forward(self, gate, up):
+        dtype = gate.dtype
+        gate, up = gate.float(), up.float()
+        return (
+            torch.tanh(gate / 4.0)
+            * 4.0
+            * torch.sigmoid(gate)
+            * torch.tanh(up / 25.0)
+            * 25.0
+        ).to(dtype)
+
+
+class GatedFusedExperts(FusedExperts):
+    """The experts of Inkling-2 as transformers builds them: a two-argument activation
+    and the top-k outputs added in float32."""
+
+    def __init__(self):
+        super().__init__()
+        self.act_fn = SoftcappedSwiGLU()
+
+    def forward(self, x, idx, wts):
+        out = torch.zeros_like(x, dtype=torch.float32)
+        for e in range(E):
+            tok, pos = torch.where(idx == e)
+            gate, up = nn.functional.linear(x[tok], self.gate_up_proj[e]).chunk(
+                2, dim=-1
+            )
+            y = nn.functional.linear(self.act_fn(gate, up), self.down_proj[e])
+            out.index_add_(0, tok, (y * wts[tok, pos, None]).to(out.dtype))
+        return out.to(x.dtype)
 
 
 class Mlp(nn.Module):
@@ -152,6 +189,124 @@ def test_unfused_view_matches_fused_forward():
     assert torch.allclose(un(x, idx, w), ref, atol=1e-6)
     assert torch.equal(un[2].up_proj.weight, fused.gate_up_proj[2, INTER:])
     assert un[2].gate_proj.weight.data_ptr() == fused.gate_up_proj[2].data_ptr()
+
+
+def _routed_inputs(dtype, tokens=24, seed=5):
+    g = torch.Generator().manual_seed(seed)
+    x = torch.randn(tokens, H, generator=g).to(dtype)
+    idx = torch.randint(0, E, (tokens, TOPK), generator=g)
+    w = torch.rand(
+        tokens, TOPK, generator=g
+    )  # float32 routing weights, as the routers give
+    return x, idx, w
+
+
+def _first_unfused_forward(experts, hidden_states, top_k_index, top_k_weights):
+    """``UnfusedExperts.forward`` as it was before the two-argument activation, verbatim."""
+    out = torch.zeros_like(hidden_states)
+    k = top_k_index.shape[-1]
+    flat = top_k_index.reshape(-1)
+    order = torch.argsort(flat, stable=True)
+    counts = torch.bincount(flat, minlength=len(experts)).tolist()
+    start = 0
+    for e, mlp in enumerate(experts):
+        sel = order[start : start + counts[e]]
+        start += counts[e]
+        if sel.numel() == 0:
+            continue
+        tok, pos = sel // k, sel % k
+        x = hidden_states[tok]
+        y = mlp.down_proj(experts.act_fn(mlp.gate_proj(x)) * mlp.up_proj(x))
+        y = y * top_k_weights[tok, pos, None]
+        out.index_add_(0, tok, y.to(out.dtype))
+    return out
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+def test_one_argument_activation_keeps_the_forward_bit_for_bit(dtype):
+    torch.manual_seed(0)
+    un = UnfusedExperts(FusedExperts().to(dtype))
+    assert not un.gated
+    x, idx, w = _routed_inputs(dtype)
+    got = un(x, idx, w)
+    assert got.dtype == dtype and got.abs().sum() > 0
+    assert torch.equal(got, _first_unfused_forward(un, x, idx, w))
+
+
+@pytest.mark.parametrize(
+    ("dtype", "tol"), [(torch.float32, 1e-5), (torch.bfloat16, 3e-2)]
+)
+def test_two_argument_activation_matches_the_fused_forward(dtype, tol):
+    torch.manual_seed(0)
+    fused = GatedFusedExperts().to(dtype)
+    un = UnfusedExperts(fused)
+    assert un.gated
+    x, idx, w = _routed_inputs(dtype)
+    got, want = un(x, idx, w), fused(x, idx, w)
+    assert got.dtype == dtype and got.abs().sum() > 0
+    assert torch.allclose(got.float(), want.float(), atol=tol, rtol=tol)
+    # gate and up are not interchangeable in this activation
+    swapped = GatedFusedExperts().to(dtype)
+    swapped.load_state_dict(fused.state_dict())
+    swapped.gate_up_proj.data = torch.cat(
+        [fused.gate_up_proj[:, INTER:], fused.gate_up_proj[:, :INTER]], dim=1
+    )
+    assert not torch.allclose(
+        UnfusedExperts(swapped)(x, idx, w).float(), want.float(), atol=tol
+    )
+
+
+class _FirstOfTwo(nn.Module):
+    def forward(self, gate, up):
+        return gate
+
+
+def test_gated_forward_adds_the_top_k_outputs_in_float32():
+    """One token, two experts that both return ones, weights 1 and 2^-8 + 2^-20: in float32
+    the sum rounds up to 1 + 2^-7 in bfloat16; added in bfloat16 it is the tie 1 + 2^-8 and
+    rounds to 1 (the one-argument forward keeps that hidden-dtype sum)."""
+    h = 8
+    eye = torch.eye(h)
+
+    def fused(act):
+        mod = nn.Module()
+        mod.gate_up_proj = nn.Parameter(torch.stack([torch.cat([eye, eye])] * 2))
+        mod.down_proj = nn.Parameter(torch.stack([eye] * 2))
+        mod.act_fn = act
+        return mod.to(torch.bfloat16)
+
+    x = torch.ones(1, h, dtype=torch.bfloat16)
+    idx = torch.tensor([[0, 1]])
+    w = torch.tensor([[1.0, 2.0**-8 + 2.0**-20]])
+    gated = UnfusedExperts(fused(_FirstOfTwo()))(x, idx, w)
+    plain = UnfusedExperts(fused(nn.Identity()))(x, idx, w)
+    assert gated.dtype == plain.dtype == torch.bfloat16
+    assert torch.equal(gated, torch.full_like(x, 1 + 2.0**-7))
+    assert torch.equal(plain, torch.ones_like(x))
+
+
+def test_gated_activation_detection():
+    class Two(nn.Module):
+        def forward(self, gate, up):
+            return gate * up
+
+    class KeywordOnly(nn.Module):
+        def forward(self, x, *, scale):
+            return x * scale
+
+    assert is_gated_activation(Two())
+    assert is_gated_activation(lambda gate, up: gate * up)
+    for act in (
+        nn.SiLU(),
+        nn.GELU(),
+        nn.Identity(),
+        nn.functional.silu,
+        torch.tanh,  # a builtin without a signature
+        lambda x: x,
+        lambda x, scale=2.0: x * scale,
+        KeywordOnly(),
+    ):
+        assert not is_gated_activation(act)
 
 
 def test_expert_statistics_come_from_routed_tokens_only(tmp_path):

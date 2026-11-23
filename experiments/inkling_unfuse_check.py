@@ -9,9 +9,9 @@ Inkling soft-cap a two-argument gated activation, ``act_fn(gate, up) =
 4 tanh(gate / 4) * sigmoid(gate) * 25 tanh(up / 25)``, not ``act_fn(gate) * up``.
 
 Exit code 0: the unfused forward runs and its logits equal the fused ones to ``--tol``
-(float32 summation order; the fused forward is ``Inkling2LoopExperts``). 1: it raises (the
-result today, with ``hi2/moe.py`` calling ``act_fn(gate_proj(x)) * up_proj(x)``) or differs.
-The JSON records which.
+(float32 summation order; the fused forward is ``Inkling2LoopExperts``). 1: it raises (what
+``hi2/moe.py`` did while it called ``act_fn(gate_proj(x)) * up_proj(x)``) or differs. The
+JSON records which.
 
     python experiments/inkling_unfuse_check.py --tools DIR --transformers DIR
 """

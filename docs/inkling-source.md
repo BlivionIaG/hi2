@@ -105,7 +105,7 @@ fork the reference comparisons are skipped.
 | `inkling_inventory.py` | Tensor classes, elements, bytes and stock bits per weight from the safetensors headers (main shard, MTP, vision), checked against the design review. |
 | `inkling_reference_check.py` | The reader against the fork's reference decoders on all 128 experts of every layer (the tests do four experts of two layers): bit patterns and largest absolute difference. |
 | `inkling_teacher_check.py` | The whole stock model assembled from the reader on the CPU and run on a prompt: the top-8 against the fork's oracle, the activation extremes per decoder layer, float16 / bfloat16 against float32 (KL, top-1). |
-| `inkling_unfuse_check.py` | `hi2.moe.unfuse_experts` on a tiny real `Inkling2LoopForConditionalGeneration`: does the unfused forward run, and equal the fused one? Exit 1 today (the activation takes two arguments). |
+| `inkling_unfuse_check.py` | `hi2.moe.unfuse_experts` on a tiny real `Inkling2LoopForConditionalGeneration`: does the unfused forward run, and equal the fused one? Exit 1 while `hi2.moe` called `act_fn(gate) * up` (the activation takes two arguments), 0 since `UnfusedExperts` runs it (largest logit difference 8.3e-7). |
 | `inkling_hf_names_check.py` | The reader's names and shapes against the real `Inkling2LoopForConditionalGeneration` (built on the meta device from the fork's transformers): every text-model tensor, both ways. |
 | `inkling_hf_load_check.py` | `from_pretrained` of the stock directory with the fork's transformers (the class registered for the causal-LM auto class) against the reader: dense tensors and `message_input.query` exactly, the experts of every layer elementwise, and transformers' own dequantization op with its sources cast or as stored. |
 | `inkling_scale_stats.py` | Histograms of the UE8M0 and E4M3 block scales and of the NVFP4 `amax`; the count of weights that overflow, underflow or fall in the subnormal range of float16 and bfloat16; the relative energy each cast changes. |
@@ -314,18 +314,19 @@ is 1.9 GiB.
 
 ## Known gaps before a quantization run
 
-* **`hi2.moe.UnfusedExperts` does not run Inkling.** It keeps the fused module's `act_fn` and
-  calls `act_fn(gate_proj(x)) * up_proj(x)`. The experts of Inkling have a two-argument gated
-  activation, `Inkling2LoopSoftcappedSwiGLU.forward(gate, up) = 4 tanh(gate / 4) * sigmoid(gate)
-  * 25 tanh(up / 25)` (`mlp_gate_softcap` 4.0, `mlp_up_softcap` 25.0 in `config.json`), so
-  `unfuse_experts` on a real `Inkling2LoopForConditionalGeneration` raises `TypeError: ...
-  missing 1 required positional argument: 'up'` on the first forward
-  (`experiments/inkling_unfuse_check.py`, the fork's tiny model: exit 1 today). A plain
-  `silu(gate) * up` would run and not be the stock model. A scratch two-argument branch
-  (`act_fn(gate, up)`) makes the unfused logits equal the fused ones (max abs difference
-  9.5e-7 at max |logit| 1.4, float32): that is the gate of the change `hi2/moe.py` needs, not
-  made here because no default path is touched. (`hi2.moe` also sums the top-k outputs in the
-  hidden dtype where the HF class sums in float32; the router applies `route_scale` 8.0 itself.)
+* **`hi2.moe.UnfusedExperts` and Inkling (fixed on this branch).** It used to keep the fused
+  module's `act_fn` and call `act_fn(gate_proj(x)) * up_proj(x)`, but the experts of Inkling have a
+  two-argument gated activation, `Inkling2LoopSoftcappedSwiGLU.forward(gate, up) = 4 tanh(gate / 4)
+  * sigmoid(gate) * 25 tanh(up / 25)` (`mlp_gate_softcap` 4.0, `mlp_up_softcap` 25.0 in
+  `config.json`), so `unfuse_experts` on a real `Inkling2LoopForConditionalGeneration` raised
+  `TypeError: ... missing 1 required positional argument: 'up'` on the first forward (the stage-1
+  record of `experiments/inkling_unfuse_check.py`, exit 1). `UnfusedExperts` now detects a
+  two-argument `act_fn` from its signature (`hi2.moe.is_gated_activation`) and then calls
+  `act_fn(gate, up)` and adds the top-k outputs in float32, as the transformers class does; any
+  other activation keeps the one-argument forward and the hidden-dtype sum bit for bit
+  (`tests/test_moe.py`: the first forward copied verbatim against the current one in float32,
+  bfloat16 and float16). The gate script now exits 0, largest logit difference 8.3e-7 against
+  the fused model; the router applies `route_scale` 8.0 itself.
 * `hi2.moe.check_unfused` compares the unfused views with per-expert checkpoint tensors;
   this checkpoint has fused serving tensors, so the comparison is `tests/test_inkling_source.py`'s
   (and the reader's own exactness tests), not that function.

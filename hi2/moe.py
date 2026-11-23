@@ -14,6 +14,7 @@ and sees only the tokens routed to it; gate and up receive the very same tensor,
 they share one statistics accumulator and one Hessian.
 """
 
+import inspect
 import statistics
 
 import regex as re
@@ -50,6 +51,22 @@ def sibling_leader(name: str) -> str | None:
     return f"{p[0]}.{p[1]}.{SHARED_INPUT[p[2]]}"
 
 
+def is_gated_activation(act) -> bool:
+    """True for a two-argument ``act(gate, up)`` (Inkling-2's soft-capped SwiGLU), False for
+    the one-argument ``act(gate)`` of every other model (``nn.SiLU``, ``F.silu``, a lambda,
+    a builtin without a signature)."""
+    fn = act.forward if isinstance(act, nn.Module) else act
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    positional = (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
+    return sum(p.kind in positional and p.default is p.empty for p in params) == 2
+
+
 def _view_linear(w: torch.Tensor) -> nn.Linear:
     lin = nn.Linear(w.shape[1], w.shape[0], bias=False, device="meta")
     lin.weight = nn.Parameter(w, requires_grad=False)
@@ -66,7 +83,14 @@ class ExpertMLP(nn.Module):
 
 class UnfusedExperts(nn.ModuleList):
     """Per-expert Linear view of fused 3-D experts, same forward as transformers'
-    ``*Experts(hidden_states, top_k_index, top_k_weights)``."""
+    ``*Experts(hidden_states, top_k_index, top_k_weights)``.
+
+    The forward of every model supported so far is ``down(act_fn(gate) * up)`` with the
+    top-k outputs added in the hidden dtype. Inkling-2's ``act_fn`` takes both projections,
+    ``act_fn(gate, up)`` (a soft-capped SwiGLU that computes in float32), and its experts add
+    the top-k outputs in float32, as the original does; a two-argument ``act_fn``
+    (:func:`is_gated_activation`) selects that forward and any other keeps the first one
+    bit for bit."""
 
     def __init__(self, fused: nn.Module):
         gu = fused.gate_up_proj.data
@@ -79,9 +103,11 @@ class UnfusedExperts(nn.ModuleList):
             )
         super().__init__(ExpertMLP(gu[x, :i], gu[x, i:], down[x]) for x in range(e))
         self.act_fn = fused.act_fn
+        self.gated = is_gated_activation(self.act_fn)
 
     def forward(self, hidden_states, top_k_index, top_k_weights):
-        out = torch.zeros_like(hidden_states)
+        acc = torch.float32 if self.gated else hidden_states.dtype
+        out = torch.zeros_like(hidden_states, dtype=acc)
         k = top_k_index.shape[-1]
         flat = top_k_index.reshape(-1)
         order = torch.argsort(flat, stable=True)  # token order kept inside an expert
@@ -94,10 +120,14 @@ class UnfusedExperts(nn.ModuleList):
                 continue
             tok, pos = sel // k, sel % k
             x = hidden_states[tok]  # one tensor for gate and up: shared statistics
-            y = mlp.down_proj(self.act_fn(mlp.gate_proj(x)) * mlp.up_proj(x))
+            if self.gated:
+                h = self.act_fn(mlp.gate_proj(x), mlp.up_proj(x))
+            else:
+                h = self.act_fn(mlp.gate_proj(x)) * mlp.up_proj(x)
+            y = mlp.down_proj(h)
             y = y * top_k_weights[tok, pos, None]
             out.index_add_(0, tok, y.to(out.dtype))
-        return out
+        return out.to(hidden_states.dtype)
 
 
 def is_fused_experts(mod: nn.Module) -> bool:

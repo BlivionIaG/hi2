@@ -23,6 +23,13 @@ case, not general MoE QAD or runtime compatibility. Check the
 | Reuse | Compatible persistent statistics/tables/probe entries can serve several allocation targets. Current output/workdir reuse also requires the matching run manifest; use separate output/work directories for a changed allocation rather than relying only on `phase1.json`. | Phase 1 and the probe were 25 of the 100 minutes in the first historical OLMoE run. |
 | Writer and export | The checkpoint is streamed as before; `load_dequantized`, `export-dense`, `eval` and `verify` work on the per-expert names (transformers fuses them again on load) in either layout. `eval --dtype` selects the dtype of both models. `--moe-layout stacked` writes one stack per layer and gate_up/down group instead (see "Stacked expert layout"). | |
 
+`UnfusedExperts` keeps the forward `down(act_fn(gate) * up)` and the hidden-dtype sum of the
+top-k outputs for every model above. An `act_fn` that takes both projections, `act_fn(gate, up)`
+(the soft-capped SwiGLU of Inkling-2), is detected by its signature
+(`hi2.moe.is_gated_activation`) and gets the forward of its transformers class instead: the
+activation on both projections and the top-k outputs added in float32
+([inkling-source.md](inkling-source.md)).
+
 ## Historical PTQ recipe
 
 This reproduces the sampling and PTQ intent of the 2026-10-26 OLMoE experiment,
