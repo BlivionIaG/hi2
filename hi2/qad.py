@@ -113,9 +113,10 @@ class QadConfig:
     # skipped with a note if it still does not fit.
     final_kl: int = 0
     final_batch: int = 2  # sequences per step
-    # ladder bytes, in 8-bit levels per step: 0.02 is the Qwen3.5-4B value (0.05 was best on
-    # Qwen3.5-0.8B but raised the 4B held-out KL above its start)
-    final_lr_p: float = 0.02
+    # ladder bytes, in 8-bit levels per step: 0.025 is the Qwen3.5-4B value (sweep 0.02 / 0.025 /
+    # 0.03 / 0.035 / 0.04 in docs/surfaces.md; 0.04 and 0.05 raise the held-out KL; 0.05 was best
+    # on Qwen3.5-0.8B). Only the 4B has been swept: the 27B is untested.
+    final_lr_p: float = 0.025
     final_lr_norm: float = 5e-5
     final_norms: bool = True
     final_bytes: bool = True

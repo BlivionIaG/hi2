@@ -52,7 +52,7 @@ earlier run's per-layer nMSE within 2 % on 21 of 42 layers and within 5 % on all
 | QAD recipe | preset: `fast` / `default` / `thorough` | the preset is the operator's |
 | QAD data | 264 random windows from the whole calibration text, seed 0 | yes, given the file |
 | QAD math / buffers | float32 math (the only one that works here); buffers auto (float32 when it fits) | yes |
-| final logit-KL | 200 steps, bytes + norms, lr 0.02 / 5e-5, keep-best on held-out KL | yes |
+| final logit-KL | 200 steps, bytes + norms, lr 0.025 / 5e-5, keep-best on held-out KL | yes |
 | devices | every visible GPU, split by rows (PTQ) and sequences (QAD) | yes |
 | calibration text | operator-supplied (`.txt` / `.jsonl`, several files) | **no** |
 | QAD domain balance | proportional to the file; `sampling=balanced` per file | **no** |
@@ -158,7 +158,7 @@ KL(teacher || student) on the whole network; keep-best on held-out KL.
 | surface | default | evidence |
 | --- | --- | --- |
 | steps | 200 | 0.8B: 100 steps 0.0573/0.1165, 200 0.0556/0.1142; 4B 3.5 bpw: -5.6 % docs, -7.0 % mix |
-| `final_lr_p` | 0.02 | 0.8B variants 1 and 2 gave 0.0522/0.1128 and 0.0527/0.1140 (vs 0.0556/0.1142) |
+| `final_lr_p` | 0.025 | 4B 3.0 bpw, paired KL vs 0.02 over 70 held-out windows (seed 0, exploratory): 0.025 -0.00372 (-1.9 %), 0.03 -0.00737 (-3.7 %, 3 seeds, all negative), 0.035 -0.00548, 0.04 +0.00792 (worse on chat). 0.025 is the conservative pick (further from the 0.04 cliff) and gives about half of the 0.03 gain; 0.03 was better than 0.025 in both text types. Not tested at 27B. 0.8B variants 1 and 2 gave 0.0522/0.1128 and 0.0527/0.1140 (vs 0.0556/0.1142) |
 | `final_lr_norm` | 5e-5 | 4B value |
 | `final_norms` / `final_bytes` | on / on | the only trainable groups |
 | `final_tokens` | 0 (all positions) | reduces the loss chunk, not the model placement |
