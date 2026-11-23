@@ -575,7 +575,11 @@ def _qad_encode(
     tensors, dense = out.tensors, out.dense
     head = _saved_head_inputs(rc, tag, fp)
     if qc.final_kl > 0:
-        if _final_kl_fits(rc, ex, model, tensors, head is not None, log):
+        from .looped import is_looped
+
+        if head is None and is_looped(model):
+            head = _teacher_head_inputs(rc, ex, model, ids, log)
+        if _final_kl_fits(rc, ex, model, tensors, head is not None, log, ids.shape[1]):
             log.event("final_kl", "running", epochs=qc.final_kl)
             tensors, dense = _final_kl(
                 rc, ex, model, ids, tensors, dense, fp, log, tag, head
@@ -606,14 +610,87 @@ def _saved_head_inputs(rc, tag, fp):
     return hs
 
 
-def _final_kl_fits(rc, ex, model, tensors, have_head_inputs, log) -> bool:
+def _teacher_head_inputs(rc, ex, model, ids, log) -> torch.Tensor:
+    """The unquantized looped model's head inputs on ``ids`` (``[n, T, H]``), from the
+    layer program (:func:`hi2.looped.teacher_head_inputs`: one layer on the devices at a
+    time, so the fp16 teacher never has to fit them), kept in the workdir for every
+    allocation that trains on the same windows."""
+    import hashlib
+
+    from .looped import teacher_head_inputs
+    from .qad import fingerprint
+
+    key = fingerprint(
+        {
+            "src": str(rc.src),
+            "dtype": rc.compute_dtype,
+            "ids": hashlib.sha1(ids.contiguous().numpy().tobytes()).hexdigest(),
+        }
+    )
+    path = rc.workdir / "teacher_head_inputs.pt"
+    if path.exists():
+        try:
+            rec = torch.load(path, weights_only=False, mmap=True)
+        except Exception:
+            rec = {}
+        if rec.get("fingerprint") == key:
+            log(f"final KL: reusing the teacher's head inputs ({path.name})")
+            return rec["head_inputs"]
+    log("final KL: the teacher's head inputs (layer program, unquantized model)")
+    out = teacher_head_inputs(model, ids, ex, log)
+    atomic_torch_save({"fingerprint": key, "head_inputs": out}, path)
+    return out
+
+
+FINAL_KL_FIT = 0.92  # of a device's memory the final-KL student may take
+
+
+def _looped_fits(rc, ex, model, tensors, seq_len, log) -> bool:
+    """:func:`_final_kl_fits` for a looped model, from the real component sizes
+    (:func:`hi2.finalkl.student_footprint`): the packed student split layer-wise over the
+    devices; the teacher is never placed (its head inputs come from the layer program)."""
+    from .finalkl import student_footprint
+
+    devs = ex.devices
+    foot = student_footprint(
+        model,
+        tensors,
+        make_resolver(source_map(rc.src)),
+        rc.qad,
+        seq_len,
+        len(devs),
+    )
+    need = max(foot["devices"]) / 2**30
+    have = min(torch.cuda.get_device_properties(d).total_memory for d in devs) / 2**30
+    gib = [f"{s / 2**30:.1f}" for s in foot["static"]]
+    act = [f"{a / 2**30:.1f}" for a in foot["activations"]]
+    log(
+        f"final KL: the student needs about {need:.1f} GiB on the busiest of "
+        f"{len(devs)} device(s) of {have:.1f} GiB (static {gib}, saved layer inputs "
+        f"{act}, transient {foot['transient'] / 2**30:.1f} GiB per device)"
+    )
+    if need <= FINAL_KL_FIT * have:
+        return True
+    log(
+        f"final KL: skipped, over {FINAL_KL_FIT:.0%} of the device memory (more devices, "
+        "a shorter --seq-len or --qad-final-kl 0 silences this)"
+    )
+    return False
+
+
+def _final_kl_fits(rc, ex, model, tensors, have_head_inputs, log, seq_len=None) -> bool:
     """The final-KL phase splits the student (codes at 1 byte per weight plus the dense
     parameters) and the teacher (the model's own weights) layer-wise over the executor's
     devices; skip it, with a note, when even that does not fit. With the saved head
-    inputs the teacher is not placed, so only the student has to fit."""
+    inputs the teacher is not placed, so only the student has to fit. A looped model has
+    its own accounting (:func:`_looped_fits`)."""
+    from .looped import is_looped
+
     devs = ex.devices
     if devs[0].type != "cuda":
         return True
+    if is_looped(model):
+        return _looped_fits(rc, ex, model, tensors, seq_len, log)
     resolve = make_resolver(source_map(rc.src))
     quant, rest, teacher = 0, 0, 0
     for name, p in model.named_parameters():
@@ -686,6 +763,33 @@ def _text_config(src: Path) -> dict:
     return cfg.get("text_config", cfg)
 
 
+def _check_looped(rc: RunConfig, log) -> None:
+    """A looped model (Inkling-2) goes through :mod:`hi2.looped`: statistics from the
+    layer program, PTQ per layer, then the final logit-KL phase. What needs one layer's
+    own input is refused before any work is done."""
+    from dataclasses import replace
+
+    if rc.cfg.sequential:
+        raise SystemExit(
+            "--sequential is not supported for a looped model: it feeds every layer "
+            "the quantized prefix one call at a time, and the loop layers run three "
+            "times (the default rounding pools the Hessians of every call)"
+        )
+    if rc.qad is not None:
+        if rc.qad.layers not in (None, "", "all", "none"):
+            raise SystemExit(
+                f"--qad-layers {rc.qad.layers!r}: layer-wise QAD training is not "
+                "supported for a looped model; omit it (PTQ per layer, then the final "
+                "logit-KL phase)"
+            )
+        if rc.qad.layers != "none":
+            log(
+                "looped model: the layers are not trained layer-wise (PTQ per layer, "
+                "then the final logit-KL phase)"
+            )
+        rc.qad = replace(rc.qad, layers="none")
+
+
 def check_inputs(rc: RunConfig, log=print) -> dict:
     """Fail early (before hours of work) on a missing model, too little calibration
     text, or an impossible QAD setting; returns the facts the plan prints."""
@@ -693,6 +797,10 @@ def check_inputs(rc: RunConfig, log=print) -> dict:
         raise SystemExit(
             f"{rc.src} is not a Hugging Face model directory (no config.json)"
         )
+    from .looped import is_looped_source
+
+    if is_looped_source(rc.src):
+        _check_looped(rc, log)
     calibrated = rc.calib is not None or rc.calib_ids is not None
     if rc.qad is not None and not calibrated:
         log(

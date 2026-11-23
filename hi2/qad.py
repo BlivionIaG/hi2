@@ -222,7 +222,10 @@ def estimate_seconds(
 
 
 def parse_layers(spec: str | None, n_layers: int) -> set[int]:
-    """``"0-3,7"`` -> {0, 1, 2, 3, 7}; None -> every layer."""
+    """``"0-3,7"`` -> {0, 1, 2, 3, 7}; None -> every layer; ``"none"`` -> no layer (each
+    is encoded by PTQ and only the final logit-KL phase trains)."""
+    if spec is not None and spec.strip() == "none":
+        return set()
     if spec is None or spec.strip() in ("", "all"):
         return set(range(n_layers))
     out: set[int] = set()

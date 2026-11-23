@@ -170,6 +170,15 @@ def resolve_config(rc, log=lambda message: None, *, check_ownership=True):
     if rc.sens_dtype not in ("auto", "float32", "float16", "bfloat16"):
         raise ValueError("unsupported sensitivity dtype")
     regex.compile(rc.exclude)
+    if rc.include is None:  # a looped model (Inkling-2) quantizes its routed experts
+        from .looped import default_include
+
+        rc.include = default_include(rc.src)
+        if rc.include is not None:
+            log(
+                f"looped model: --include {rc.include} (the routed experts; attention, "
+                "controllers, sinks, convolutions and the vision tower stay dense)"
+            )
     if rc.include:
         regex.compile(rc.include)
     ratios = list(rc.max_error_ratios or [])

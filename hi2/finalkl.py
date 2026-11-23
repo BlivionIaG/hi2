@@ -9,8 +9,8 @@ with a 4B model it trains only
 
 * the per-block ladder bytes ``(lo_u8, step_u8)`` of every quantized Linear (continuous
   values, rounded with a straight-through estimator, as in the layer-wise phase), with
-  the **codes frozen** at the layer-wise result (1 byte per weight on the GPU, no fp32
-  latents), and
+  the **codes frozen** at the layer-wise result (packed as stored, ``nbits`` per weight
+  on the GPU, unpacked per forward; no fp32 latents), and
 * the RMSNorm weights (fp32, written to the checkpoint in fp16).
 
 Every stored value is still the exact decode of spec 2.2 (``fp16(lo + code * step)``),
@@ -30,7 +30,14 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
-from .format import HI2Tensor, assemble, decode_params, fwht_groups, ladder_dequantize
+from .format import (
+    HI2Tensor,
+    assemble,
+    decode_params,
+    fwht_groups,
+    ladder_dequantize,
+    unpack_codes,
+)
 from .pinned import PinnedWindow, module_to_device, module_to_host
 from .qad import _ste, is_norm_param
 
@@ -47,7 +54,6 @@ class LadderLinear(nn.Module):
 
     def __init__(self, t: HI2Tensor, bias: torch.Tensor | None = None):
         super().__init__()
-        from .format import unpack_codes
 
         r, k = t.shape
         self.shape = (r, k)
@@ -70,7 +76,9 @@ class LadderLinear(nn.Module):
                     continue
                 wr = k * nbits // 32
                 widx = t.code_off[rows].to(torch.int64).unsqueeze(1) + torch.arange(wr)
-                codes.append(unpack_codes(t.codes[widx], nbits).to(torch.uint8))
+                # the packed words as stored (int32): ``unpack_codes`` per forward, so a
+                # 4-bit row costs half a byte on the device, a 2-bit row a quarter
+                codes.append(t.codes[widx].contiguous())
                 nblk = k // bs
                 pidx = (
                     t.param_off[rows].to(torch.int64).unsqueeze(1) + torch.arange(nblk)
@@ -90,6 +98,10 @@ class LadderLinear(nn.Module):
         self.register_buffer("inv_perm", torch.argsort(torch.cat(rows_all)))
         self.bias = None if bias is None else nn.Parameter(bias, requires_grad=False)
 
+    def codes_u8(self, i):
+        """The codes of group ``i`` unpacked, ``[rows, K]`` uint8."""
+        return unpack_codes(getattr(self, f"codes{i}"), self.cfgs[i][0]).to(torch.uint8)
+
     def _bytes(self, i):
         return (
             torch.round(self.lo_u[i].detach()).clamp(0, 255),
@@ -108,7 +120,7 @@ class LadderLinear(nn.Module):
         parts = []
         for i, (_nbits, bs) in enumerate(self.cfgs):
             c = getattr(self, f"consts{i}")
-            q = getattr(self, f"codes{i}")
+            q = self.codes_u8(i)
             lo_b, st_b = self._bytes(i)
             lo_q, st_q = decode_params(lo_b, st_b, c[:, 0:1], c[:, 1:2], c[:, 2:3])
             qb = q.reshape(q.shape[0], k // bs, bs)
@@ -144,7 +156,7 @@ class LadderLinear(nn.Module):
             pieces.append(
                 (
                     to_host(getattr(self, f"rows{i}")),
-                    to_host(getattr(self, f"codes{i}")),
+                    to_host(self.codes_u8(i)),
                     to_host(torch.stack([lo_b, st_b], dim=-1).to(torch.uint8)),
                     to_host(getattr(self, f"consts{i}")),
                 )
@@ -174,6 +186,26 @@ def _head_input(model: nn.Module, ids: torch.Tensor) -> torch.Tensor:
     finally:
         h.remove()
     return got[0][0]
+
+
+class _Logits(nn.Module):
+    """The head's input to the logits the model's loss sees: the output embedding, then
+    the model's own logit soft-cap (Inkling-2: ``logit_softcap``, ``tanh(x / c) * c`` on
+    the float32 logits) when it has one. The children are the model's, not copies."""
+
+    def __init__(self, head: nn.Module, cap: nn.Module | None):
+        super().__init__()
+        self.head, self.cap = head, cap
+
+    def forward(self, h):
+        out = self.head(h)
+        return out if self.cap is None else self.cap(out.float())
+
+
+def _logits_fn(model: nn.Module) -> nn.Module:
+    head = model.get_output_embeddings()
+    cap = getattr(model, "logit_softcap", None)
+    return head if cap is None else _Logits(head, cap)
 
 
 def _kl_loss(lm: nn.Module, hs: torch.Tensor, ht: torch.Tensor, pos=None, grad=True):
@@ -244,6 +276,8 @@ def final_kl(
     states) skips the teacher placement; the layer-wise phase saves it
     (``<workdir>/qad/head_inputs.pt``) because a 27B teacher does not fit the devices."""
     from .layerwise import find_layers
+    from .looped import is_looped
+    from .moe import UnfusedExperts
     from .sensitivity import shard_layers
 
     devs = [devs] if isinstance(devs, torch.device) else list(devs)
@@ -257,7 +291,7 @@ def final_kl(
 
     t0 = time.time()
     torch.manual_seed(qc.seed)
-    lm = model.get_output_embeddings()
+    lm = _logits_fn(model)
     stager = PinnedWindow()
     # 1. teacher: the LM head's input on every window (unquantized model, on the GPU),
     # or the head inputs the layer-wise phase saved (no teacher placement).
@@ -286,6 +320,13 @@ def final_kl(
                 ll = LadderLinear(tensors[ckpt], b)
                 model.set_submodule(name, ll)
                 mods[ckpt] = ll
+    if is_looped(model):
+        # 128 experts per layer: the weight of every expert Linear is rebuilt from its
+        # ladder in the backward instead of being kept (about 6 GiB per layer of the
+        # real model), see UnfusedExperts
+        for m in model.modules():
+            if isinstance(m, UnfusedExperts):
+                m.checkpoint_experts = True
     norms = {}
     for name, p in model.named_parameters():
         if is_norm_param(name, p):
@@ -428,3 +469,122 @@ def final_kl(
         f"{info['seconds'] / 60:.1f} min"
     )
     return out_t, out_d, info
+
+
+ADAM_STATE_BYTES = (
+    12  # gradient + exp_avg + exp_avg_sq (fp32 each), beside the parameter
+)
+# What one decoder layer's backward needs beyond the steady state (rebuilt expert
+# weights one expert at a time, the attention and the routed activations of the
+# recomputed layer); an estimate, not a measurement: the GPU smoke measures it.
+TRANSIENT_GIB = 3.0
+
+
+def tensor_student_bytes(t: HI2Tensor, train_bytes: bool = True) -> int:
+    """Bytes the :class:`LadderLinear` of ``t`` holds on its device: the packed code
+    words, the ladder values as fp32 parameters (with their gradient and the two Adam
+    moments when trained), and the per-row buffers."""
+    r, k = t.shape
+    ladder = t.blk_params.numel()  # (lo_u8, step_u8) per block: one fp32 value each
+    per_row = 6 + 8 + 8 + 2  # consts fp16 x3, rows and inv_perm int64, nbits and block
+    scale = 4 * k if t.col_scale is not None else 0
+    return (
+        4 * t.codes.numel()
+        + ladder * (4 + (ADAM_STATE_BYTES if train_bytes else 0))
+        + per_row * r
+        + k // 16  # had flags
+        + scale
+    )
+
+
+def student_footprint(
+    model: nn.Module, tensors, resolve, qc, seq_len: int, n_devices: int
+):
+    """Where the bytes of the final-KL student go over ``n_devices`` (the split of
+    :func:`hi2.sensitivity.shard_layers`), before anything is placed.
+
+    The student is ``model`` with every Linear in ``tensors`` a :class:`LadderLinear`:
+    ``static`` is the bytes each device holds all along (parameters, buffers, gradients
+    and optimizer state), ``activations`` the inputs the decoder layers keep for one
+    sequence's backward (they run under activation checkpointing), ``transient`` the
+    extra one layer's backward needs and ``logits`` the loss chunk on the last device.
+    ``static`` is exact (a test measures it); the rest is derived."""
+    from .layerwise import find_layers
+    from .looped import is_looped, saved_input_bytes
+
+    path, layers = find_layers(model)
+    prefix = path + "."
+    base = path.rsplit(".", 1)[0] if "." in path else ""
+    parent = model.get_submodule(base) if base else model
+    head = model.get_output_embeddings()
+    tails = [
+        m
+        for m in (
+            head,
+            getattr(parent, "norm", None),
+            getattr(parent, "final_input", None),
+        )
+        if m is not None
+    ]
+    tail_ids = {id(p) for m in tails for p in m.parameters()}
+    layer_ids = {id(p) for p in layers.parameters()}
+
+    def dense(name, p):
+        if qc.final_norms and is_norm_param(name, p):  # fp32 value, gradient, moments
+            return p.numel() * (4 + ADAM_STATE_BYTES)
+        return p.numel() * p.element_size()
+
+    per_layer = []
+    for li, layer in enumerate(layers):
+        total = 0
+        for name, p in layer.named_parameters():
+            full = f"{prefix}{li}.{name}"
+            if not (name.endswith(".weight") and resolve(full) in tensors):
+                total += dense(full, p)
+        for name, mod in layer.named_modules():
+            if isinstance(mod, nn.Linear):
+                ckpt = resolve(f"{prefix}{li}.{name}.weight")
+                if ckpt in tensors:
+                    total += tensor_student_bytes(tensors[ckpt], qc.final_bytes)
+        per_layer.append(total)
+    first = tail = 0
+    for name, p in model.named_parameters():
+        if id(p) in layer_ids:
+            continue
+        if id(p) in tail_ids:
+            tail += dense(name, p)
+        else:
+            first += dense(name, p)
+    n = n_devices
+    device_of = [
+        next(k for k in range(n) if i < len(layers) * (k + 1) // n)
+        for i in range(len(layers))
+    ]
+    static = [0] * n
+    static[0] += first
+    static[-1] += tail
+    for li, b in enumerate(per_layer):
+        static[device_of[li]] += b
+    db = head.weight.element_size()
+    hidden = head.weight.shape[1]
+    if is_looped(model):
+        calls = saved_input_bytes(parent, seq_len, db)
+    else:
+        calls = [(li, seq_len * hidden * db) for li in range(len(layers))]
+    act = [0] * n
+    for li, b in calls:
+        act[device_of[li]] += b
+    if is_looped(model):  # the final attention residual's float32 stack of block states
+        blocks = 1 + sum(1 for layer in layers if layer.is_block_boundary)
+        act[-1] += 3 * seq_len * blocks * hidden * 4
+    logits = 3 * LOSS_CHUNK * head.weight.shape[0] * 4
+    return {
+        "static": static,
+        "activations": act,
+        "transient": int(TRANSIENT_GIB * 2**30),
+        "logits": logits,
+        "devices": [
+            s + a + int(TRANSIENT_GIB * 2**30) + (logits if k == n - 1 else 0)
+            for k, (s, a) in enumerate(zip(static, act))
+        ],
+    }

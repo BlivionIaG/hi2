@@ -147,8 +147,12 @@ def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
     """Split the model layer-wise over ``devices``: embeddings and everything before the
     layers on the first, contiguous groups of decoder layers on each, the final norm and
     the output head on the last (tied embeddings are copied). A pre-hook on every layer
-    moves its inputs to its device. Returns the hook handles (remove them to undo the
-    input moves)."""
+    moves its inputs to its device. A looped model (Inkling-2) has two more modules that
+    read what the layers made: its final attention residual (``final_input``) goes with
+    the last layers, and the messages of a pass (``message_input``) stay with the
+    embeddings; both get the same pre-hook, since their inputs live on the devices of
+    the layers before them. Returns the hook handles (remove them to undo the input
+    moves)."""
     from .layerwise import find_layers, to_device
 
     path, layers = find_layers(model)
@@ -164,23 +168,26 @@ def shard_layers(model: nn.Module, devices: list[torch.device]) -> None:
         if id(m) not in in_layers:  # the layers go to their own devices below
             _move_own(m, first)
     parent = model.get_submodule(path.rsplit(".", 1)[0]) if "." in path else model
-    for tail in (head, getattr(parent, "norm", None)):
+    final_input = getattr(parent, "final_input", None)
+    message_input = getattr(parent, "message_input", None)
+    for tail in (head, getattr(parent, "norm", None), final_input):
         if tail is not None:
             module_to_device(tail, last)
+
+    def mover(dev):
+        return lambda _m, args, kwargs: (to_device(args, dev), to_device(kwargs, dev))
+
     n = len(devices)
     handles = []
     for k, dev in enumerate(devices):
         for layer in layers[len(layers) * k // n : len(layers) * (k + 1) // n]:
             module_to_device(layer, dev)
             handles.append(
-                layer.register_forward_pre_hook(
-                    lambda _m, args, kwargs, dev=dev: (
-                        to_device(args, dev),
-                        to_device(kwargs, dev),
-                    ),
-                    with_kwargs=True,
-                )
+                layer.register_forward_pre_hook(mover(dev), with_kwargs=True)
             )
+    for mod, dev in ((message_input, first), (final_input, last)):
+        if mod is not None:
+            handles.append(mod.register_forward_pre_hook(mover(dev), with_kwargs=True))
     return handles
 
 

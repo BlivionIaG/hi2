@@ -20,6 +20,7 @@ import statistics
 import regex as re
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 # ``<prefix>experts.<E>.<proj>`` (module path or checkpoint name, with or without .weight)
 EXPERT_RE = re.compile(
@@ -104,6 +105,17 @@ class UnfusedExperts(nn.ModuleList):
         super().__init__(ExpertMLP(gu[x, :i], gu[x, i:], down[x]) for x in range(e))
         self.act_fn = fused.act_fn
         self.gated = is_gated_activation(self.act_fn)
+        # The final logit-KL phase sets this on a model whose experts it trains: the
+        # weight of every expert Linear is then rebuilt from its ladder in the backward
+        # instead of being kept (128 experts of a layer hold gigabytes of it).
+        self.checkpoint_experts = False
+
+    def _expert(self, mlp, x):
+        if self.gated:
+            h = self.act_fn(mlp.gate_proj(x), mlp.up_proj(x))
+        else:
+            h = self.act_fn(mlp.gate_proj(x)) * mlp.up_proj(x)
+        return mlp.down_proj(h)
 
     def forward(self, hidden_states, top_k_index, top_k_weights):
         acc = torch.float32 if self.gated else hidden_states.dtype
@@ -120,11 +132,10 @@ class UnfusedExperts(nn.ModuleList):
                 continue
             tok, pos = sel // k, sel % k
             x = hidden_states[tok]  # one tensor for gate and up: shared statistics
-            if self.gated:
-                h = self.act_fn(mlp.gate_proj(x), mlp.up_proj(x))
+            if self.checkpoint_experts and torch.is_grad_enabled():
+                y = checkpoint(self._expert, mlp, x, use_reentrant=False)
             else:
-                h = self.act_fn(mlp.gate_proj(x)) * mlp.up_proj(x)
-            y = mlp.down_proj(h)
+                y = self._expert(mlp, x)
             y = y * top_k_weights[tok, pos, None]
             out.index_add_(0, tok, y.to(out.dtype))
         return out.to(hidden_states.dtype)

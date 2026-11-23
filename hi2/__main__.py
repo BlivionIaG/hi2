@@ -541,7 +541,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="preset on top of --bits/--blocks: lean drops INT4/B16 (docs/speed.md)",
     )
-    encoding.add_argument("--include", default=None, help="regex: only these weights")
+    encoding.add_argument(
+        "--include",
+        default=None,
+        help="regex: only these weights (a looped model such as Inkling-2 defaults to "
+        r"its routed experts, '\.mlp\.experts\.')",
+    )
     encoding.add_argument(
         "--exclude",
         default=None,

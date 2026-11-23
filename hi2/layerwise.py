@@ -115,8 +115,35 @@ def capture_inputs(model: nn.Module, layers: nn.ModuleList, ids: torch.Tensor):
     return catcher.inputs, kwargs
 
 
+def _chunks(items, batch):
+    """``items`` as one list, or split into lists of at most ``batch``."""
+    if not batch or len(items) <= batch:
+        return [items]
+    return [items[s : s + batch] for s in range(0, len(items), batch)]
+
+
+def _extra_inputs(extras, chunk, stager, dev) -> dict:
+    """The keyword inputs of one forward beyond the hidden states (:func:`_run`'s
+    ``extras``): the tensors of the sequences in ``chunk``, batched, on ``dev``."""
+    return {
+        k: stager.to_device(torch.cat([v[i] for i in chunk], dim=0), dev)
+        for k, v in (extras or {}).items()
+    }
+
+
 def _run(
-    layer, dev, items, hidden, kwargs, linears, k_of, with_hessian=False, resident=False
+    layer,
+    dev,
+    items,
+    hidden,
+    kwargs,
+    linears,
+    k_of,
+    with_hessian=False,
+    resident=False,
+    extras=None,
+    batch=None,
+    cast=True,
 ):
     """Run ``items`` (indices) through a device copy of ``layer``, returning the
     outputs, this device's per-Linear statistics, (optionally) full second moments and
@@ -127,7 +154,14 @@ def _run(
     the first time a Linear runs, which for a routed expert can be any sequence, by the
     input's address among the inputs of the current sequence (kept alive until the
     sequence is done, so an address is never reused within it). An expert Linear only
-    runs on the tokens routed to it, so its statistics are those tokens' only."""
+    runs on the tokens routed to it, so its statistics are those tokens' only.
+
+    ``extras`` are further keyword inputs of the layer, ``{name: tensors indexable by
+    sequence}`` (Inkling-2's ``block_states`` and ``messages``). ``batch`` bounds the
+    sequences of one forward (None: all of this device's in one). ``cast=False`` feeds
+    the hidden states in the dtype they have instead of the layer's first parameter's
+    (a looped layer's first parameter is an fp32 residual query, its activations are
+    the model's compute dtype)."""
     stats: dict[str, ColumnStats] = {}
     hess: dict[str, HessianStats] = {}
     leader_of: dict[str, str] = {}
@@ -160,9 +194,8 @@ def _run(
         if n in linears:
             hooks.append(mod.register_forward_pre_hook(make_hook(n)))
     first = next(layer.parameters(), None)
-    dtype = (
-        None if first is None else first.dtype
-    )  # buffers may be bf16 for an fp32 layer
+    # buffers may be bf16 for an fp32 layer
+    dtype = None if first is None or not cast else first.dtype
     stager = PinnedWindow()
     kw = to_device(kwargs, dev, stager)
     outs = {}
@@ -172,24 +205,31 @@ def _run(
             # runs once on every sequence's tokens rather than 16 times, which is where
             # the Python dispatch of a 512-expert layer spends its time. The statistics
             # are the same sums; the sharing groups are decided on the batch's inputs.
-            xs = torch.cat([hidden[i] for i in items], dim=0)
-            # capture_inputs ran one sequence at a time, so the mask and the rotary
-            # embeddings it kept carry a batch of 1. Every sequence is its own causal
-            # window of the same length, so they expand along the batch dim unchanged;
-            # without this a QSA layer indexes visible_token_indices[1] on a size-1 batch.
-            out = layer(
-                stager.to_device(xs, dev, dtype), **_expand_batch(kw, len(items))
-            )
-            o = (out[0] if isinstance(out, tuple) else out).detach()
-            del xs
-            for k, i in enumerate(items):
-                part = o[k : k + 1]
-                outs[i] = part if resident else stager.to_host(part)
-            groups.clear()
-            keep_alive.clear()
+            for chunk in _chunks(items, batch):
+                xs = torch.cat([hidden[i] for i in chunk], dim=0)
+                # capture_inputs ran one sequence at a time, so the mask and the rotary
+                # embeddings it kept carry a batch of 1. Every sequence is its own causal
+                # window of the same length, so they expand along the batch dim unchanged;
+                # without this a QSA layer indexes visible_token_indices[1] on a size-1 batch.
+                out = layer(
+                    stager.to_device(xs, dev, dtype),
+                    **_extra_inputs(extras, chunk, stager, dev),
+                    **_expand_batch(kw, len(chunk)),
+                )
+                o = (out[0] if isinstance(out, tuple) else out).detach()
+                del xs
+                for k, i in enumerate(chunk):
+                    part = o[k : k + 1]
+                    outs[i] = part if resident else stager.to_host(part)
+                groups.clear()
+                keep_alive.clear()
         else:
             for i in items:
-                out = layer(stager.to_device(hidden[i], dev, dtype), **kw)
+                out = layer(
+                    stager.to_device(hidden[i], dev, dtype),
+                    **_extra_inputs(extras, [i], stager, dev),
+                    **kw,
+                )
                 o = (out[0] if isinstance(out, tuple) else out).detach()
                 outs[i] = o if resident else stager.to_host(o)
                 groups.clear()
@@ -304,7 +344,18 @@ def _expand_batch(kwargs, n: int):
 
 
 def _device_pass(
-    layer, dev, items, hidden, kwargs, linears, k_of, with_hessian, resident=False
+    layer,
+    dev,
+    items,
+    hidden,
+    kwargs,
+    linears,
+    k_of,
+    with_hessian,
+    resident=False,
+    extras=None,
+    batch=None,
+    cast=True,
 ):
     activate(dev)
     return _run(
@@ -317,6 +368,9 @@ def _device_pass(
         k_of,
         with_hessian,
         resident,
+        extras,
+        batch,
+        cast,
     )
 
 
@@ -330,6 +384,9 @@ def _layer_pass(
     k_of,
     with_hessian=False,
     resident=False,
+    extras=None,
+    batch=None,
+    cast=True,
 ):
     """Run all sequences through ``layer``, split round-robin over ``devices``
     (one thread each); returns each device's ``(outputs, statistics, hessians)``."""
@@ -339,7 +396,18 @@ def _layer_pass(
         dev, items = jobs[0]
         return [
             _device_pass(
-                layer, dev, items, hidden, kwargs, linears, k_of, with_hessian, resident
+                layer,
+                dev,
+                items,
+                hidden,
+                kwargs,
+                linears,
+                k_of,
+                with_hessian,
+                resident,
+                extras,
+                batch,
+                cast,
             )
         ]
     with ThreadPoolExecutor(len(jobs)) as pool:
@@ -355,6 +423,9 @@ def _layer_pass(
                 k_of,
                 with_hessian,
                 resident,
+                extras,
+                batch,
+                cast,
             )
             for dev, items in jobs
         ]
@@ -556,6 +627,102 @@ def encode_layerwise(
     return encoded
 
 
+def _layer_linears(layer, li, prefix, include, exclude, resolve, log) -> dict[str, str]:
+    """``{module name: checkpoint tensor name}`` of the Linears of decoder layer ``li``
+    that phase 1 tabulates."""
+    linears = {}
+    for n, mod in layer.named_modules():
+        full = f"{prefix}{li}.{n}.weight"
+        if isinstance(mod, nn.Linear) and is_eligible(
+            full, mod.weight.shape, mod.weight.dtype, include, exclude
+        ):
+            ckpt = resolve(full) if resolve else full
+            if ckpt is None:
+                log(f"warning: {full} has no tensor in the checkpoint; skipped")
+                continue
+            linears[n] = ckpt
+    return linears
+
+
+def _tabulate_layer(
+    layer,
+    li,
+    linears,
+    lead,
+    merged,
+    counts,
+    fallback,
+    cfg,
+    ex,
+    sink,
+    tables,
+    expert_counts,
+    expert_fallback,
+    tm,
+    log,
+) -> float:
+    """The candidate tables of one layer's Linears from their merged statistics (``lead``,
+    ``merged``, ``counts`` and ``fallback`` as :func:`_merge` returns them); the
+    statistics go to ``sink``. Returns the seconds spent."""
+    members: dict[str, list[str]] = {}
+    for n in linears:
+        members.setdefault(lead[n], []).append(n)
+    t4 = time.perf_counter()
+    for ld, names in members.items():
+        st = merged[ld] if merged[ld].n > 0 else None
+        # One group at a time: a layer of 512 experts is 163 GB of fp32 weights, which
+        # on top of a 331 GB model pushes the host into swap.
+        ws = {n: layer.get_submodule(n).weight.detach().cpu() for n in names}
+        transform = shared_transform([ws[n] for n in names], st, cfg, ex)
+        sink.stats(linears[ld], [linears[n] for n in names], st)
+        for n in names:
+            full = linears[n]
+            if st is None:
+                log(f"warning: {full} saw no calibration tokens; data-free weights")
+            tables[full] = build_table(full, ws[n], st, cfg, ex, transform, counts[n])
+            if expert_parts(n) is not None:
+                expert_counts[full] = counts[n]
+                if n in fallback:
+                    expert_fallback.add(full)
+        del ws
+    gc.collect()
+    _trim_host()
+    elapsed = time.perf_counter() - t4
+    tm["tables"] += elapsed
+    log(f"  rss after tables: {_rss_gib()} GiB")
+    sink.layer(
+        li,
+        [[linears[n] for n in names] for names in members.values()],
+        {linears[n]: counts[n] for n in linears},
+        {linears[n] for n in fallback},
+    )
+    return elapsed
+
+
+def _finish_tables(tm, where, expert_counts, expert_fallback, cfg, sink, log) -> None:
+    """The end of phase 1: the timing breakdown and the experts' token coverage."""
+    log(
+        "phase 1 breakdown (s): "
+        + ", ".join(f"{k} {v:.1f}" for k, v in tm.items())
+        + f" (hidden states {where})"
+    )
+    if expert_counts:
+        cov = coverage(expert_counts, expert_fallback)
+        for key, c in cov.items():
+            log(
+                f"  {key}: tokens per expert min {c['min']} median {c['median']:g} "
+                f"max {c['max']}, {len(c['fallback'])} topped up"
+            )
+        sink.expert_tokens(
+            {
+                "min_tokens_per_input_width": cfg.expert_min_tokens,
+                "counts": expert_counts,
+                "fallback": sorted(expert_fallback),
+                "coverage": cov,
+            }
+        )
+
+
 def calibrate_layerwise(
     model: nn.Module,
     ids: torch.Tensor,
@@ -570,7 +737,25 @@ def calibrate_layerwise(
     sink=None,
 ):
     """Return ``{checkpoint tensor name: TensorTable}`` and write each Linear's
-    statistics to ``sink`` (default: under ``workdir/stats`` and ``workdir/hessian``)."""
+    statistics to ``sink`` (default: under ``workdir/stats`` and ``workdir/hessian``).
+    A looped model (block states, passes over a span of layers) goes through
+    :func:`hi2.looped.calibrate_looped`."""
+    from .looped import calibrate_looped, is_looped
+
+    if is_looped(model):
+        return calibrate_looped(
+            model,
+            ids,
+            cfg,
+            ex,
+            workdir,
+            include,
+            exclude,
+            limit_layers,
+            log,
+            resolve,
+            sink,
+        )
     sink = sink or WorkdirSink(workdir)
     path, layers = find_layers(model)
     prefix = path + "."
@@ -585,17 +770,7 @@ def calibrate_layerwise(
     for li, layer in enumerate(layers):
         if limit_layers is not None and li >= limit_layers:
             break
-        linears = {}
-        for n, mod in layer.named_modules():
-            full = f"{prefix}{li}.{n}.weight"
-            if isinstance(mod, nn.Linear) and is_eligible(
-                full, mod.weight.shape, mod.weight.dtype, include, exclude
-            ):
-                ckpt = resolve(full) if resolve else full
-                if ckpt is None:
-                    log(f"warning: {full} has no tensor in the checkpoint; skipped")
-                    continue
-                linears[n] = ckpt
+        linears = _layer_linears(layer, li, prefix, include, exclude, resolve, log)
         k_of = {n: layer.get_submodule(n).in_features for n in linears}
         want_h = cfg.rounding == "gptq" and not cfg.sequential
         t0 = time.perf_counter()
@@ -624,73 +799,37 @@ def calibrate_layerwise(
         tm["forward"] += t1 - t0
         tm["merge"] += t2 - t1
         tm["write"] += t3 - t2
-        members: dict[str, list[str]] = {}
-        for n in linears:
-            members.setdefault(lead[n], []).append(n)
-        t4 = time.perf_counter()
-        for ld, names in members.items():
-            st = merged[ld] if merged[ld].n > 0 else None
-            # One group at a time: a layer of 512 experts is 163 GB of fp32 weights, which
-            # on top of a 331 GB model pushes the host into swap.
-            ws = {n: layer.get_submodule(n).weight.detach().cpu() for n in names}
-            transform = shared_transform([ws[n] for n in names], st, cfg, ex)
-            sink.stats(linears[ld], [linears[n] for n in names], st)
-            for n in names:
-                full = linears[n]
-                if st is None:
-                    log(f"warning: {full} saw no calibration tokens; data-free weights")
-                tables[full] = build_table(
-                    full, ws[n], st, cfg, ex, transform, counts[n]
-                )
-                if expert_parts(n) is not None:
-                    expert_counts[full] = counts[n]
-                    if n in fallback:
-                        expert_fallback.add(full)
-            del ws
-        gc.collect()
-        _trim_host()
-        tm["tables"] += time.perf_counter() - t4
-        log(f"  rss after tables: {_rss_gib()} GiB")
-        sink.layer(
+        elapsed = _tabulate_layer(
+            layer,
             li,
-            [[linears[n] for n in names] for names in members.values()],
-            {linears[n]: counts[n] for n in linears},
-            {linears[n] for n in fallback},
+            linears,
+            lead,
+            merged,
+            counts,
+            fallback,
+            cfg,
+            ex,
+            sink,
+            tables,
+            expert_counts,
+            expert_fallback,
+            tm,
+            log,
         )
-        rss = 0
-        try:
-            with open("/proc/self/status") as f:
-                for line in f:
-                    if line.startswith("VmRSS:"):
-                        rss = int(line.split()[1]) >> 20
-                        break
-        except OSError:
-            pass
         log(
             f"layer {li}: {len(linears)} linears tabulated "
             f"(forward {t1 - t0:.0f}s, merge {t2 - t1:.0f}s, write {t3 - t2:.0f}s, "
-            f"tables {time.perf_counter() - t4:.0f}s, rss {rss} GiB)"
+            f"tables {elapsed:.0f}s, rss {_rss_gib()} GiB)"
         )
-    log(
-        "phase 1 breakdown (s): "
-        + ", ".join(f"{k} {v:.1f}" for k, v in tm.items())
-        + f" (hidden states {'on the device' if resident else 'in host memory'})"
+    _finish_tables(
+        tm,
+        "on the device" if resident else "in host memory",
+        expert_counts,
+        expert_fallback,
+        cfg,
+        sink,
+        log,
     )
-    if expert_counts:
-        cov = coverage(expert_counts, expert_fallback)
-        for key, c in cov.items():
-            log(
-                f"  {key}: tokens per expert min {c['min']} median {c['median']:g} "
-                f"max {c['max']}, {len(c['fallback'])} topped up"
-            )
-        sink.expert_tokens(
-            {
-                "min_tokens_per_input_width": cfg.expert_min_tokens,
-                "counts": expert_counts,
-                "fallback": sorted(expert_fallback),
-                "coverage": cov,
-            }
-        )
     return tables
 
 
