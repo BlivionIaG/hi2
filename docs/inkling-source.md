@@ -78,7 +78,8 @@ with InklingSource("/path/to/inkling2-mini", device="cuda:0") as src:
 * `message_query()` (also `load("model.language_model.message_input.query")`) composes the
   one parameter of the model that is built from two serving tensors: `[12, 4, 2304]` from the
   two cross-pass tensors `[24, 2304]` (rows `2l` and `2l + 1` of loop layer `l`: `q`, `m` in
-  the first, `k`, `v` in the second), in the slot order `q, k, v, mlp` of the fork's loader.
+  the first, `k`, `v` in the second), in the slot order `q, k, v, mlp` of the fork's loader and of
+  transformers' own conversion (`Inkling2LoopMergeMessageQueries`).
 * `tensor_role` classifies a serving name. The HI2 candidates are `expert` and
   `attn_linear`; norms, `attn_res` and cross-pass queries, `mlp.gate` (router and its fp32
   bias), `attn_sink_proj`, short convolutions, loop controllers and the vision tower are
@@ -106,6 +107,7 @@ fork the reference comparisons are skipped.
 | `inkling_teacher_check.py` | The whole stock model assembled from the reader on the CPU and run on a prompt: the top-8 against the fork's oracle, the activation extremes per decoder layer, float16 / bfloat16 against float32 (KL, top-1). |
 | `inkling_unfuse_check.py` | `hi2.moe.unfuse_experts` on a tiny real `Inkling2LoopForConditionalGeneration`: does the unfused forward run, and equal the fused one? Exit 1 today (the activation takes two arguments). |
 | `inkling_hf_names_check.py` | The reader's names and shapes against the real `Inkling2LoopForConditionalGeneration` (built on the meta device from the fork's transformers): every text-model tensor, both ways. |
+| `inkling_hf_load_check.py` | `from_pretrained` of the stock directory with the fork's transformers (the class registered for the causal-LM auto class) against the reader: dense tensors and `message_input.query` exactly, the experts of every layer elementwise, and transformers' own dequantization op with its sources cast or as stored. |
 | `inkling_scale_stats.py` | Histograms of the UE8M0 and E4M3 block scales and of the NVFP4 `amax`; the count of weights that overflow, underflow or fall in the subnormal range of float16 and bfloat16; the relative energy each cast changes. |
 | `inkling_alloc_dryrun.py` | HI2's weight-only mode and its allocators on sampled real experts and attention linears: share of INT2/INT4/INT8, block mix, effective bits per weight, implied size. |
 | `inkling_dequant_probe.py` | Exactness of the device decode against the CPU, and the cost (read, host-to-device, decode, whole layer, peak memory) of decoding one layer. |
@@ -217,6 +219,37 @@ the fork serves the model in on gfx1030. Limits: three inputs of at most 2,048 t
 not the long contexts the loop layers see in use; the activation bound is a measurement on
 them, not a proof.
 
+**Transformers' own load of the directory** (`inkling_hf_load_check.py`; the fork's transformers
+5.24.0.dev0). `AutoModelForCausalLM.from_pretrained(<stock directory>)`, the call of
+`hi2.pipeline._load_model`, stops at once with `ValueError: Unrecognized configuration class
+Inkling2LoopConfig for this kind of AutoModel: AutoModelForCausalLM`: no auto class knows the
+model. With `AutoModelForCausalLM.register(Inkling2LoopConfig, Inkling2LoopForConditionalGeneration)`
+it loads in 145 s (float16) and 148 s (bfloat16) on 8 CPU threads: the unknown `modelopt` tag is
+skipped with a warning, the model's conversion mapping renames the tensors,
+`Inkling2LoopMergeMessageQueries` composes `message_input.query`, and
+`Inkling2LoopDequantizeExperts` (marked temporary in its source) dequantizes the NVFP4 and MXFP8
+experts to the parameter dtype, 8 experts at a time, in float32 arithmetic with the formulas of the
+reader. Against the reader:
+
+* 644 of 644 dense tensors and `message_input.query` are identical in both dtypes (so the slot
+  order `q, k, v, mlp` is transformers' own), and so are the MXFP8 experts of layers 20-23.
+* The NVFP4 experts of layers 0-19 are not: in float16, 22.8 % of `gate_up` (17.0-27.1 % per layer)
+  and 22.7 % of `down` differ from the reader's float32 decode rounded once, by one ulp (largest
+  difference 4.9e-4); in bfloat16 22.3 % and 22.7 %, largest difference 3.9e-3.
+* Cause, isolated by running transformers' op on four experts of layers 0 and 20: the loader casts
+  every source tensor of a stack to the parameter dtype before the op, `amax` included. With `amax`
+  as stored the op returns the reader's values bit for bit (0 of 31.9 M elements differ: the
+  same arithmetic); with it cast the op returns the loaded model's values bit for bit. The cast puts
+  a relative error on the global scale of each expert, up to 4.7e-4 (rms 2.0e-4) in float16 and
+  3.9e-3 (rms 1.6e-3) in bfloat16 over the 5,120 `amax` values: a per-expert gain error as large as
+  the rounding of the weights to that dtype (2.1e-4 and 1.7e-3 relative RMS), far below the 4e-2
+  of a 3-bit quantization, and still not the exact stock dequantization. A float32 load (105 GB)
+  would keep `amax` exact [inference: not run].
+
+So transformers can build the half-precision teacher in host memory without a staged checkpoint,
+within one ulp of the exact values; the reader is the exact decode, and the per-layer, on-the-fly
+decode on the device is something `from_pretrained` does not offer.
+
 **Weight-only allocation** (`inkling_alloc_dryrun.py`). HI2 has a data-free mode:
 `build_table(stats=None)` (what `hi2 quantize` does without `--calib`) scores every
 `(nbits, block)` of every row with identity column weights in the rotated basis. The script runs
@@ -299,20 +332,23 @@ is 1.9 GiB.
 * The Hugging Face class of the model (`Inkling2LoopForConditionalGeneration`) is not in
   the pinned transformers; the fork's tree supplies it (`~/w4a8_runs/pydeps/tfm-main` on the
   build box).
-* The slot order of `message_input.query` (`q, k, v, mlp`) is the fork's working choice,
-  validated against the transformers code on a tiny model. The first token of the real model
-  (the fork's CPU oracle) does not separate it from the two other orders the fork tried: all
-  three give `<|message_model|>` as top-1 at 26.3-28.0. Pin it by comparing with the served
-  model before trusting a teacher.
+* The slot order of `message_input.query` (`q, k, v, mlp`) is the one of transformers' own
+  conversion, `Inkling2LoopMergeMessageQueries` ("the query, key, value and MLP queries of each
+  loop layer, in that order"), and `message_query()` equals what `from_pretrained` builds bit
+  for bit on the real directory (`inkling_hf_load_check.py`). The first token of the fork's CPU
+  oracle alone cannot separate it from the two other orders the fork tried (all three give
+  `<|message_model|>` at 26.3-28.0), so the served model is the check that remains.
 * `config.json` says `quantization_config: {quant_method: modelopt, quant_algo: NVFP4}` for
   the whole model, but layers 20-23 are MXFP8 in the file: the reader decides from the dtypes
   in the header, never from the config.
 * The vision tower (`model.visual.*`, 23 layers, 1024 wide) and the MTP head are not read.
-* Every module of `hi2` that reads weights does it from the source directory by name
-  (`weight_map`, `make_resolver`, `safe_open`: `pipeline`, `layerwise`, `moe`, `qad`,
-  `sensitivity`, `stack`, `cache`, `checkpoint`), and `pipeline._load_model` loads the model
-  with `from_pretrained(..., ignore_mismatched_sizes=True)`. The reader is not wired into any
-  of them, and `hi2 quantize` has not been run on this directory (packed U8 experts, serving
-  names, a `modelopt` `quantization_config`). A shape mismatch that `from_pretrained`
-  re-initializes instead of raising would leave experts random [inference: not tried], so a
-  run from this source must check, tensor by tensor, that every parameter was filled.
+* `hi2` on this directory. `pipeline._load_model` (`from_pretrained(...,
+  ignore_mismatched_sizes=True)`) needs the class registered and then works (see above; every
+  text parameter came out equal to the reader's, none re-initialized). The rest of `hi2` reads
+  source weights from the directory by name (`weight_map`, `make_resolver`, `safe_open`:
+  `pipeline`, `layerwise`, `moe`, `qad`, `sensitivity`, `stack`, `cache`, `checkpoint`) and
+  finds packed serving tensors under serving names, not the per-expert Hugging Face tensors it
+  expects: `check_unfused` ends in `SystemExit: ... no checkpoint tensor (fused experts on
+  disk?)` [inference: from the code, not run], and the readers of source weights would get
+  the wrong tensor or none. The reader is wired into none of them, and `hi2 quantize` has not
+  been run on this directory.
