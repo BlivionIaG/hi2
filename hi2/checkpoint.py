@@ -545,8 +545,12 @@ def write_checkpoints(
 
 
 def _finish_output(src: Path, o: Output, shards) -> None:
+    from .inkling_source import STALE_FILES, carry_vision, stock_view
     from .runtime import atomic_json
 
+    stock = stock_view(src) is not None  # the stock Inkling-2 directory, nothing else
+    if stock:
+        carry_vision(src, o.dst, o.new_map)
     index = {"metadata": {}, "weight_map": o.new_map}
     atomic_json(o.dst / "model.safetensors.index.json", index)
     cfgj = _read_json(src / "config.json")
@@ -557,6 +561,8 @@ def _finish_output(src: Path, o: Output, shards) -> None:
     }
     atomic_json(o.dst / "config.json", cfgj)
     skip = {"config.json", "model.safetensors.index.json", *shards}
+    if stock:
+        skip |= STALE_FILES
     for entry in src.iterdir():
         # A weight file the source index does not list (the stock Inkling directory's
         # mtp.safetensors) is not part of this checkpoint, and validate_checkpoint

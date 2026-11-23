@@ -991,6 +991,81 @@ def test_a_data_free_run_from_the_stock_directory_equals_the_one_from_its_twin(
     )  # ... the rest passes
 
 
+def test_the_vision_tower_is_carried_and_the_stale_quant_config_is_not(wide, tmp_path):
+    """The output of a stock directory keeps the vision tower bit for bit (one indexed
+    shard, the stock names: the runtime's vision loader reads them) and does not link
+    ``hf_quant_config.json``, which describes NVFP4 / MXFP8 experts the output no longer
+    has; a regular directory is read as its files say and keeps its links."""
+    from safetensors.torch import load_file
+
+    from hi2.calibrate import Config
+    from hi2.checkpoint import validate_checkpoint
+    from hi2.inkling_source import VISION_SHARD, carry_vision
+    from hi2.pipeline import RunConfig, run
+
+    path, fmts, _ = wide
+    stock = tmp_path / "stock"
+    shutil.copytree(path, stock)
+    g = torch.Generator().manual_seed(5)
+    vision = {
+        "model.visual.backbone.layers.0.mlp.c_fc.weight": torch.randn(
+            16, 8, generator=g
+        ).bfloat16(),
+        "model.visual.backbone.layers.0.norm.bias": torch.randn(
+            8, generator=g
+        ).bfloat16(),
+    }
+    main = load_file(str(stock / SHARD))
+    save_file({**main, **vision}, str(stock / SHARD), metadata={"format": "pt"})
+    index = json.loads((stock / "model.safetensors.index.json").read_text())
+    index["weight_map"].update(dict.fromkeys(vision, SHARD))
+    (stock / "model.safetensors.index.json").write_text(json.dumps(index))
+    (stock / "hf_quant_config.json").write_text('{"quant_method": "modelopt"}')
+
+    def quantize(src, tag):
+        rc = RunConfig(
+            src=src,
+            dst=tmp_path / f"out-{tag}",
+            workdir=tmp_path / f"work-{tag}",
+            target_bpw=3.5,
+            include=r"\.mlp\.experts\.",
+            cfg=Config(effort="fast"),
+        )
+        run(rc, log=lambda *_: None)
+        return rc.dst
+
+    out = quantize(stock, "stock")
+    got = load_file(str(out / VISION_SHARD))
+    assert got.keys() == vision.keys()
+    assert all(
+        got[k].dtype == v.dtype and torch.equal(_bits(got[k]), _bits(v))
+        for k, v in vision.items()
+    )
+    weight_map = json.loads((out / "model.safetensors.index.json").read_text())[
+        "weight_map"
+    ]
+    assert {weight_map[k] for k in vision} == {VISION_SHARD}
+    assert {v for k, v in weight_map.items() if k not in vision} == {SHARD}
+    assert not any(k.startswith("model.visual.") for k in load_file(str(out / SHARD)))
+    assert not (out / "hf_quant_config.json").exists()  # not even as a dangling link
+    assert not (out / "hf_quant_config.json").is_symlink()
+    assert not (out / "mtp.safetensors").exists()  # the draft is deployed beside it
+    quant = json.loads((out / "config.json").read_text())["quantization_config"]
+    assert quant["quant_method"] == "rdna_hint_flex"
+    assert validate_checkpoint(out, log=lambda *_: None)["dense_tensors"] >= len(vision)
+    # a second run rewrites the shard whole and atomically
+    before = (out / VISION_SHARD).stat().st_mtime_ns
+    assert carry_vision(stock, out, {}) == len(vision)
+    assert (out / VISION_SHARD).stat().st_mtime_ns >= before
+    assert not list(out.glob("*.partial"))
+    # any other directory: nothing carried, every file linked as before
+    twin = _materialise(stock, tmp_path / "twin")
+    (twin / "hf_quant_config.json").write_text('{"quant_method": "modelopt"}')
+    assert carry_vision(twin, tmp_path / "nowhere", {}) == 0
+    assert not (tmp_path / "nowhere").exists()
+    assert (quantize(twin, "twin") / "hf_quant_config.json").is_symlink()
+
+
 def test_a_stock_directory_with_unquantized_experts_is_refused(tiny, tmp_path):
     """Passing decoded experts through would write them at 4 bytes per weight; in ``tiny``
     the down projections (K = 32) are not HI2 candidates."""

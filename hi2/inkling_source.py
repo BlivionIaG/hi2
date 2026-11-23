@@ -754,3 +754,49 @@ def stock_view(path: str | Path) -> StockView | None:
         return None
     view = _VIEWS[key] = StockView(path)
     return view
+
+
+#: Where an output directory keeps the vision tower (the stock directory has it in its
+#: main shard, which the output rewrites for the text model).
+VISION_SHARD = "model-vision.safetensors"
+#: Files of a stock directory an output must not link: ``hf_quant_config.json`` describes
+#: the NVFP4 / MXFP8 experts the output no longer has (the runtime reads it to tell the
+#: two expert formats apart, so a stale copy would be believed).
+STALE_FILES = frozenset({"hf_quant_config.json"})
+
+
+def carry_vision(src: str | Path, dst: str | Path, new_map: dict[str, str]) -> int:
+    """Copy the vision tower of a stock Inkling-2 directory, bit for bit and under its
+    stock names (``model.visual.*``, the names the runtime's vision loader reads), into
+    :data:`VISION_SHARD` of the output directory ``dst``, and list it in ``new_map``
+    (``{name: shard}`` of the output index). The vision tower is not quantized: the shard
+    is written atomically, whole, each time. Returns the number of tensors (0 for any
+    other source, or a stock directory without a vision tower).
+
+    ``mtp.safetensors`` is not carried: the draft's loader opens it by file name next to
+    the model, and the validator refuses a weight file the index does not list; indexing
+    it would hand its tensors to the main model's loader (docs/inkling-source.md)."""
+    view = stock_view(src)
+    if view is None:
+        return 0
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    raw = view._src._wmap
+    names = sorted(n for n in raw if n.startswith(VISION_PREFIX))
+    if not names:
+        return 0
+    tensors: dict[str, torch.Tensor] = {}
+    for shard in sorted({raw[n] for n in names}):
+        with safe_open(str(Path(src) / shard), "pt") as f:
+            for n in names:
+                if raw[n] == shard:
+                    tensors[n] = f.get_tensor(n).contiguous()
+    target = Path(dst) / VISION_SHARD
+    if target.is_symlink():
+        raise ValueError(f"{target}: refusing to overwrite a symlink")
+    partial = target.with_name(target.name + ".partial")
+    save_file(tensors, str(partial), metadata={"format": "pt"})
+    partial.replace(target)
+    new_map.update(dict.fromkeys(tensors, VISION_SHARD))
+    return len(tensors)
