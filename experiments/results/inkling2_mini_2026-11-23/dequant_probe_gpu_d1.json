@@ -1,0 +1,204 @@
+{
+ "device": {
+  "device": "cuda:0",
+  "name": "AMD Radeon Pro V620",
+  "total_gib": 29.984375,
+  "arch": "gfx1030",
+  "torch": "2.12.0+rocm7.14.0",
+  "hip": "7.14.60850",
+  "pci_bus_id": 209,
+  "pci_device_id": 0,
+  "pci_domain_id": 0
+ },
+ "repeat": 3,
+ "layers": [
+  {
+   "layer": 0,
+   "format": "nvfp4",
+   "exactness": {
+    "gate_up": {
+     "equal": true,
+     "max_abs_diff": 0.0
+    },
+    "down": {
+     "equal": true,
+     "max_abs_diff": 0.0
+    }
+   },
+   "split": [
+    {
+     "experts": 8,
+     "raw_mib": 34.171875,
+     "host_copy_ms_first": 5.758799961768091,
+     "host_copy_ms": 2.1478775306604803,
+     "stage_h2d_ms_first": 48.08935092296451,
+     "stage_h2d_ms": 5.044760531745851,
+     "decode_ms_first": 3.2801469787955284,
+     "decode_ms": 2.473965520039201,
+     "decode_extra_peak_mib": 289.56298828125,
+     "decode_gelem_per_s": 25.748536705148034
+    },
+    {
+     "experts": 16,
+     "raw_mib": 68.34375,
+     "host_copy_ms_first": 11.75044197589159,
+     "host_copy_ms": 10.898781998548657,
+     "stage_h2d_ms_first": 95.06061405409127,
+     "stage_h2d_ms": 11.457054526545107,
+     "decode_ms_first": 6.121331010945141,
+     "decode_ms": 6.157853989861906,
+     "decode_extra_peak_mib": 577.12548828125,
+     "decode_gelem_per_s": 20.68934797897946
+    }
+   ],
+   "whole_layer": [
+    {
+     "layer": 0,
+     "format": "nvfp4",
+     "chunk": 8,
+     "dtype": "float32",
+     "fused_layer_bytes": 4076863488,
+     "fused_ms_first": 123.05437796749175,
+     "fused_ms": 111.72318155877292,
+     "fused_peak_mib": 4284.34716796875,
+     "stream_ms_first": 138.41488701291382,
+     "stream_ms": 97.88647998357192,
+     "stream_peak_mib": 548.95654296875
+    },
+    {
+     "layer": 0,
+     "format": "nvfp4",
+     "chunk": 8,
+     "dtype": "float16",
+     "fused_layer_bytes": 2038431744,
+     "fused_ms_first": 110.7662410940975,
+     "fused_ms": 109.47819950524718,
+     "fused_peak_mib": 2340.34716796875,
+     "stream_ms_first": 120.53500895854086,
+     "stream_ms": 98.10770448530093,
+     "stream_peak_mib": 548.95654296875
+    },
+    {
+     "layer": 0,
+     "format": "nvfp4",
+     "chunk": 16,
+     "dtype": "float32",
+     "fused_layer_bytes": 4076863488,
+     "fused_ms_first": 134.45211900398135,
+     "fused_ms": 132.56780902156606,
+     "fused_peak_mib": 4673.69091796875,
+     "stream_ms_first": 150.75529098976403,
+     "stream_ms": 114.20970497420058,
+     "stream_peak_mib": 1086.90966796875
+    },
+    {
+     "layer": 0,
+     "format": "nvfp4",
+     "chunk": 16,
+     "dtype": "float16",
+     "fused_layer_bytes": 2038431744,
+     "fused_ms_first": 138.39614298194647,
+     "fused_ms": 135.04607701906934,
+     "fused_peak_mib": 2729.69091796875,
+     "stream_ms_first": 133.34456994198263,
+     "stream_ms": 113.27213601907715,
+     "stream_peak_mib": 1086.90966796875
+    }
+   ]
+  },
+  {
+   "layer": 20,
+   "format": "mxfp8",
+   "exactness": {
+    "gate_up": {
+     "equal": true,
+     "max_abs_diff": 0.0
+    },
+    "down": {
+     "equal": true,
+     "max_abs_diff": 0.0
+    }
+   },
+   "split": [
+    {
+     "experts": 8,
+     "raw_mib": 62.6484375,
+     "host_copy_ms_first": 13.68500106036663,
+     "host_copy_ms": 10.24827896617353,
+     "stage_h2d_ms_first": 61.39859603717923,
+     "stage_h2d_ms": 10.448669490870088,
+     "decode_ms_first": 4.175071022473276,
+     "decode_ms": 3.679685469251126,
+     "decode_extra_peak_mib": 324.0,
+     "decode_gelem_per_s": 17.3115317959402
+    },
+    {
+     "experts": 16,
+     "raw_mib": 125.296875,
+     "host_copy_ms_first": 25.908897980116308,
+     "host_copy_ms": 24.6586759458296,
+     "stage_h2d_ms_first": 72.90371507406235,
+     "stage_h2d_ms": 19.740931515116245,
+     "decode_ms_first": 8.085674955509603,
+     "decode_ms": 7.717128028161824,
+     "decode_extra_peak_mib": 648.0,
+     "decode_gelem_per_s": 16.50898929434328
+    }
+   ],
+   "whole_layer": [
+    {
+     "layer": 20,
+     "format": "mxfp8",
+     "chunk": 8,
+     "dtype": "float32",
+     "fused_layer_bytes": 4076863488,
+     "fused_ms_first": 198.83656699676067,
+     "fused_ms": 185.71676197461784,
+     "fused_peak_mib": 4340.0029296875,
+     "stream_ms_first": 220.37534299306571,
+     "stream_ms": 181.80759198730811,
+     "stream_peak_mib": 594.8857421875
+    },
+    {
+     "layer": 20,
+     "format": "mxfp8",
+     "chunk": 8,
+     "dtype": "float16",
+     "fused_layer_bytes": 2038431744,
+     "fused_ms_first": 185.61491405125707,
+     "fused_ms": 182.02430801466107,
+     "fused_peak_mib": 2396.0029296875,
+     "stream_ms_first": 201.0110990377143,
+     "stream_ms": 182.82587552675977,
+     "stream_peak_mib": 594.8857421875
+    },
+    {
+     "layer": 20,
+     "format": "mxfp8",
+     "chunk": 16,
+     "dtype": "float32",
+     "fused_layer_bytes": 4076863488,
+     "fused_ms_first": 198.81418603472412,
+     "fused_ms": 197.16153404442593,
+     "fused_peak_mib": 4782.5341796875,
+     "stream_ms_first": 215.05394100677222,
+     "stream_ms": 186.63526099408045,
+     "stream_peak_mib": 1175.7685546875
+    },
+    {
+     "layer": 20,
+     "format": "mxfp8",
+     "chunk": 16,
+     "dtype": "float16",
+     "fused_layer_bytes": 2038431744,
+     "fused_ms_first": 203.1803309218958,
+     "fused_ms": 199.58322797901928,
+     "fused_peak_mib": 2838.5341796875,
+     "stream_ms_first": 201.9571380224079,
+     "stream_ms": 186.63877749349922,
+     "stream_peak_mib": 1175.7685546875
+    }
+   ]
+  }
+ ]
+}

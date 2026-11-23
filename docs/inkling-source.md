@@ -4,9 +4,10 @@
 already quantized (NVFP4 in layers 0-19, MXFP8 in layers 20-23), and gives `hi2` the
 dequantized float32 weights of one layer at a time. It is an optional source adapter:
 no default path imports it, nothing in the CLI selects it, and a model of another family
-is unaffected. The status of the quantization itself (allocation, PTQ, QAD, final KL) is
-not in this note: it records the reader, the checkpoint it reads and the first
-weight-only measurements behind the plan.
+is unaffected. The quantization itself (allocation, PTQ, QAD, final KL) is not in this
+note: it records the reader, the checkpoint it reads and the first measurements behind the
+plan (exactness, scale ranges, a model assembled from the reader, weight-only allocation,
+what the device decode costs).
 
 The teacher of a quantization from this source is the stock model dequantized, so the
 KL that is measured is the fidelity to the stock quantized model, not to its bf16
@@ -249,6 +250,32 @@ and the experts 2.88 / 3.38 / 3.89 bpw at the same targets; that follows from gi
 dense tensor the weight of a whole expert group, not from the data. Weights alone have no
 layer or row structure for the allocator to use; whatever mixing gains is in the
 activation-weighted cost.
+
+**Decoding a layer on the device** (`inkling_dequant_probe.py`; Radeon PRO V620, gfx1030, torch
+2.12.0+rocm7.14, one card of slot a2 at a time: PCI d4 alone, then d1; median of three calls after a
+warm-up, the file in the host's page cache). The device decode is the host's, bit for bit
+(experts 0, 17, 64, 127 of layers 0 and 20, gate/up and down: largest difference 0.0 on both cards),
+and the two cards agree within 1-2 ms:
+
+| One layer of 128 experts | NVFP4 (layer 0) | MXFP8 (layer 20) |
+| --- | --- | --- |
+| decode of bytes already on the device (chunks of 8-32 experts) | 21-26 G weights/s: 39-49 ms | 17 G weights/s: 59-61 ms |
+| packed bytes, pinned window and host-to-device copy | 0.57 GB at 6.3-7.1 GB/s: 80-92 ms | 1.05 GB at 6.3-6.9 GB/s: 153-167 ms |
+| whole layer from the file into a fused tensor, float32 / float16 | 111-133 / 107-137 ms | 186-206 / 182-211 ms |
+| the same streamed (`iter_experts`, nothing kept) | 97-115 ms | 182-187 ms |
+| device peak, fused float32 (tensor 3.80 GiB) / float16 (1.90 GiB) | 4.2-5.3 / 2.3-3.4 GiB | 4.2-5.5 / 2.3-3.6 GiB |
+| device peak, streamed, chunks of 8 / 16 / 32 experts | 0.54 / 1.06 / 2.12 GiB | 0.58 / 1.15 / 2.30 GiB |
+
+The "on the fly, about 10 ms per layer" figure of the design review is **not met** by this
+reader: 39-61 ms for the decode alone and 100-210 ms from the file. About 10 ms is the roofline of
+a fused kernel [inference]: 0.57 GB read and 4.1 GB written at the card's 512 GB/s is 9 ms, and
+the reader (a lookup, two multiplies and a copy as separate torch operations) is at a fifth to a
+quarter of it. With the packed bytes already on the card a teacher forward decodes its 24 layers
+in 1.0-1.2 s (2.0-2.4 s if the three passes of the 12 loop layers decode again), and reading
+every layer from the host once costs 2.7-3.5 s [inference: sums of the measured per-layer times,
+no overlap of copy and compute]. The streamed peak grows with the chunk, 68-74 MiB per expert
+in float32, so a chunk of 8-16 experts (0.5-1.2 GiB) is the working size; a fused float16 layer
+is 1.9 GiB.
 
 ## Known gaps before a quantization run
 
