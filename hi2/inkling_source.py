@@ -18,9 +18,10 @@ What it does
 * de-interleaves ``w13`` (rows ``[g0, u0, g1, u1, ...]`` in the weights *and* in the
   scales) into ``gate`` ``[I, H]`` and ``up`` ``[I, H]``; ``down`` is ``w2`` as stored;
 * names the per-expert tensors the way :mod:`hi2.moe` has them after ``unfuse_experts``
-  (``model.language_model.layers.L.mlp.experts.E.{gate,up,down}_proj.weight``) and maps
+  (``model.language_model.layers.L.mlp.experts.E.{gate,up,down}_proj.weight``), maps
   the dense serving names to the Hugging Face model names (the mapping of the fork's
-  ``ref_checkpoint.build_name_map``).
+  ``ref_checkpoint.build_name_map``) and composes the one parameter of the model that is
+  built from two serving tensors (``message_input.query``, :meth:`InklingSource.message_query`).
 
 Formats (value of one element)
 
@@ -45,6 +46,14 @@ from .pinned import PinnedWindow
 HF_PREFIX = "model.language_model"
 SERVING_PREFIX = "model.llm"
 PROJECTIONS = ("gate_proj", "up_proj", "down_proj")
+# The one Hugging Face parameter that is built from two serving tensors: the four
+# message-attention queries per loop layer (``[L, 4, H]``). The serving file keeps them as
+# two ``[2L, H]`` tensors of two rows per loop layer (``q`` and ``m`` in the first, ``k``
+# and ``v`` in the second).
+CROSS_PASS_QUERIES = f"{SERVING_PREFIX}.middle_cycle_cross_pass_queries"
+CROSS_PASS_KV_QUERIES = f"{SERVING_PREFIX}.middle_cycle_cross_pass_kv_queries"
+MESSAGE_QUERY = f"{HF_PREFIX}.message_input.query"
+MESSAGE_SLOTS = "qkvm"  # slot order of ``message_input.query``: q, k, v, mlp
 NVFP4_BLOCK = 16
 MXFP8_BLOCK = 32
 # e2m1 code -> value: sign bit 3, exponent bits 2-1, mantissa bit 0 (index 8 is -0.0)
@@ -500,11 +509,36 @@ class InklingSource:
             for proj in PROJECTIONS:
                 yield expert_name(layer, e, proj)
 
+    def message_query(self, order: str = MESSAGE_SLOTS) -> torch.Tensor:
+        """The Hugging Face ``message_input.query``, float32 ``[L, 4, H]`` (``L`` loop
+        layers; CPU), composed of the two cross-pass tensors of the file the way the fork's
+        reference loader and serving model do: each is ``[2L, H]`` with the rows of loop
+        layer ``l`` at ``2l`` and ``2l + 1``; ``q`` and ``m`` (the mlp query) are the two
+        rows of the first, ``k`` and ``v`` those of the second. ``order`` names the four
+        slots of the result (default ``qkvm``: q, k, v, mlp). The order is the fork's
+        working choice, validated against the transformers code on a tiny model; the first
+        token of the real model does not separate the orders (docs/inkling-source.md)."""
+        if sorted(order) != sorted(MESSAGE_SLOTS):
+            raise ValueError(
+                f"order must be a permutation of {MESSAGE_SLOTS!r}: {order!r}"
+            )
+        q, kv = (
+            self.tensor(n).float().view(-1, 2, self.hidden)
+            for n in (CROSS_PASS_QUERIES, CROSS_PASS_KV_QUERIES)
+        )
+        if q.shape != kv.shape:
+            raise ValueError(
+                f"cross-pass tensors differ: {tuple(q.shape)} vs {tuple(kv.shape)}"
+            )
+        slots = {"q": q[:, 0], "m": q[:, 1], "k": kv[:, 0], "v": kv[:, 1]}
+        return torch.stack([slots[c] for c in order], dim=1)
+
     def load(
         self, hf_name: str, dtype: torch.dtype | None = None, device=None
     ) -> torch.Tensor:
         """A tensor by its Hugging Face name: a dense tensor as stored (the head trimmed
-        to the unpadded vocabulary), or one dequantized expert projection."""
+        to the unpadded vocabulary), one dequantized expert projection, or the composed
+        :data:`MESSAGE_QUERY` (float32)."""
         dev = torch.device(device) if device is not None else self.device
         m = re.match(
             rf"^{re.escape(HF_PREFIX)}\.layers\.(\d+)\.mlp\.experts\.(\d+)\.(\w+)\.weight$",
@@ -519,6 +553,8 @@ class InklingSource:
                 t = (gate if proj == "gate_proj" else up)[0]
             else:
                 raise KeyError(hf_name)
+        elif hf_name == MESSAGE_QUERY:
+            t = self.message_query().to(dev)
         else:
             if self._hf_to_serving is None:
                 self._hf_to_serving = {d: s for s, d in self.hf_names().items()}

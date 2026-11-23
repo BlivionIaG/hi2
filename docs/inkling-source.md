@@ -74,6 +74,10 @@ with InklingSource("/path/to/inkling2-mini", device="cuda:0") as src:
 * `expert_name` and `hf_expert_names` give the per-expert names `hi2.moe` has after
   `unfuse_experts`; `name_map` / `hf_names` map the serving names of the dense tensors
   to the Hugging Face model names (the map of the fork's `ref_checkpoint.build_name_map`).
+* `message_query()` (also `load("model.language_model.message_input.query")`) composes the
+  one parameter of the model that is built from two serving tensors: `[12, 4, 2304]` from the
+  two cross-pass tensors `[24, 2304]` (rows `2l` and `2l + 1` of loop layer `l`: `q`, `m` in
+  the first, `k`, `v` in the second), in the slot order `q, k, v, mlp` of the fork's loader.
 * `tensor_role` classifies a serving name. The HI2 candidates are `expert` and
   `attn_linear`; norms, `attn_res` and cross-pass queries, `mlp.gate` (router and its fp32
   bias), `attn_sink_proj`, short convolutions, loop controllers and the vision tower are
@@ -97,6 +101,7 @@ comparisons are skipped.
 | --- | --- |
 | `inkling_inventory.py` | Tensor classes, elements, bytes and stock bits per weight from the safetensors headers (main shard, MTP, vision), checked against the design review. |
 | `inkling_reference_check.py` | The reader against the fork's reference decoders on all 128 experts of every layer (the tests do four experts of two layers): bit patterns and largest absolute difference. |
+| `inkling_hf_names_check.py` | The reader's names and shapes against the real `Inkling2LoopForConditionalGeneration` (built on the meta device from the fork's transformers): every text-model tensor, both ways. |
 | `inkling_scale_stats.py` | Histograms of the UE8M0 and E4M3 block scales and of the NVFP4 `amax`; the count of weights that overflow, underflow or fall in the subnormal range of float16 and bfloat16; the relative energy each cast changes. |
 | `inkling_alloc_dryrun.py` | HI2's weight-only mode and its allocators on sampled real experts and attention linears: share of INT2/INT4/INT8, block mix, effective bits per weight, implied size. |
 | `inkling_dequant_probe.py` | Exactness of the device decode against the CPU, and the cost (read, host-to-device, decode, whole layer, peak memory) of decoding one layer. |
@@ -128,6 +133,15 @@ table `markov_head.markov_w1` (102,924,288 B). Experts alone at 3.5 bpw are 9.96
 20 NVFP4 and 4 MXFP8 layers) decode to the same float32 bits as the fork's `tiny_reference.py`
 (`inkling_reference_check.py`, CPU, 534 s; the de-interleaved gate and up rows are its even
 and odd rows): largest absolute difference 0.0.
+
+**Names and shapes against the real model class** (`inkling_hf_names_check.py`:
+`Inkling2LoopForConditionalGeneration` of the fork's transformers 5.24.0.dev0 built on the meta
+device, experts unfused with `hi2.moe.unfuse_experts`). The model has 9,861 text-model
+parameters and buffers and the reader produces exactly those names, 644 dense (`hf_names`),
+`message_input.query` and 9,216 expert projections, with equal shapes: 0 absent from the model,
+0 of a different shape, 0 not produced. The fused expert tensors of the class are
+`gate_up_proj [128, 2304, 2304]` and `down_proj [128, 2304, 1152]`, the layout of
+`fused_layer`. The 424 tensors of the vision tower are not read.
 
 **Every row has unit norm.** The rms of the dequantized `w13` weights of each of the 24 layers is
 0.020826-0.020833 (1/sqrt(2304) = 0.020833) and that of `w2` 0.029446-0.029462
@@ -206,4 +220,22 @@ activation-weighted cost.
   this checkpoint has fused serving tensors, so the comparison is `tests/test_inkling_source.py`'s
   (and the reader's own exactness tests), not that function.
 * The Hugging Face class of the model (`Inkling2LoopForConditionalGeneration`) is not in
-  the pinned transformers; the fork's tree supplies it.
+  the pinned transformers; the fork's tree supplies it (`~/w4a8_runs/pydeps/tfm-main` on the
+  build box).
+* The slot order of `message_input.query` (`q, k, v, mlp`) is the fork's working choice,
+  validated against the transformers code on a tiny model. The first token of the real model
+  (the fork's CPU oracle) does not separate it from the two other orders the fork tried: all
+  three give `<|message_model|>` as top-1 at 26.3-28.0. Pin it by comparing with the served
+  model before trusting a teacher.
+* `config.json` says `quantization_config: {quant_method: modelopt, quant_algo: NVFP4}` for
+  the whole model, but layers 20-23 are MXFP8 in the file: the reader decides from the dtypes
+  in the header, never from the config.
+* The vision tower (`model.visual.*`, 23 layers, 1024 wide) and the MTP head are not read.
+* Every module of `hi2` that reads weights does it from the source directory by name
+  (`weight_map`, `make_resolver`, `safe_open`: `pipeline`, `layerwise`, `moe`, `qad`,
+  `sensitivity`, `stack`, `cache`, `checkpoint`), and `pipeline._load_model` loads the model
+  with `from_pretrained(..., ignore_mismatched_sizes=True)`. The reader is not wired into any
+  of them, and `hi2 quantize` has not been run on this directory (packed U8 experts, serving
+  names, a `modelopt` `quantization_config`). A shape mismatch that `from_pretrained`
+  re-initializes instead of raising would leave experts random [inference: not tried], so a
+  run from this source must check, tensor by tensor, that every parameter was filled.

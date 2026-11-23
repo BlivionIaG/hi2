@@ -25,7 +25,10 @@ pytest.importorskip("safetensors")
 from safetensors.torch import save_file  # noqa: E402
 
 from hi2.inkling_source import (  # noqa: E402
+    CROSS_PASS_KV_QUERIES,
+    CROSS_PASS_QUERIES,
     FP4_VALUES,
+    MESSAGE_QUERY,
     InklingSource,
     dequant_mxfp8,
     dequant_nvfp4,
@@ -50,6 +53,7 @@ E, H, I_, VOCAB, UNPADDED = (
     24,
     20,
 )  # tiny geometry: K is 64 / 32 (blocks 16, 32)
+N_LOOP = 3  # loop layers of the tiny checkpoint (two cross-pass rows each)
 DEN = 2688.0
 
 
@@ -166,6 +170,8 @@ def _write_tiny(path: Path, fmts, seed=0, index=True):
         ).bfloat16()
     t["model.llm.embed.weight"] = torch.randn(VOCAB, H, generator=g).bfloat16()
     t["model.llm.unembed.weight"] = torch.randn(VOCAB, H, generator=g).bfloat16()
+    for name in (CROSS_PASS_QUERIES, CROSS_PASS_KV_QUERIES):
+        t[name] = torch.randn(2 * N_LOOP, H, generator=g)  # fp32, as in the real file
     path.mkdir(parents=True, exist_ok=True)
     shard = "model-00001-of-00001.safetensors" if index else "model.safetensors"
     save_file(t, str(path / shard), metadata={"format": "pt"})
@@ -450,6 +456,31 @@ def test_load_by_hugging_face_name(tiny):
         with pytest.raises(KeyError):
             src.load("model.language_model.layers.0.mlp.experts.1.w1.weight")
         assert "model.llm.layers.0.attn.wq_du.weight" in src.hf_names()
+
+
+def test_message_query_is_the_cross_pass_slots_in_the_forks_order(tiny):
+    path, _, _ = tiny
+    with InklingSource(path) as src:
+        q = src.tensor(CROSS_PASS_QUERIES)
+        kv = src.tensor(CROSS_PASS_KV_QUERIES)
+        assert tuple(q.shape) == (2 * N_LOOP, H) and q.dtype == torch.float32
+        got = src.message_query()
+        assert got.dtype == torch.float32 and tuple(got.shape) == (N_LOOP, 4, H)
+        for layer in range(
+            N_LOOP
+        ):  # rows 2l and 2l + 1 of each tensor: (q, m) and (k, v)
+            assert torch.equal(got[layer, 0], q[2 * layer])
+            assert torch.equal(got[layer, 1], kv[2 * layer])
+            assert torch.equal(got[layer, 2], kv[2 * layer + 1])
+            assert torch.equal(got[layer, 3], q[2 * layer + 1])
+        assert torch.equal(src.load(MESSAGE_QUERY), got)
+        assert src.load(MESSAGE_QUERY, dtype=torch.bfloat16).dtype == torch.bfloat16
+        other = src.message_query("kvqm")  # the order is a choice of the caller
+        assert torch.equal(other[:, 0], kv[0::2]) and torch.equal(other[:, 3], q[1::2])
+        assert torch.equal(other[:, 1], kv[1::2]) and torch.equal(other[:, 2], q[0::2])
+        for bad in ("qkv", "qkvv", "qkvx", ""):
+            with pytest.raises(ValueError):
+                src.message_query(bad)
 
 
 def test_name_map_and_roles():

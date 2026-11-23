@@ -1,0 +1,23 @@
+{
+ "checkpoint": "/home/chenco_adm/hfcache/inkling2-mini",
+ "transformers": "/home/chenco_adm/w4a8_runs/pydeps/tfm-main",
+ "class": "Inkling2LoopForConditionalGeneration",
+ "model_tensors": 10285,
+ "model_parameters_text": 9861,
+ "vision_tensors_not_read": 424,
+ "fused_expert_tensors": 48,
+ "fused_shapes_are_gate_up_2I_H_and_down_H_I": true,
+ "unfused_layers": 24,
+ "reader_names": 9861,
+ "reader_names_absent_from_model": [],
+ "n_absent": 0,
+ "shape_mismatches": {},
+ "n_mismatch": 0,
+ "text_tensors_the_reader_does_not_produce": [],
+ "n_unproduced": 0,
+ "message_query_shape": [
+  12,
+  4,
+  2304
+ ]
+}
