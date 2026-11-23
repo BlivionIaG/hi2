@@ -101,6 +101,7 @@ comparisons are skipped.
 | --- | --- |
 | `inkling_inventory.py` | Tensor classes, elements, bytes and stock bits per weight from the safetensors headers (main shard, MTP, vision), checked against the design review. |
 | `inkling_reference_check.py` | The reader against the fork's reference decoders on all 128 experts of every layer (the tests do four experts of two layers): bit patterns and largest absolute difference. |
+| `inkling_unfuse_check.py` | `hi2.moe.unfuse_experts` on a tiny real `Inkling2LoopForConditionalGeneration`: does the unfused forward run, and equal the fused one? Exit 1 today (the activation takes two arguments). |
 | `inkling_hf_names_check.py` | The reader's names and shapes against the real `Inkling2LoopForConditionalGeneration` (built on the meta device from the fork's transformers): every text-model tensor, both ways. |
 | `inkling_scale_stats.py` | Histograms of the UE8M0 and E4M3 block scales and of the NVFP4 `amax`; the count of weights that overflow, underflow or fall in the subnormal range of float16 and bfloat16; the relative energy each cast changes. |
 | `inkling_alloc_dryrun.py` | HI2's weight-only mode and its allocators on sampled real experts and attention linears: share of INT2/INT4/INT8, block mix, effective bits per weight, implied size. |
@@ -212,10 +213,18 @@ activation-weighted cost.
 
 ## Known gaps before a quantization run
 
-* `hi2.moe.UnfusedExperts.forward` is a plain SwiGLU. Inkling's experts soft-cap the gate and
-  up activations (`mlp_gate_softcap` 4.0, `mlp_up_softcap` 25.0 in `config.json`) and the
-  router scales its weights (`route_scale` 8.0); a teacher, or a forward through that view,
-  that ignores them is not the stock model. Use the model's own experts module as the teacher.
+* **`hi2.moe.UnfusedExperts` does not run Inkling.** It keeps the fused module's `act_fn` and
+  calls `act_fn(gate_proj(x)) * up_proj(x)`. The experts of Inkling have a two-argument gated
+  activation, `Inkling2LoopSoftcappedSwiGLU.forward(gate, up) = 4 tanh(gate / 4) * sigmoid(gate)
+  * 25 tanh(up / 25)` (`mlp_gate_softcap` 4.0, `mlp_up_softcap` 25.0 in `config.json`), so
+  `unfuse_experts` on a real `Inkling2LoopForConditionalGeneration` raises `TypeError: ...
+  missing 1 required positional argument: 'up'` on the first forward
+  (`experiments/inkling_unfuse_check.py`, the fork's tiny model: exit 1 today). A plain
+  `silu(gate) * up` would run and not be the stock model. A scratch two-argument branch
+  (`act_fn(gate, up)`) makes the unfused logits equal the fused ones (max abs difference
+  9.5e-7 at max |logit| 1.4, float32): that is the gate of the change `hi2/moe.py` needs, not
+  made here because no default path is touched. (`hi2.moe` also sums the top-k outputs in the
+  hidden dtype where the HF class sums in float32; the router applies `route_scale` 8.0 itself.)
 * `hi2.moe.check_unfused` compares the unfused views with per-expert checkpoint tensors;
   this checkpoint has fused serving tensors, so the comparison is `tests/test_inkling_source.py`'s
   (and the reader's own exactness tests), not that function.
