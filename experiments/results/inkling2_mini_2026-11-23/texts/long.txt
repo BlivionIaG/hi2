@@ -1,0 +1,1304 @@
+
+
+### docs/moe.md (part 0)
+
+# HI2 for mixture-of-experts models
+
+`hi2`'s MoE PTQ path calibrates, allocates and encodes routed experts into the
+v3.2 flex format (`quant_method: rdna_hint_flex`). A per-expert projection is an
+ordinary `model.layers.N.mlp.experts.E.{gate,up,down}_proj.hi2_*` tensor; the
+current default instead groups experts into stacks per layer/projection group.
+The tensor decode semantics are unchanged, but a native loader must support the
+selected layout. Routers, norms, embeddings and heads stay dense.
+This note records the implemented paths and the measured OLMoE-1B-7B-0924 PTQ
+case, not general MoE QAD or runtime compatibility. Check the
+[support matrix](getting-started.md#supported-inputs-and-evidence) first.
+
+## How experts are handled
+
+| Step | What the tool does | Why |
+| --- | --- | --- |
+| Model view | transformers 5 builds OLMoE (and Qwen2-MoE, Mixtral, ...) with fused 3-D experts (`experts.gate_up_proj [E, 2I, H]`, `experts.down_proj [E, H, I]`). `hi2.moe.unfuse_experts` replaces that module by a ModuleList of per-expert `gate_proj` / `up_proj` / `down_proj` Linears, views of the same storage, with the same forward. The first expert views are compared bit for bit with the checkpoint tensors before calibration. | The module paths are the checkpoint names, so the dense machinery (hooks, resolver, writer) applies unchanged. Checkpoints with per-expert ModuleLists need no adapter. |
+| Statistics | An expert Linear runs only on the tokens routed to it, so its 16x16 block moments and its Hessian are those tokens' only. | Spec 8.7: per-expert statistics. |
+| Shared inputs | Linears receiving the very same tensor (q/k/v; gate/up of one expert) are detected on their first call, which for an expert can be any sequence, and share one accumulator and one Hessian (stored once, the
+
+### hi2/pipeline.py (part 0)
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
+"""The three phases: tabulate (calibration), allocate (global), encode (write)."""
+
+import json
+import os
+import shutil
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import regex as re
+import torch
+
+from .allocate import allocate_by_quality, allocate_global
+from .cache import StatsView
+from .calibrate import Config, TensorTable, build_table
+from .checkpoint import (
+    DEFAULT_EXCLUDE,
+    Output,
+    is_eligible,
+    make_resolver,
+    weight_map,
+    write_checkpoints,
+)
+from .executor import Executor
+from .moe import expert_parts, expert_weights, group_key, probe_units
+from .runtime import RunSession, atomic_json, atomic_torch_save
+
+# Quality target when neither --max-error-ratio nor --target-bpw is given. Measured on
+# Qwen3.5-0.8B/4B and OLMoE (docs/results.md): ratio 6 with QAD gives about 3.4-3.5 bpw
+# at 1.02-1.03 x the unquantized perplexity; without QAD the same ratio is 1.075 x, so
+# PTQ-only runs spend more bits (ratio 4, about 3.7 bpw on the 0.8B).
+DEFAULT_ERROR_RATIO = 4.0  # PTQ only
+DEFAULT_ERROR_RATIO_QAD = 6.0  # QAD recovers most of the extra error
+
+
+@dataclass
+class RunConfig:
+    src: Path
+    dst: Path
+    workdir: Path
+    devices: list[str] = field(default_factory=lambda: ["cpu"])
+    # cache keys record this many devices instead of len(devices): reuse the statistics and
+    # the probe that a run on N devices made, on fewer devices (the QAD phase of a model whose
+    # probe needed several devices); 0 = the real count
+    cache_devices: int = 0
+    calib: Path | None = None  # None = data-free (unless calib_ids is given)
+    calib_ids: torch.Tensor | None = None  # [samples, seq_len], skips tokenising
+    ca
+
+### docs/lowbit.md (part 0)
+
+# HI2 at 3.0-3.5 bpw: INT8 rows, a final logit-KL phase, QAD data and loss
+
+This is a study of the quantizer at 3.0-3.5 bpw. At this size HI2 with QAD still trails
+EXL3 3.0 bpw on HellaSwag and MMLU (`qad.md`, `results.md`). The study asks
+which extra options close the gap.
+
+Nothing here changes the format. Every checkpoint below is a normal v3.2 checkpoint. INT8
+rows already exist in the format.
+
+## Summary
+
+| Item | Result | Default |
+| --- | --- | --- |
+| INT8 rows (`--bits 2,4,8`) | Works end to end: quality allocation, probe, cache, fused GPTQ, QAD, writer, verify, export-dense. At 3.0-3.5 bpw the allocator gives INT8 to 0.01-0.03 % of the weights, and every metric stays the same. Forcing the most sensitive tensors to INT8 is worse. | Opt-in, unchanged |
+| Final logit-KL phase (`--qad-final-kl STEPS`) | KLD -14 % (docs) and -10 % (mix) on the 0.8B; -6 % and -7 % on the 4B at 3.5 bpw. The completed 27B default run has docs KLD -39 % and mix KLD -15 % against PTQ; its internal held-out KL moved 0.4122 -> 0.2427. Multiple-choice accuracy did not materially change in the 4B study. | Requested by `default`/`thorough` (200 steps), off in `fast`. Cost is phase/model-specific: the 27B run took 247 min layer-wise plus 470.8 min final-KL, not a general +50 % overhead. Layer-sharded placement can use saved teacher head inputs (`<workdir>/qad/head_inputs.pt`); if the model-fit check still fails, final-KL is skipped with a note. See [operations.md](operations.md). |
+| Norm weights in the layer-wise phase | Within seed noise | Off |
+| KL term at the last layers of the layer-wise phase | Within seed noise | Off |
+| 2x QAD samples (512 instead of 256) | No gain: the docs KLD is 0.0598 against 0.0607, the perplexity is higher. | Off |
+| Task-style training text in the QAD mix | Wor
+
+### hi2/allocate.py (part 0)
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
+"""Global allocation: pick every row's ``(nbits, block)`` across the whole model.
+
+Minimise ``sum_t s_t * sse_t / energy_t`` (relative weighted output error per
+tensor, scaled by an optional sensitivity ``s_t``) subject to a model-wide
+bits-per-weight target. For a multiplier ``lam`` every row independently picks the
+candidate minimising ``cost + lam * bits``; ``lam`` is bisected to meet the target.
+"""
+
+import math
+from dataclasses import dataclass
+
+import torch
+
+from .calibrate import TensorTable, candidate_row_bits
+
+ROW_OVERHEAD_BITS = 48 + 2 + 1  # row constants + block-size flag + INT4 flag, per row
+
+
+def row_overhead_bits(t: TensorTable) -> int:
+    """Per-row overhead of spec 2.5 for the code widths the table allows: the INT4 flag
+    is ``ceil(log2(#widths))`` bits (1 for INT2/INT4 as before, 2 with INT8 added)."""
+    widths = len({nb for nb, _ in t.candidates})
+    return ROW_OVERHEAD_BITS - 1 + max(1, math.ceil(math.log2(max(widths, 1))))
+
+
+def _overhead(tables) -> int:
+    return sum(
+        row_overhead_bits(t) * t.shape[0]
+        + t.shape[1] // 16
+        + (16 * t.shape[1] if t.col_scale is not None else 0)  # smoothing vector
+        for t in tables
+    )
+
+
+@dataclass
+class Allocation:
+    picks: dict[str, torch.Tensor]  # name -> candidate index per row
+    bpw: float
+    lam: float
+    feasible: bool
+    error_ratio: float = float(
+        "nan"
+    )  # weighted error / best achievable with these candidates
+    frac_by_bits: dict[int, float] | None = None  # share of rows per code width
+
+
+def restrict(t: TensorTable, keep) -> TensorTable:
+    """A copy of ``t`` with only the candidates ``(nbits, block)`` for which ``keep`` is
+    true (picks th
+
+### docs/qad.md (part 0)
+
+# HI2 quantization-aware distillation (QAD)
+
+Tool-side extension of the HI2 v3.2 format (`format-spec.md`, section 13).
+QAD changes which codes and block parameters are stored, never the format: a QAD
+checkpoint is a normal `rdna_hint_flex` v3.2 checkpoint that `hi2 eval`,
+`hi2 export-dense` and the fork's loader read unchanged.
+
+## Quick start
+
+QAD is **on by default** whenever calibration text is given:
+
+```bash
+cd .
+# HF model -> QAD checkpoint (quality allocation, sensitivity probe, PTQ, then QAD)
+python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --max-error-ratio 6
+# PTQ only
+python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --no-qad
+# inspect inputs/settings and resource estimates; this is not a model execution
+python -m hi2 quantize <hf_model_dir> <out_dir> --calib calib.txt --dry-run
+# score it against the unquantized model on held-out text
+python -m hi2 eval <hf_model_dir> <out_dir> --text heldout.txt --device cuda:0
+# dense fp16 Hugging Face copy (llama.cpp requires a separate compatible GGUF conversion)
+python -m hi2 export-dense <hf_model_dir> <out_dir> <dense_dir>
+```
+
+At the start the run logs that QAD is on and a rough estimate of layer-wise training
+time on the chosen device. That estimate is not total runtime: final-KL, probing,
+encoding and first-use compilation have separate costs ([operations.md](operations.md)).
+A run without `--calib` (data-free) cannot distill: it logs a warning and writes a
+PTQ checkpoint. `--no-qad` also selects PTQ only. `--max-error-ratio 6` is the
+current default allocation target with QAD (see "Recommendation for the default
+ratio"); this is a global error proxy, not a final-KLD guarantee.
+
+Expected cost on one Radeon PRO V620 (gfx1030), model in RAM:
+
+| Model | Phase 1 + sensitivity | QAD `de
+
+### docs/moe.md (part 1)
+
+ others are symlinks). They get one smoothing vector and one set of rotation flags (`calibrate.shared_transform`, chosen on their rows together under `--rotation auto`). | The fork rejects an expert whose gate and up transforms differ, and fuses q/k/v and gate/up into one call when they match. |
+| Token floor | An expert that saw fewer than `--expert-min-tokens` (default 2) x its widest input routed tokens keeps its own tokens and fills the missing ones with the layer average of its projection: `S_e + (m - n_e) * S_layer / n_layer`, for the block moments and the Hessian. The affected experts are logged per layer; `workdir/expert_tokens.json` holds every expert's token count, the topped-up list and min / median / max per layer and projection. An expert group with no tokens at all falls back to data-free weights (logged). | A Hessian from a few hundred tokens is rank deficient; the layer average is the best prior for the missing directions. |
+| Allocation weight | The allocator minimises `sum_t w_t * rel_err_t`. A dense tensor has `w = 1`; the E experts of one layer and projection get `w_e = share_e / E` with `share_e = n_e / mean(n)` (floored at `--expert-share-floor`, 0.05). | Each token sees a router-weighted average of its experts' errors, so the whole group weighs as one dense projection and an expert counts in proportion to the tokens it serves. Without this, 3072 expert tensors would outvote 64 attention tensors. |
+| Sensitivity probe | `--sensitivity probe` quantizes a unit at the reference configuration and measures the KL: a dense tensor alone, or all experts of a layer and projection at once (112 probes for OLMoE instead of 3136). The unit's `s_u = dKL / sum_e w_e rel_err_e` is median-normalised and floored, and each member gets `s_u * w_e`. `--sens-dtype float
+
+### hi2/pipeline.py (part 1)
+
+lib_samples: int = 128
+    seq_len: int = 2048
+    target_bpw: float | None = None  # model-wide bits per weight, or
+    max_error_ratio: float | None = None  # quality target (INT2 where it matters less)
+    # several quality targets from one phase 1 / probe, written to <dst>-r<ratio>
+    max_error_ratios: list[float] | None = None
+    include: str | None = None
+    exclude: str = DEFAULT_EXCLUDE
+    limit_layers: int | None = None
+    compute_dtype: str = "float32"
+    cfg: Config = field(default_factory=Config)
+    # spec 8.6: none | probe (measure each tensor's KL cost and weight the allocation)
+    sensitivity: str = "none"
+    sens_seqs: int = 8
+    sens_len: int = 512
+    sens_floor: float = 0.05
+    sens_batch: int = 1  # probe sequences per forward (1 = the original probe, exact)
+    sens_dtype: str = (
+        "auto"  # probe dtype: auto (float32, else float16), float32, float16
+    )
+    # MoE: lower bound of an expert's routed-token share (relative to uniform routing)
+    # in its allocation weight
+    expert_share_floor: float = 0.05
+    # persistent cache of statistics, tables and probe results (hi2.cache); None keeps
+    # everything in the workdir as before
+    cache_dir: Path | None = None
+    sigma_fp16_above: int = 0  # cache Sigma in fp16 for K above this (0 = always fp32)
+    # layer-wise quantization-aware distillation after the allocation (spec 13); None = off
+    qad: object | None = None  # hi2.qad.QadConfig
+    # routed experts on disk: per-expert (one HI2 tensor per expert projection) or
+    # stacked (one per layer and projection group, hi2.stack); same weights either way
+    moe_layout: str = "stacked"
+    # experiment (docs/lowbit.md): the N most sensitive tensors all-INT8, the
+    # others INT2/INT4 (needs INT8 candidates); 0 = off
+    int
+
+### docs/lowbit.md (part 1)
+
+se on held-out text (docs KLD 0.0720 against 0.0607). It adapts the model to the task style, not to the language. | Not a default |
+
+## Setup
+
+* Model: Qwen3.5-0.8B at 3.5 bpw (error ratio chosen for that size), one V620.
+* Two held-out texts: `docs` (documentation text, unquantized perplexity 10.874) and `mix`
+  (mixed domains, 5.483). The columns are perplexity of the quantized model and
+  KL(original to quantized) in nats per token.
+* Every run uses the same calibration text, the same seed, and the `fast` QAD preset
+  unless the row says otherwise.
+* Seed noise: the same recipe with a different seed moves the docs KLD by about 0.001
+  (0.0607 and 0.0615). Treat smaller differences as noise.
+
+## Results on Qwen3.5-0.8B
+
+| Run | docs ppl | docs KLD | mix ppl | mix KLD |
+| --- | ---: | ---: | ---: | ---: |
+| PTQ only (3.5 bpw) | 12.406 | 0.1288 | 6.848 | 0.1841 |
+| QAD (3.5 bpw), reference | 11.388 | 0.0607 | 6.309 | 0.1249 |
+| QAD with INT8 candidates | 11.409 | 0.0604 | 6.309 | 0.1255 |
+| PTQ with INT8 candidates | 12.412 | 0.1290 | 6.850 | 0.1845 |
+| PTQ, 2 most sensitive tensors forced to INT8 | 12.484 | 0.1327 | 6.872 | 0.1885 |
+| PTQ, 4 forced | 12.576 | 0.1443 | 7.014 | 0.2085 |
+| PTQ, 8 forced | 12.774 | 0.1620 | 7.186 | 0.2379 |
+| QAD, norm weights trained | 11.406 | 0.0598 | 6.298 | 0.1236 |
+| QAD, KL term at the last layers | 11.376 | 0.0617 | 6.308 | 0.1250 |
+| QAD, 512 samples | 11.476 | 0.0598 | 6.323 | 0.1253 |
+| QAD, task-style text in the mix | 11.603 | 0.0720 | not run | not run |
+| QAD + final KL, 100 steps | 11.148 | 0.0573 | 6.174 | 0.1165 |
+| QAD + final KL, 200 steps | 11.133 | 0.0556 | 6.140 | 0.1142 |
+| QAD + final KL, 200 steps, learning-rate variant 1 | 11.090 | 0.0522 | 6.137 | 0.1128 |
+| QAD + final KL, 200 steps, learning-rate variant 2 | 1
+
+### hi2/allocate.py (part 1)
+
+en index the reduced list; the encoder reads ``t.candidates``)."""
+    import dataclasses
+
+    idx = [i for i, c in enumerate(t.candidates) if keep(c)]
+    if len(idx) == len(t.candidates) or not idx:
+        return t
+    return dataclasses.replace(
+        t, sse=t.sse[idx], candidates=[t.candidates[i] for i in idx]
+    )
+
+
+def force_int8(
+    tables: dict[str, TensorTable], sens: dict[str, float] | None, top: int
+) -> tuple[dict[str, TensorTable], list[str]]:
+    """Experiment rule: the ``top`` tensors with the highest probe sensitivity (among those
+    with INT8 candidates) keep only their INT8 candidates, every other tensor loses them."""
+    sens = sens or {}
+    cand = [n for n, t in tables.items() if any(nb == 8 for nb, _ in t.candidates)]
+    chosen = sorted(cand, key=lambda n: -sens.get(n, 1.0))[:top]
+    out = {}
+    for n, t in tables.items():
+        if n in chosen:
+            out[n] = restrict(t, lambda c: c[0] == 8)
+        else:
+            out[n] = restrict(t, lambda c: c[0] != 8)
+    return out, chosen
+
+
+def _costs(t: TensorTable, s: float):
+    k = t.shape[1]
+    cost = (s / max(t.energy, 1e-30)) * t.sse  # [C, R]
+    bits = torch.tensor(
+        [candidate_row_bits(nb, b, k) for nb, b in t.candidates], dtype=torch.float64
+    )
+    return cost.double(), bits
+
+
+def _argmin0(v: torch.Tensor) -> torch.Tensor:
+    """``v.argmin(0)`` (first index of the minimum, ``v`` without NaN) as C-1 vector
+    compares: torch's strided dim-0 argmin is ~30x slower on CPU for ``[6, 10^5]``."""
+    best = v[0].clone()
+    idx = torch.zeros(v.shape[1], dtype=torch.int64)
+    for c in range(1, v.shape[0]):
+        m = v[c] < best
+        best = torch.where(m, v[c], best)
+        idx.masked_fill_(m, c)
+    return idx
+
+
+class _Flat:
+    """All tables' costs and bits side by
+
+### docs/qad.md (part 1)
+
+fault` | QAD `fast` | GPU peak (QAD) | RAM (QAD process) |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3.5-0.8B (24 layers) | 8-13 min | 41 min (about 1.7 min per layer) | 17 min | 1.4 GiB | about 15 GiB |
+| Qwen3.5-4B (32 layers) | 50 min | 3.1 h (about 5.5 min per layer) | about 1.3 h (estimate) | 6.0 GiB | about 46 GiB |
+
+These historical QAD timings describe layer-wise training, not the subsequently
+default-on final-KL phase. For example, the completed 27B `default` run took
+247 minutes layer-wise **plus 470.8 minutes final-KL**.
+
+The first trained layer of a run also pays the one-time Triton autotune of the
+linear-attention backward kernels (about 10 minutes on this box, cached afterwards).
+The PTQ studies run with `--no-qad`.
+
+## What it does
+
+The PTQ pipeline runs first, unchanged: phase 1 (statistics, smoothing vectors, rotation
+flags, candidate tables, Hessians), the sensitivity probe, the allocation (quality mode
+`--max-error-ratio` by default, or `--target-bpw`) and, per layer, the Hessian-aware
+encode. QAD then trains the decoder layers one at a time, in order:
+
+* **Inputs and targets.** Student input of layer `L` = the hidden states produced by the
+  already quantized layers `0..L-1`; target = the unquantized layer `L` applied to the
+  unquantized prefix's hidden states. Both live in RAM; one layer is on the GPU. Training
+  against the teacher path asks each layer to absorb the error its prefix left.
+* **Trainable, per Linear:** fp32 latent weights in the stored basis `H (W s)` and the
+  per-block ladder bytes `(lo_u8, step_u8)` as continuous values. **Frozen:** every row's
+  `(nbits, B)` from the PTQ allocation, the per-row fp16 constants
+  `(lo_min, lo_scale, step_scale)`, the smoothing vector `s` and the Hadamard flags.
+* **Forward = the exact decode of 
+
+### docs/moe.md (part 2)
+
+16` puts a model that does not fit in fp32 on one GPU (bf16 has no GEMM on gfx1030 and is emulated very slowly). | Keeps the probe one forward per unit. |
+| Reuse | Compatible persistent statistics/tables/probe entries can serve several allocation targets. Current output/workdir reuse also requires the matching run manifest; use separate output/work directories for a changed allocation rather than relying only on `phase1.json`. | Phase 1 and the probe were 25 of the 100 minutes in the first historical OLMoE run. |
+| Writer and export | The checkpoint is streamed as before; `load_dequantized`, `export-dense`, `eval` and `verify` work on the per-expert names (transformers fuses them again on load) in either layout. `eval --dtype` selects the dtype of both models. `--moe-layout stacked` writes one stack per layer and gate_up/down group instead (see "Stacked expert layout"). | |
+
+## Historical PTQ recipe
+
+This reproduces the sampling and PTQ intent of the 2026-10-26 OLMoE experiment,
+not a qualified MoE QAD recipe. `$OLMOE` must name a local safetensors checkpoint
+with per-expert 2-D weights. `calib_mix.txt` needs at least 364,544 tokens counted
+with that model's tokenizer; `eval_mix.txt` is a separate untouched corpus.
+The explicit per-expert layout matches the original experiment; new quantizations
+otherwise default to stacked.
+
+```bash
+python -m hi2 quantize "$OLMOE" out-r4 --workdir olmoe-r4.work --devices cuda:0 \
+  --calib calib_mix.txt --calib-samples 178 --seq-len 2048 --no-qad \
+  --sensitivity probe --sens-dtype float16 --max-error-ratio 4 --moe-layout per-expert
+python -m hi2 quantize "$OLMOE" out-b3.0 --workdir olmoe-b3.0.work --devices cuda:0 \
+  --calib calib_mix.txt --calib-samples 178 --seq-len 2048 --no-qad \
+  --sensitivity probe --sens-dtype float16 --tar
+
+### hi2/pipeline.py (part 2)
+
+8_force: int = 0
+
+
+def calib_paths(path) -> list[Path]:
+    """One path, a list of paths, or a comma-separated string of paths."""
+    if isinstance(path, (list, tuple)):
+        return [Path(p) for p in path]
+    return [Path(p) for p in str(path).split(",") if p]
+
+
+def read_calibration_text(path) -> str:
+    """Text of one or several .txt / .jsonl (``text`` field) files, concatenated."""
+    parts = []
+    for p in calib_paths(path):
+        if p.suffix == ".jsonl":
+            parts.append(
+                "\n\n".join(
+                    json.loads(ln)["text"] for ln in p.read_text().splitlines() if ln
+                )
+            )
+        else:
+            parts.append(p.read_text())
+    return "\n\n".join(parts)
+
+
+def load_calibration_ids(path, tokenizer, samples: int, seq_len: int) -> torch.Tensor:
+    """``[samples, seq_len]`` token ids from .txt files or .jsonl files with ``text``
+    (several files are concatenated in the order given)."""
+    text = read_calibration_text(path)
+    ids = tokenizer(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
+    need = samples * seq_len
+    if ids.numel() < need:
+        raise SystemExit(
+            f"calibration file has {ids.numel()} tokens, need {need} "
+            f"({samples} x {seq_len}); lower --calib-samples or --seq-len"
+        )
+    return ids[:need].reshape(samples, seq_len)
+
+
+def _windows(text, tokenizer, samples, seq_len, gen, what) -> torch.Tensor:
+    ids = tokenizer(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
+    n_win = ids.numel() // seq_len
+    if n_win < samples:
+        raise SystemExit(
+            f"{what} has {ids.numel()} tokens = {n_win} windows of {seq_len}, need "
+            f"{samples}; add text or lower --qad-samples / --seq-len"
+        )
+    pick =
+
+### docs/lowbit.md (part 2)
+
+1.040 | 0.0527 | 6.020 | 0.1140 |
+| QAD (3.0 bpw), reference | 11.796 | 0.0993 | 7.292 | 0.2538 |
+
+## Results on Qwen3.5-4B
+
+Same setup at 3.5 bpw (error ratio 6.2; allocation 3.499 bpw, INT2 44.4 % and INT4 55.6 % of
+the rows), unquantized perplexity 7.067 on the docs text.
+
+| Run | docs ppl | docs KLD | mix ppl | mix KLD |
+| --- | ---: | ---: | ---: | ---: |
+| PTQ only | 7.600 | 0.0927 | 4.055 | 0.1168 |
+| PTQ with INT8 candidates | 7.604 | 0.0925 | 4.056 | 0.1173 |
+| QAD, weight-unit latents (older default) | 7.190 | 0.0416 | 3.999 | 0.1033 |
+| QAD, step-unit latents (current default) | 7.221 | 0.0450 | 3.985 | 0.0934 |
+| QAD, step-unit latents + final KL, 200 steps | 7.137 | 0.0425 | 3.933 | 0.0869 |
+| PTQ only, 3.0 bpw | 8.041 | 0.1607 | 4.438 | 0.2258 |
+| QAD, step-unit latents, 3.0 bpw | 7.308 | 0.0677 | 4.276 | 0.1770 |
+
+The final-KL phase lowers the KLD against the step-unit QAD baseline by 5.6 % (docs) and
+7.0 % (mix). Its own log shows the held-out KL falling from 0.1175 to 0.1033 (-12.1 %) in
+92.9 minutes. Against the older weight-unit QAD, the docs KLD does not improve (0.0425
+against 0.0416). INT8 candidates change nothing at this size, as on the 0.8B model.
+
+All numbers of this page are in
+[`experiments/results/lowbit_runs_2026-10-26.json`](../experiments/results/lowbit_runs_2026-10-26.json)
+(parsed from the `hi2 eval` logs of each run).
+
+Read the 0.8B table as follows.
+
+1. **INT8 does not help at this size.** The allocator already finds that INT4 is enough
+   for almost every row. Forced INT8 costs bits that INT2 rows would have saved, so
+   quality drops as more tensors are forced.
+2. **The final logit-KL phase is the only option that moves the numbers.** It trains
+   against the full output distribution after the layer-wise phase. It reduces KLD, but
+ 
+
+### hi2/allocate.py (part 2)
+
+ side (``[C, sum R]``, missing candidates of a
+    table padded with an infinite cost), so a multiplier is solved with one argmin
+    instead of one per tensor. The per-tensor sums are taken over the same values in
+    the same order as before, so the bisection, and every pick, is unchanged."""
+
+    def __init__(self, data):
+        c = max(cost.shape[0] for _, cost, _ in data)
+        self.spans = []
+        costs, bits = [], []
+        off = 0
+        for t, cost, b in data:
+            r = cost.shape[1]
+            pad = c - cost.shape[0]
+            cc = torch.cat([cost, torch.full((pad, r), float("inf"), dtype=cost.dtype)])
+            bb = (
+                torch.cat([b, torch.zeros(pad, dtype=b.dtype)])
+                .unsqueeze(1)
+                .expand(c, r)
+            )
+            costs.append(cc)
+            bits.append(bb)
+            self.spans.append((t.name, off, off + r))
+            off += r
+        self.cost = torch.cat(costs, 1)
+        self.bits = torch.cat(bits, 1).contiguous()
+
+    def solve(self, lam: float):
+        """``(picks, picked bits per tensor, picked cost per tensor)``."""
+        p = _argmin0(self.cost + lam * self.bits)
+        pb = self.bits.gather(0, p[None])[0]
+        pc = self.cost.gather(0, p[None])[0]
+        picks, nbits, err = {}, [], []
+        for name, a, b in self.spans:
+            picks[name] = p[a:b].clone()
+            nbits.append(pb[a:b].sum().item())
+            err.append(pc[a:b].sum().item())
+        return picks, nbits, err
+
+
+def _summary(data, picks):
+    """Weighted error relative to the best achievable, and the row share per width."""
+    err = floor = 0.0
+    counts: dict[int, int] = {}
+    rows = 0
+    for t, cost, _ in data:
+        p = picks[t.name]
+        idx = torch.arange(p.numel())
+        err += 
+
+### docs/qad.md (part 2)
+
+spec 2.2.** Bytes are rounded and clamped to 0..255 and
+  decoded with the same `decode_params` as the reader; codes are
+  `clamp(round((v - lo) / step))`; the stored value is `fp16(lo + code * step)` computed
+  in float64 with one rounding. Straight-through estimators carry the gradient (identity
+  through the byte rounding, LSQ-style through the code rounding: the gradient reaches
+  the latent inside the ladder, `step` through `code - z`, `lo` through clamped weights).
+  The stored-basis weight is mapped back, `W = H^-1(w) / s`, so the layer runs in its
+  original basis.
+* **Initialisation (`init=weights`, default):** the latents start at the unquantized
+  weights (spec 13) and the bytes at the PTQ bytes, so step 0 is nearest rounding on the
+  PTQ ladders. `init=ptq` starts the latents at the GPTQ-compensated weights (the values
+  each code was rounded from), so step 0 reproduces the PTQ checkpoint bit for bit. On
+  0.8B the two are within seed noise; on 4B `init=weights` gained more per layer.
+* **Latent units (`latent_units=step`, default):** each latent is stored divided by its
+  block's initial quantization step, so `lr_w = 0.01` means 1 % of a step per update on
+  any model. With absolute latents the best learning rate on 0.8B (1e-4) is 1 % of an
+  INT2 step there but 2.7 % of an INT4 step on 4B, and the first 4B layers over-stepped
+  and kept the PTQ encoding.
+* **Loss and optimizer:** normalised MSE of the layer output against the target, AdamW
+  (no weight decay) with separate learning rates for latents and bytes, linear warm-up
+  then cosine decay, gradient accumulation over `batch` sequences per step.
+* **Keep-best:** the loss on internal held-out calibration sequences (spread over
+  the set) is measured before training (for the starting state and PTQ encodi
+
+### docs/moe.md (part 3)
+
+get-bpw 3.0 --moe-layout per-expert
+python -m hi2 eval "$OLMOE" out-r4 --text eval_mix.txt --skip-tokens 0 \
+  --device cpu --dtype float32
+```
+
+The second allocation can reuse compatible persistent statistics and probe entries,
+while keeping separate output/work state. Both commands run PTQ only: no layer-wise
+QAD or final-KL. Without `--no-qad`, current default QAD requires 540,672 tokens,
+more than the historical corpus. See the [support matrix](getting-started.md#supported-inputs-and-evidence)
+and [recovery rules](operations.md#resume-and-invalidation) before changing a recipe.
+
+## OLMoE-1B-7B-0924 (measured 2026-10-26)
+
+Setup: one V620 (gfx1030), calibration on the head of `calib_mix.txt` (docs, chat and
+tool-calling text, 178 x 2048 = 364,544 tokens, the whole file), `--rounding gptq`
+(default), smoothing 0.5 + rotation on, `--sensitivity probe --sens-dtype float16`,
+token floor 2 x input width. Evaluation with `hi2 eval` in fp32 on CPU, 8 x 2048
+tokens: `study_text_all.txt` from token 800,000 and `eval_mix.txt` from token 0.
+Checkpoints: `olmoe-r4` and `olmoe-b3.0`.
+
+| Run | bpw (HI2 tensors) | bpw (whole file) | INT2 / INT4 rows | experts bpw | attention bpw | allocation error ratio |
+| --- | --- | --- | --- | --- | --- | --- |
+| `--max-error-ratio 4` | 3.539 | 3.97 | 40.0% / 60.0% | 3.49 | 4.67 | 4.00 |
+| `--target-bpw 3.0` | 3.000 | 3.45 | 67.4% / 32.6% | 2.93 | 4.57 | 7.43 |
+
+"Whole file" is the checkpoint size (3.44 GB and 2.98 GB, against 13.84 GB in bf16)
+over all 6.92 B parameters, with embedding, head, router and norms kept in bf16.
+
+| Run | study ppl (orig 6.634) | ratio | KLD (nats/token) | top-1 | mix ppl (orig 3.924) | ratio | KLD | top-1 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ratio 4 (3.54 bpw) | 6.707 | 1.011 | 0.0169 | 94.4% |
+
+### hi2/pipeline.py (part 3)
+
+ torch.randperm(n_win, generator=gen)[:samples]
+    return ids[: n_win * seq_len].reshape(n_win, seq_len)[pick.sort().values]
+
+
+def sample_calibration_windows(
+    path, tokenizer, samples: int, seq_len: int, seed: int = 0, balanced: bool = False
+) -> torch.Tensor:
+    """``[samples, seq_len]`` token ids: non-overlapping windows drawn uniformly (seeded)
+    from the whole calibration text, so every domain of a concatenated file is
+    represented, not only its head. ``balanced`` draws the same number of windows from
+    each calibration file instead (domain balance regardless of file sizes)."""
+    gen = torch.Generator().manual_seed(seed)
+    paths = calib_paths(path)
+    if not balanced or len(paths) == 1:
+        text = read_calibration_text(path)
+        return _windows(text, tokenizer, samples, seq_len, gen, "calibration text")
+    parts = []
+    for i, p in enumerate(paths):
+        n = samples // len(paths) + (1 if i < samples % len(paths) else 0)
+        text = read_calibration_text(p)
+        parts.append(_windows(text, tokenizer, n, seq_len, gen, str(p)))
+    return torch.cat(parts)
+
+
+def _phase1_key(rc: RunConfig) -> dict:
+    """Settings that determine the phase-1 tables; a workdir whose ``phase1.json``
+    matches them is reused (e.g. one calibration for several allocation targets)."""
+    c = rc.cfg
+    return {
+        "src": str(rc.src),
+        "calib": str(rc.calib),
+        "calib_samples": rc.calib_samples,
+        "seq_len": rc.seq_len,
+        "include": rc.include,
+        "exclude": rc.exclude,
+        "limit_layers": rc.limit_layers,
+        "compute_dtype": rc.compute_dtype,
+        "candidates": [list(x) for x in c.candidates],
+        "rotation": c.rotation,
+        "smooth": c.smooth,
+        **({"smooth_search": list(c.smooth_search)} if c.
+
+### docs/lowbit.md (part 3)
+
+  multiple-choice accuracy did not change in the 4B runs.
+3. **Training text matters less than expected.** More samples do not help. Task-style
+   text hurts held-out language modelling.
+
+## Defaults
+
+The final-KL phase is on with the default QAD preset. The other options are off. Switch with:
+
+```bash
+python -m hi2 quantize SRC DST --calib calib.txt --bits 2,4,8           # INT8 rows
+python -m hi2 quantize SRC DST --calib calib.txt --qad-final-kl 0       # turn the final logit-KL phase off
+```
+
+The final-KL learning rates default to the values measured on Qwen3.5-4B.
+
+## Tools
+
+* `experiments/restamp_qad.py`: reuse per-layer QAD artifacts of an older run after
+  checking that the recomputed layers are bit-identical.
+* `experiments/int8_usage.py`, `experiments/make_calib_tasks.py`: INT8 usage report and
+  task-style calibration text.
+* Tests: `tests/test_lowbit.py`.
+
+## What is not done
+
+* The 4B final-KL runs at 100 steps and the 4B learning-rate run were stopped before they
+  finished. The 4B numbers come from the 200-step run only.
+* Nobody scored the 0.8B final-KL variants on the multiple-choice tasks.
+
+
+### hi2/allocate.py (part 3)
+
+cost[p, idx].sum().item()
+        floor += cost.min(0).values.sum().item()
+        for ci, (nb, _b) in enumerate(t.candidates):
+            counts[nb] = counts.get(nb, 0) + int((p == ci).sum())
+        rows += p.numel()
+    return err / max(floor, 1e-30), {nb: n / max(rows, 1) for nb, n in counts.items()}
+
+
+def allocate_by_quality(
+    tables: list[TensorTable],
+    max_error_ratio: float,
+    sensitivity: dict[str, float] | None = None,
+    iters: int = 80,
+) -> Allocation:
+    """Quality-driven allocation: the fewest bits whose sensitivity-weighted error is at
+    most ``max_error_ratio`` times the best achievable with the allowed candidates (1.0 =
+    every row at its most accurate candidate). Rows that matter less end up on INT2 and
+    the rest on INT4 (or INT8 if allowed); the model-wide bpw is a result, not an input."""
+    sens = sensitivity or {}
+    data = [(t, *_costs(t, sens.get(t.name, 1.0))) for t in tables]
+    total_w = sum(t.shape[0] * t.shape[1] for t in tables)
+    overhead = _overhead(tables)
+    floor = sum(cost.min(0).values.sum().item() for _, cost, _ in data)
+    budget = max_error_ratio * floor
+
+    flat = _Flat(data)
+
+    def solve(lam: float):
+        picks, _, errs = flat.solve(lam)
+        err = 0.0
+        for e in errs:
+            err += e
+        return picks, err
+
+    lam_hi = 1.0
+    for _t, cost, bits in data:
+        span_b = (bits.max() - bits.min()).clamp_min(1e-9)
+        lam_hi = max(
+            lam_hi,
+            2 * ((cost.max(0).values - cost.min(0).values) / span_b).max().item(),
+        )
+    lo, hi = lam_hi * 1e-12, lam_hi  # larger lam -> fewer bits, more error
+    picks, err = solve(lo)
+    best_lam, feasible = lo, err <= budget
+    if feasible:
+        for _ in range(iters):
+            mid = (lo * hi) ** 0.5
+         
+
+### docs/qad.md (part 3)
+
+ng)
+  and at each evaluation. With `keep_best` enabled, the layer retains the best
+  evaluated state under that local objective. This does not bound full-model
+  KLD, task accuracy, or loss on an independent final corpus.
+* **Step budget and early stop.** A run may spend `budget x steps x layers` optimizer
+  steps. Each layer gets the remaining budget per remaining layer, scaled by how much the
+  previous layer gained relative to the mean gain so far (0.5x to 2x, the first layer
+  2x), between `min_steps` and `steps`; a layer stops when one evaluation interval
+  (`eval_every` steps) improves its held-out nMSE by less than `min_gain`, and the
+  unspent steps go to later layers. The 4B logs motivated it: early layers gain about
+  10-15 %, the last ones 2-3 %. Steps spent per layer and the time saved are logged.
+* **Export:** the codes and bytes of the kept state, assembled through the existing
+  writer. `dequantize_stored` of the exported tensor equals the forward's stored values
+  bit for bit (tested), and the written shards equal the per-layer artifacts (tested).
+
+QAD uses a separate sampling operation from the PTQ prefix: `samples + val`
+seeded, non-overlapping `seq_len` windows from the **whole calibration text**.
+They can overlap the PTQ prefix; random sampling does not guarantee every domain
+appears. Interleave domains and reserve final-test documents outside the entire
+calibration input ([data roles](evaluation.md#prepare-independent-data)).
+Without calibration text the run falls back to PTQ with a warning; too little
+text fails with the required amount and options to change.
+
+## The modes
+
+Three independent switches, all on the command line of `hi2 quantize`:
+
+* the **recipe** decides how much the QAD trains (`--qad-preset`, or any field of
+  `QadConfig` through `
+
+### docs/moe.md (part 4)
+
+ 4.108 | 1.047 | 0.0480 | 90.2% |
+| 3.0 bpw | 6.773 | 1.021 | 0.0313 | 91.8% | 4.287 | 1.093 | 0.0910 | 87.0% |
+
+The chat and tool-calling text (`eval_mix`) loses about three times as much as the
+prose text at both sizes.
+
+Per projection (bpw, ratio 4 / 3.0 bpw): q 4.32 / 4.15, k 4.30 / 4.14, v 5.03 / 4.99,
+o 5.03 / 4.97; experts gate 3.29 / 2.79, up 3.52 / 2.94, down 3.66 / 3.07. The probe
+(sum over a unit, mean over layers, median 1) rates the expert groups (gate 1.16, up
+1.37, down 1.40) and v/o (1.28, 1.15) well above q/k (0.37, 0.43).
+
+### Expert coverage
+
+Routed tokens per expert (gate, up and down of an expert see the same tokens), out of
+364,544 x 8 routed slots per layer (45,568 per expert if uniform):
+
+| Layer | min | median | max | Layer | min | median | max |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 5,582 | 39,860 | 178,164 | 8 | 4,964 | 36,414 | 224,103 |
+| 1 | 11,763 | 38,042 | 207,533 | 9 | 9,338 | 36,551 | 218,736 |
+| 2 | 8,457 | 37,162 | 241,330 | 10 | 5,251 | 36,785 | 203,442 |
+| 3 | 11,036 | 36,860 | 167,767 | 11 | 8,942 | 33,717 | 222,244 |
+| 4 | 5,206 | 32,071 | 195,731 | 12 | 5,375 | 35,151 | 202,658 |
+| 5 | 9,361 | 31,200 | 227,366 | 13 | 6,921 | 33,321 | 179,215 |
+| 6 | 8,113 | 33,054 | 211,453 | 14 | 4,865 | 35,072 | 206,220 |
+| 7 | 3,358 | 34,442 | 223,271 | 15 | 6,122 | 31,146 | 207,265 |
+
+Every one of the 1,024 experts received tokens; 12 got fewer than 8,192 and one (layer
+7, expert 51, 3,358 tokens) was below the 4,096-token floor and topped up (its three
+tensors). Routing is skewed: the busiest expert of a layer sees 4 to 7 times the median.
+With the 16k-token calibration of a smoke test, 63 of 64 layer-0 experts were below the
+floor, so the full calibration file is needed.
+
+### Cost
+
+| Stage | Time | Peak memory |
+| --- | -
+
+### hi2/pipeline.py (part 4)
+
+smooth_search else {}),
+        **({"refine_passes": c.refine_passes} if c.refine_passes else {}),
+        "rounding": c.rounding,
+        "sequential": c.sequential,
+        "effort": c.effort,
+        "expert_min_tokens": c.expert_min_tokens,
+    }
+
+
+def _shrink_ngram_embedding(log=print) -> None:
+    """Build the PLE n-gram embedding as a 1x1 placeholder while loading.
+
+    A 320M-row table would be allocated and randomly initialized by
+    ``_initialize_missing_keys`` (95 GiB, tens of minutes) when the checkpoint omits it.
+    The id computation (head sizes, offsets) still comes from the real config; only the
+    embedding itself is replaced, and :func:`_attach_mmap_ngram` swaps in the mmap table
+    afterwards."""
+    try:
+        from transformers.models.qwen4_exp import modeling_qwen4_exp as M
+    except ImportError:
+        return  # not a Qwen4Exp checkpoint
+
+    orig = M.Qwen4ExpTextNGramEmbedding.__init__
+    if getattr(orig, "_hi2_shrunk", False):
+        return
+
+    def init(self, *args, **kwargs):
+        orig(self, *args, **kwargs)
+        self.ngram_embedding = torch.nn.Embedding(1, 1)
+
+    init._hi2_shrunk = True  # type: ignore[attr-defined]
+    M.Qwen4ExpTextNGramEmbedding.__init__ = init
+    log("ngram: embedding placeholder installed before load")
+
+
+_NGRAM_MMAP: dict[str, tuple[torch.Tensor, object, torch.dtype]] = {}
+
+
+class _MmapEmbedding(torch.nn.Module):
+    """Gather from a disk-backed table kept outside the module tree.
+
+    The table lives in ``_NGRAM_MMAP`` rather than on the module: the layer-wise pass
+    deep-copies every layer once per device, and a 95 GiB tensor attribute would be
+    copied with it."""
+
+    def __init__(self, key: str):
+        super().__init__()
+        self.key = key
+
+    @property
+    def weight(self):
+        retur
+
+### hi2/allocate.py (part 4)
+
+   p, e = solve(mid)
+            if e <= budget:
+                lo, picks, best_lam = mid, p, mid
+            else:
+                hi = mid
+    bits_total = sum(bits[picks[t.name]].sum().item() for t, _, bits in data)
+    ratio, frac = _summary(data, picks)
+    return Allocation(
+        picks,
+        (bits_total + overhead) / total_w,
+        best_lam,
+        feasible,
+        ratio,
+        frac,
+    )
+
+
+def allocate_global(
+    tables: list[TensorTable],
+    target_bpw: float,
+    sensitivity: dict[str, float] | None = None,
+    iters: int = 80,
+) -> Allocation:
+    sens = sensitivity or {}
+    data = [(t, *_costs(t, sens.get(t.name, 1.0))) for t in tables]
+    total_w = sum(t.shape[0] * t.shape[1] for t in tables)
+    overhead = _overhead(tables)
+    budget = target_bpw * total_w - overhead
+
+    flat = _Flat(data)
+
+    def solve(lam: float):
+        picks, nbits, _ = flat.solve(lam)
+        bits_total = 0.0
+        for b in nbits:
+            bits_total += b
+        return picks, bits_total
+
+    lam_hi = 1.0
+    for _t, cost, bits in data:
+        span_b = (bits.max() - bits.min()).clamp_min(1e-9)
+        lam_hi = max(
+            lam_hi,
+            2 * ((cost.max(0).values - cost.min(0).values) / span_b).max().item(),
+        )
+    lo, hi = lam_hi * 1e-12, lam_hi  # lam_hi -> fewest bits, lo -> most
+    picks, bits_total = solve(hi)
+    min_bits = bits_total
+
+    def done(p, b, lam, ok):
+        ratio, frac = _summary(data, p)
+        return Allocation(p, (b + overhead) / total_w, lam, ok, ratio, frac)
+
+    if min_bits > budget:  # even the cheapest assignment is over target
+        return done(picks, bits_total, hi, False)
+    best = solve(lo)
+    if best[1] <= budget:  # even the most accurate one fits
+        return done(best[0], best[1], lo, True)
+    best
+
+### docs/qad.md (part 4)
+
+--qad-config` / `--qad-budget`),
+* the **math dtype** decides how the layer's matrix products are computed
+  (`--qad-dtype`),
+* the **buffer dtype** decides how much RAM the hidden states take (`buffer_dtype` in
+  `--qad-config`).
+
+### The recipe
+
+| mode | steps per layer | budget | early stop | sequences per layer | final logit-KL | 0.8B time | 0.8B docs/mix ppl ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `fast` | at most 300, weighted by the gain the earlier layers showed | 0.5 | under 1 % per 50 steps (at least 75) | 256 | 0 (the 27B runs set 200) | 17 min | 1.085 / 1.330 |
+| `default` | 300 | 1.0 | none | 256 | 200 | 41 min | 1.061 / 1.286 |
+| `thorough` | 600 | 1.0 | none | 512 (batch 8) | 200 | 141 min | 1.047 / 1.267 |
+
+The budget spreads `budget x steps x layers` optimizer steps over the layers, weighted by
+how much the previous layers gained (clamped to 0.5x..2x, the first layer 2x), and the
+early stop ends a layer when one evaluation interval improves its held-out nMSE by less
+than `min_gain`. `--qad-budget F` sets the budget alone, `--qad-config file.json` sets
+any field (`{"budget": 0.75, "min_gain": 0.005, "buffer_dtype": "float32"}`), and
+`--qad-final-kl STEPS` sets the final whole-network logit-KL phase (the `fast` preset
+leaves it off, `default` and `thorough` set 200).
+
+**The early stop is mostly inert at the 27B.** It can only act on an evaluation step that
+is at least `min_steps` (75) old and before the layer's last step, and the evaluation
+grid is every 50 steps. With the budget at 0.5 a layer gets about 85-90 steps, so the
+only candidate is step 100 - past the allotment. In the run of 2026-10-28 the stop did
+not fire once in the first 26 layers: the budget alone did the cutting. The layers whose
+allotment is above 100 steps (the firs
+
+### docs/moe.md (part 5)
+
+-- | --- |
+| Phase 1 (calibration, Hessians) | 15.5 min | host RSS about 58 GiB (fp32 model in RAM) |
+| Sensitivity probe (112 units, fp16 model on the GPU) | about 10 min | GPU 13.8 GiB |
+| Phase 3, ratio 4 | 72 min | host 37 GiB (run with the probe) |
+| Phase 3, 3.0 bpw (phase 1 and probe reused) | 75 min | host 7.5 GiB |
+
+The historical run's per-expert Hessians (gate/up shared, fp32) took about 21 GB
+on disk and were deleted after its second allocation; this is not a cleanup
+recommendation. The current persistent cache retains reusable statistics; its
+measured OLMoE entry is 11.8 GB ([speed.md](speed.md#disk)). The remaining historical
+workdir was 0.8 GB. CPU fp32 evaluation took about 15 minutes per text.
+
+## Stacked expert layout (`--moe-layout stacked`)
+
+The historical per-expert layout writes every expert projection as its own HI2
+tensor: nine arrays per tensor, 28,307 tensors and a 3.5 MB safetensors header for
+OLMoE-1B-7B. In that measurement the fork's loader concatenated 64 experts per
+stage and rebased their offsets, taking about 95 s on a quiet host and 350-560 s
+under load (dense fp16: 22 s). The **current default is stacked**, which writes
+the experts of one layer and projection group as one set of arrays already in
+the layout the fork builds in memory. It changes storage only. Every expert's
+arrays and dequantized weights matched in the measured round trips below.
+The spec container of a single tensor (spec 2.4) is unchanged.
+
+* `hi2 quantize` writes the stacked layout by default (`--moe-layout per-expert` for the
+  old one): the fork loader reads stacks, and model load drops from 72-94 s to 9-16 s on
+  OLMoE with identical tensors and outputs. The stacked run writes per expert
+  into `<workdir>/per-expert/<dst name>`, then restacks into `dst` and remov
+
+### hi2/pipeline.py (part 5)
+
+n _NGRAM_MMAP[self.key][0]
+
+    def forward(self, ids):
+        table, _, dtype = _NGRAM_MMAP[self.key]
+        return torch.nn.functional.embedding(ids, table).to(dtype)
+
+
+def _attach_mmap_ngram(model, log=print) -> None:
+    """Attach the PLE n-gram table from ``$HI2_NGRAM_MMAP`` instead of RAM.
+
+    The table comes from a safetensors file as a zero-copy tensor, so 95 GiB costs page
+    cache, not resident memory. The gather casts to the model dtype, which keeps an fp16
+    run reading a bf16 file."""
+    path = os.environ.get("HI2_NGRAM_MMAP")
+    if not path:
+        return
+    from safetensors import safe_open
+
+    parents = [m for m in model.modules() if hasattr(m, "ngram_embedding")]
+    if not parents:
+        log("ngram mmap: no module holds an ngram_embedding")
+        return
+    handle = safe_open(path, "pt")
+    key = next(iter(handle.keys()))
+    table = handle.get_tensor(key)
+    dtype = next(model.parameters()).dtype
+    _NGRAM_MMAP[path] = (table, handle, dtype)
+    for parent in parents:
+        parent.ngram_embedding = _MmapEmbedding(path)
+    log(
+        f"ngram mmap: {key} {tuple(table.shape)} {table.dtype} from {path} "
+        f"(cast to {dtype} per gather)"
+    )
+
+
+def _load_model(rc: RunConfig, log=print):
+    """The HF model in RAM, with fused 3-D experts replaced by per-expert Linears."""
+    from transformers import AutoModelForCausalLM
+
+    from .moe import check_unfused, unfuse_experts
+
+    if os.environ.get("HI2_NGRAM_MMAP"):
+        _shrink_ngram_embedding(log)
+    model = AutoModelForCausalLM.from_pretrained(
+        rc.src,
+        dtype=getattr(torch, rc.compute_dtype),
+        low_cpu_mem_usage=True,
+        trust_remote_code=False,
+        ignore_mismatched_sizes=True,  # the source may omit the excluded n-gram table
+    ).eval()
+   
+
+### hi2/allocate.py (part 5)
+
+_lam = hi
+    for _ in range(iters):
+        mid = (lo * hi) ** 0.5
+        p, b = solve(mid)
+        if b <= budget:
+            hi, picks, bits_total, best_lam = mid, p, b, mid
+        else:
+            lo = mid
+    return done(picks, bits_total, best_lam, True)
+
+
+### docs/qad.md (part 5)
+
+t ones, and the ones the budget weights up) can
+stop, and there the gain over 50 steps is still above 1 %.
+
+What the recipes cost and buy, measured:
+
+| | 0.8B | 4B | 27B |
+| --- | --- | --- | --- |
+| `default` | 41 min | 3.1 h | 5.3 h (four V620s) |
+| `fast` | 17 min | about 1.3 h (estimate) | about 2.6 h (four V620s, measured) |
+
+### The math dtype (`--qad-dtype`)
+
+| dtype | what it does | verdict on gfx1030 |
+| --- | --- | --- |
+| `float32` | the default: the layer and its input in float32 | **the only one that works here** |
+| `float16` | the layer and its input in half precision; the latents, the ladder bytes and the loss stay float32 | implemented and measured: 1.43x faster on the 27B's layer 10 (2019 ms a step against 1414 ms), but the QAD **stops learning** (the held-out nMSE falls 1.8 % against 45 % in float32) and the full-attention layers (every fourth one) do not run at all. Off by default; the measurement is in "The half-precision math, measured" |
+| `bfloat16` | as float16 | refused on gfx10: RDNA2 has no `fdot2.bf16` instruction and the compiler stops with "Cannot select: intrinsic %llvm.amdgcn.fdot2.bf16.bf16" |
+
+A float16 QAD is also not bit-comparable with a float32 one, so a checkpoint written
+with it cannot be compared with the earlier runs.
+
+### The hidden-state buffers (`buffer_dtype`)
+
+| dtype | what it costs | when |
+| --- | --- | --- |
+| `float32` | 41 GiB of RAM at the 27B (the hidden states of every calibration window) | what the runs use |
+| `bfloat16` | half of that | when the float32 buffers do not fit |
+| `auto` | float32 when it fits in half the free RAM, else bfloat16 | the default |
+
+**bfloat16 buffers and a 1 % early stop do not mix**: the rounding of the buffers is
+0.4 % of the activation, which is the noise floor the early stop's thre
+
+### docs/moe.md (part 6)
+
+es the
+  staging copy.
+* `hi2 restack CKPT OUT --layout stacked|per-expert` converts an existing checkpoint
+  either way without re-encoding (byte-level data movement). It took 30 s and 4.9 GB RSS
+  for `olmoe-r4`.
+* `hi2 verify`, `hi2 export-dense`, `hi2 eval` and `checkpoint.load_dequantized` read
+  both layouts, and so does `hi2.stack.Hi2Checkpoint`, which gives per-expert access
+  by logical name.
+
+### Names
+
+A stack is `<pre>.<group>.hi2_<field>`. `<pre>` is the experts prefix of one layer
+(`model.layers.L.mlp.experts`) and `<group>` is one of:
+
+| group | parts, in row order | fork stage |
+| --- | --- | --- |
+| `gate_up` | `gate_proj`, `up_proj` | `w13` |
+| `down` | `down_proj` | `w2` |
+| `w13` (Mixtral names) | `w1`, `w3` | `w13` |
+| `w2` (Mixtral names) | `w2` | `w2` |
+
+A stack is recognised by its `hi2_part_off` array. A single HI2 tensor never has one.
+`config.json` records the layout in `quantization_config`:
+`"moe_layout": "stacked"` and `"moe_stacks": {"down": ["down_proj"], "gate_up":
+["gate_proj", "up_proj"]}`, the groups used and their part order. `moe_layout` is
+`per-expert` (and `moe_stacks` absent) after a restack back. Checkpoints written before
+this change have no `moe_layout` key, which means per-expert.
+
+### Arrays
+
+`E` experts, `P` parts per expert (2 for `gate_up`, 1 for `down`), `K` input width
+(hidden size for `gate_up`, intermediate size for `down`). Slice `j = e * P + p` is
+part `p` of expert `e`, and `R` is the total row count. For OLMoE, `gate_up` has
+E = 64, K = 2048 and R = 64 x 2 x 1024 = 131,072, and `down` has K = 1024 and
+R = 64 x 2048 = 131,072.
+
+| field | dtype | shape | content |
+| --- | --- | --- | --- |
+| `hi2_codes` | int32 | `[sum words]` | the slices' `codes`, concatenated in slice order |
+| `hi2_code_off` | int32 | `[R + 1]` 
+
+### hi2/pipeline.py (part 6)
+
+ _attach_mmap_ngram(model, log)
+    if unfuse_experts(model):
+        check_unfused(model, rc.src, make_resolver(weight_map(rc.src)), log)
+    return model
+
+
+def _calib_ids(rc: RunConfig) -> torch.Tensor:
+    if rc.calib_ids is not None:
+        return rc.calib_ids
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(rc.src, trust_remote_code=False)
+    return load_calibration_ids(rc.calib, tok, rc.calib_samples, rc.seq_len)
+
+
+def _save_tables(tables: dict, tdir: Path) -> None:
+    tdir.mkdir(parents=True, exist_ok=True)
+    for name, t in tables.items():
+        atomic_torch_save(t, tdir / (name.replace("/", "_") + ".pt"))
+
+
+def _load_tables(tdir: Path, names: list[str]) -> dict[str, TensorTable]:
+    return {
+        n: torch.load(tdir / (n.replace("/", "_") + ".pt"), weights_only=False)
+        for n in names
+    }
+
+
+def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTable]:
+    inc = re.compile(rc.include) if rc.include else None
+    exc = re.compile(rc.exclude)
+    tdir = rc.workdir / "tables"
+    if rc.calib is None and rc.calib_ids is None:
+        tdir.mkdir(parents=True, exist_ok=True)
+        return _tabulate_streaming(rc, ex, inc, exc, tdir, log)
+    if rc.cache_dir is not None:
+        return _phase1_cached(rc, ex, inc, exc, log)
+    marker = rc.workdir / "phase1.json"
+    if rc.calib_ids is None and marker.exists():
+        done = json.loads(marker.read_text())
+        hess_ok = rc.cfg.rounding != "gptq" or (rc.workdir / "hessian").is_dir()
+        if done.get("key") == _phase1_key(rc) and hess_ok:
+            log(f"phase 1: reusing {len(done['tensors'])} tables from {rc.workdir}")
+            return _load_tables(tdir, done["tensors"])
+    from .layerwise import calibrate_layerwise
+
+    ids = _calib_i
+
+### docs/qad.md (part 6)
+
+shold sits on, so
+the stop fires on noise. The first fast run at the 27B (2026-10-27) had bf16 buffers and
+its early stop fired at a median layer gain of 1.5 % - the noise, not the layer's
+progress. The 27B run of 2026-10-28 uses a `--qad-config` file containing
+`{"buffer_dtype": "float32"}` for that reason.
+
+### The two fast runs, compared per layer (2026-10-27 and 2026-10-28)
+
+Two runs of the `fast` recipe on Qwen3.8-27B, compared on the 42 layers the second one had
+finished at the time of writing:
+
+| | 2026-10-27 | 2026-10-28 |
+| --- | --- | --- |
+| buffers | bfloat16 (the float32 ones did not fit) | float32 |
+| the QAD runs on | one GPU | four GPUs, data-parallel |
+| final logit-KL phase | none | requested 200, **skipped** (the teacher did not fit four V620s) |
+| layer time, those 42 layers | 203.8 min | 73.9 min (2.76x less) |
+| steps spent on them | 4269 | 4333 |
+| mean per-layer gain | -3.94 % | -3.98 % |
+| per-layer final held-out nMSE | the reference | within 2 % on 21 of the 42 layers, within 5 % on all 42 (mean +1.3 %, mean absolute 2.25 %) |
+
+Two things follow from it.
+
+**The data-parallel split does not change the math.** Worker *k* takes every *n*-th sequence of
+the batch and the gradients are summed, so it is the same step on four cards: 2.86 s a step on
+one card against 1.02 s on four. The recipe is unchanged, only the wall clock is.
+
+**Neither fast checkpoint had the final logit-KL phase.** The run of 2026-10-27 does not request
+it; the run of 2026-10-28 does (`--qad-final-kl 200`) but its fit check skipped it:
+
+```
+final KL: skipped, the student needs about 29 GiB per device over 4 device(s) of 30 GiB
+(--qad-final-kl 0 silences this)
+```
+
+(`q27b-b3.0-qad-fast.quant.log`, line 114. The message says "the student" but the guard takes the
+larger of teacher
+
+### docs/moe.md (part 7)
+
+| word offset of each row in `hi2_codes`, rebased to the concatenation |
+| `hi2_blk_params` | uint8 | `[2 * sum blocks]` | the slices' `(lo_u8, step_u8)` pairs, concatenated |
+| `hi2_param_off` | int32 | `[R + 1]` | block offset of each row (byte offset / 2), rebased |
+| `hi2_row_consts` | fp16 | `[R, 3]` | `lo_min, lo_scale, step_scale` per row, concatenated |
+| `hi2_row_nbits` | uint8 | `[R]` | code width per row |
+| `hi2_row_block` | uint8 | `[R]` | block size per row |
+| `hi2_had` | uint8 | `[E, K/16]` | rotation flags of expert `e` (shared by its parts) |
+| `hi2_col_scale` | fp16 | `[E, K]` | smoothing vector of expert `e`; present iff the experts are smoothed |
+| `hi2_part_off` | int32 | `[E * P + 1]` | first row of slice `j`; slice `j` is rows `[part_off[j], part_off[j+1])` |
+
+### Invariants a loader can rely on
+
+1. The seven row arrays form one valid flat container of `R` rows (spec 2.4).
+   `code_off[0] = param_off[0] = 0`. `code_off[r+1] - code_off[r] = K * nbits_r / 32`
+   and `param_off[r+1] - param_off[r] = K / block_r`. `code_off[R]` is the length of
+   `hi2_codes` and `2 * param_off[R]` is the length of `hi2_blk_params`. The fork's
+   `validate()` passes on them if `K` is taken as `had.shape[1] * 16`, not
+   `had.numel() * 16`. All offsets fit int32; the writer keeps a group per expert
+   rather than overflow.
+2. `E = had.shape[0] = col_scale.shape[0]` and `part_off.numel() = E * P + 1`. Every
+   expert and part of a stack has the same `K`.
+3. `part_off[0] = 0` and `part_off[E * P] = R`. The parts of a group have equal row
+   counts in every model the tool handles: OLMoE gate/up 1024 rows, down 2048 rows. The
+   table states the counts, so a loader should read it, not assume them.
+4. Row order is expert-major, part-minor. For `gate_up`, expert `e`'s rows 
+
+### hi2/pipeline.py (part 7)
+
+ds(rc)
+    model = _load_model(rc, log)
+    wmap = weight_map(rc.src)
+    tables = calibrate_layerwise(
+        model,
+        ids,
+        rc.cfg,
+        ex,
+        rc.workdir,
+        inc,
+        exc,
+        rc.limit_layers,
+        log,
+        make_resolver(wmap),
+    )
+    missing = [n for n in tables if n not in wmap]
+    if missing:
+        raise SystemExit(f"module names not found in the checkpoint: {missing[:3]}")
+    _save_tables(tables, tdir)
+    atomic_json(marker, {"key": _phase1_key(rc), "tensors": list(tables)})
+    return tables
+
+
+def _phase1_cached(
+    rc: RunConfig, ex: Executor, inc, exc, log
+) -> dict[str, TensorTable]:
+    """Phase 1 through the persistent cache: statistics (forward passes) are reused for
+    any run with the same model, calibration tokens and placement, tables for the same
+    phase-1 settings on top. The workdir only records which entries it used."""
+    from . import cache as C
+    from .layerwise import CacheSink, calibrate_layerwise, tables_from_stats
+
+    root = Path(rc.cache_dir)
+    ids = _calib_ids(rc)
+    want_h = rc.cfg.rounding == "gptq" and not rc.cfg.sequential
+    need = "hessian" if want_h else None
+    sent = C.Entry(root, C.stats_key(rc, ids, ex.devices))
+    tent = C.Entry(root, C.tables_key(sent.key, rc.cfg))
+    tables = None
+    if not sent.complete(need):
+        with sent.building():
+            if not sent.complete(need):
+                log(
+                    f"cache: statistics miss ({sent.path}), running the calibration pass"
+                )
+                C.check_space(root, C.estimate_stats_bytes(rc.src, inc, exc), log)
+                sent.begin()
+                try:
+                    model = _load_model(rc, log)
+                    wmap = weight_map(rc.src)
+                    sink = Cach
+
+### docs/qad.md (part 7)
+
+ and student: the 27B teacher in float32 is 102 GiB, so a four-way layer split
+is 25.6 GiB a card plus activations, and the guard allows 27.) Its log goes straight from the
+layer loop to "phase 3: encoding and writing". So the 2 % between the two checkpoints is the
+buffers (bfloat16 to float32) and the one-to-four-GPU split, **not** the final phase, and neither
+mix KLD is a verdict on the phase. The two runs are not a bit-exact A/B either: the sensitivity
+probe was recomputed after the probe tokens changed, so their PTQ bases differ slightly
+(allocation error ratio 11.044 against 11.299).
+
+**Fixed 2026-10-29.** The layer-wise phase already computes the teacher's last hidden state (it
+is the last layer's target), so it now saves the post-final-norm head inputs to
+`<workdir>/qad/head_inputs.pt` (10.3 GiB at the 27B). The final phase loads them and skips the
+teacher placement entirely; the fit check then needs only the student (about 12 GiB per device
+on four V620s). Tested on the CPU tiny model:
+`tests/test_lowbit.py::test_final_kl_uses_the_teacher_head_inputs_the_layerwise_phase_saves`.
+
+### The verdict (2026-10-29): the `default` recipe with the final phase beats PTQ at 27B
+
+`q27b-b3.0-qad-default` (3.012 bpw, the same allocation as PTQ and `fast`) was run with the
+`default` preset (300 steps a layer, 256 sequences, float32 buffers, four-GPU data-parallel
+steps) and the 200-step final logit-KL phase, which now runs from the teacher head inputs the
+layer-wise phase saves. The docs/mix KLD below is full-vocabulary corpus KL from dense
+evaluation, measured on the same windows as the other corpus numbers here; it is not
+the served greedy-token score described after the table.
+
+| | docs KLD | mix KLD | top-1 (docs / mix) | EAR (docs / mix) |
+|---|---:|---:|---:|---:|
+| HI2 3

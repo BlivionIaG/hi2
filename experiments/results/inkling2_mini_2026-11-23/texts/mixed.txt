@@ -1,0 +1,145 @@
+# Inkling-2-Mini source reader (NVFP4 / MXFP8)
+
+`hi2.inkling_source` reads the stock Inkling-2-Mini checkpoint, whose routed experts are
+already quantized (NVFP4 in layers 0-19, MXFP8 in layers 20-23), and gives `hi2` the
+dequantized float32 weights of one layer at a time. It is an optional source adapter:
+no default path imports it, nothing in the CLI selects it, and a model of another family
+is unaffected. The status of the quantization itself (allocation, PTQ, QAD, final KL) is
+not in this note: it records the reader, the checkpoint it reads and the first
+weight-only measurements behind the plan.
+
+The teacher of a quantization from this source is the stock model dequantized, so the
+KL that is measured is the fidelity to the stock quantized model, not to its bf16
+ancestor.
+
+## The checkpoint
+
+`config.json` has hidden size 2304, 24 layers, 128 routed experts of intermediate size
+1152, vocabulary 201,024 (200,058 unpadded), full attention on layers 5, 11, 17, 23.
+The weights are in a *serving* layout (`model.llm.*`), one `model-00001-of-00001.safetensors`
+plus `mtp.safetensors` (the multi-token-prediction head, not indexed).
+
+| Tensor | Layers | Stored as |
+| --- | --- | --- |
+| `layers.N.mlp.experts.w13_weight` | 0-19 | U8 `[128, 2304, 1152]`, two e2m1 codes per byte |
+| `w13_weight_scale` | 0-19 | E4M3 `[128, 2304, 144]`, one scale per 16 weights |
+| `w13_weight_amax`, `w13_weight_outer_scale_denominator` | 0-19 | F32 `[128]`, F32 `[1]` (2688) |
+| `w2_weight`, `w2_weight_scale`, `w2_weight_amax`, ... | 0-19 | U8 `[128, 2304, 576]`, E4M3 `[128, 2304, 72]`, as above |
+| `w13_weight` / `w2_weight` | 20-23 | E4M3 `[128, 2304, 2304]` / `[128, 2304, 1152]` |
+| `w13_weight_scale` / `w2_weight_scale` | 20-23 | UE8M0 U8 `[128, 2304, 72]` / `[128, 2304, 36]`, one per 32 weights |
+| attention linears `wq_du wk_dv wv_dv wo_ud gate_attn wr_du` | all | bf16 |
+| embed, unembed, router, loop controllers, short convs, norms, queries | all | bf16 (queries, router bias fp32) |
+| `model.visual.*` | | bf16 (a 23-layer, 1024-wide vision tower) |
+
+The `w13` stack holds gate and up interleaved, rows `[g0, u0, g1, u1, ...]`, in the
+weights and in the scales alike. The two are one fused GEMM in the serving runtime, so
+`hi2` needs gate-first rows and one transform for both.
+
+**Dequantization**, per element, in float32:
+
+* NVFP4: `e2m1(code) * e4m3(block scale) * (amax[e] / 2688)`. `amax / 2688` is divided
+  in float64 and rounded once; the block scale times that factor is rounded to float32,
+  then the element is one more float32 product (two roundings, in this order).
+* MXFP8: 
+
+```python
+from pathlib import Path
+
+import regex as re
+import torch
+import torch.nn.functional as F
+
+from .checkpoint import weight_map
+from .pinned import PinnedWindow
+
+HF_PREFIX = "model.language_model"
+SERVING_PREFIX = "model.llm"
+PROJECTIONS = ("gate_proj", "up_proj", "down_proj")
+# The one Hugging Face parameter that is built from two serving tensors: the four
+# message-attention queries per loop layer (``[L, 4, H]``). The serving file keeps them as
+# two ``[2L, H]`` tensors of two rows per loop layer (``q`` and ``m`` in the first, ``k``
+# and ``v`` in the second).
+CROSS_PASS_QUERIES = f"{SERVING_PREFIX}.middle_cycle_cross_pass_queries"
+CROSS_PASS_KV_QUERIES = f"{SERVING_PREFIX}.middle_cycle_cross_pass_kv_queries"
+MESSAGE_QUERY = f"{HF_PREFIX}.message_input.query"
+MESSAGE_SLOTS = "qkvm"  # slot order of ``message_input.query``: q, k, v, mlp
+NVFP4_BLOCK = 16
+MXFP8_BLOCK = 32
+# e2m1 code -> value: sign bit 3, exponent bits 2-1, mantissa bit 0 (index 8 is -0.0)
+_FP4_MAGNITUDES = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
+FP4_VALUES = _FP4_MAGNITUDES + tuple(-v for v in _FP4_MAGNITUDES)
+_UE8M0_NAN = 255  # 0xFF is NaN in the OCP MX spec; no real checkpoint stores it
+_UE8M0_ZERO_BITS = 0x00400000  # 2^-127 is a float32 subnormal: mantissa bit 22
+
+_LUTS: dict[tuple[str, torch.device], torch.Tensor] = {}
+
+
+def _lut(kind: str, dev: torch.device) -> torch.Tensor:
+    """``[256, D]`` float32 decode table on ``dev``: ``e4m3`` (D=1) or ``fp4`` (D=2, the
+    low nibble first)."""
+    key = (kind, torch.device(dev))
+    t = _LUTS.get(key)
+    if t is None:
+        codes = torch.arange(256, dtype=torch.uint8)
+        if kind == "e4m3":
+            t = codes.view(torch.float8_e4m3fn).float()[:, None]
+        elif kind == "fp4":
+            fp4 = torch.tensor(FP4_VALUES, dtype=torch.float32)
+            c = codes.long()
+            t = torch.stack((fp4[c & 0xF], fp4[c >> 4]), dim=-1)
+        else:
+            raise ValueError(kind)
+        t = _LUTS[key] = t.contiguous().to(dev)
+    return t
+
+
+def _bytes(x: torch.Tensor) -> torch.Tensor:
+    """The same storage as uint8 (E4M3 weights and scales travel as bytes)."""
+    return x if x.dtype == torch.uint8 else x.view(torch.uint8)
+
+
+def e4m3_to_float32(x: torch.Tensor) -> torch.Tensor:
+    """Float32 value of E4M3 (``float8_e4m3fn``) codes, by table lookup: the same on every
+    device and independent of the device's fp8 conversion kernels."""
+    return F.embedding(_bytes(x).to(torch.int32), _lut("e4m3", x.device)).squeeze(-1)
+
+
+def ue8m0_to_float32(x: torch.Tensor) -> torch.Tensor:
+    """``2^(u - 127)`` as float32 for UE8M0 bytes ``u``, built from the exponent field
+    (exact on every device; ``u = 0`` is the subnormal ``2^-127`` and ``u = 255`` is
+    ``+inf``, as ``exp2(128)`` is)."""
+    u = _bytes(x).to(torch.int32)
+    bits = torch.where(u == 0, torch.full_like(u, _UE8M0_ZERO_BITS), u << 23)
+    return bits.view(torch.float32)
+
+
+def dequant_nvfp4(
+    packed: torch.Tensor,
+    scale: torch.Tensor,
+    amax: torch.Tensor,
+```
+
+
+La quantification des poids d'un modèle de langage consiste à représenter chaque poids avec très peu de bits, en choisissant pour chaque bloc une échelle qui minimise l'erreur. 模型量化是用更少的比特表示权重的技术，核心问题是在固定的比特预算下把误差分配给最不敏感的权重。
+
+Table: layer, bpw, nmse
+0, 3.00, 0.0640
+1, 3.10, 0.0600
+2, 3.20, 0.0560
+3, 3.30, 0.0520
+4, 3.40, 0.0480
+5, 3.50, 0.0440
+6, 3.60, 0.0400
+7, 3.70, 0.0360
+8, 3.80, 0.0320
+9, 3.90, 0.0280
+10, 4.00, 0.0240
+11, 4.10, 0.0200
+12, 4.20, 0.0160
+13, 4.30, 0.0120
+14, 4.40, 0.0080
+15, 4.50, 0.0040
+16, 4.60, 0.0000
+17, 4.70, -0.0040
+18, 4.80, -0.0080
+19, 4.90, -0.0120

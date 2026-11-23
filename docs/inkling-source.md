@@ -101,6 +101,7 @@ comparisons are skipped.
 | --- | --- |
 | `inkling_inventory.py` | Tensor classes, elements, bytes and stock bits per weight from the safetensors headers (main shard, MTP, vision), checked against the design review. |
 | `inkling_reference_check.py` | The reader against the fork's reference decoders on all 128 experts of every layer (the tests do four experts of two layers): bit patterns and largest absolute difference. |
+| `inkling_teacher_check.py` | The whole stock model assembled from the reader on the CPU and run on a prompt: the top-8 against the fork's oracle, the activation extremes per decoder layer, float16 / bfloat16 against float32 (KL, top-1). |
 | `inkling_unfuse_check.py` | `hi2.moe.unfuse_experts` on a tiny real `Inkling2LoopForConditionalGeneration`: does the unfused forward run, and equal the fused one? Exit 1 today (the activation takes two arguments). |
 | `inkling_hf_names_check.py` | The reader's names and shapes against the real `Inkling2LoopForConditionalGeneration` (built on the meta device from the fork's transformers): every text-model tensor, both ways. |
 | `inkling_scale_stats.py` | Histograms of the UE8M0 and E4M3 block scales and of the NVFP4 `amax`; the count of weights that overflow, underflow or fall in the subnormal range of float16 and bfloat16; the relative energy each cast changes. |
@@ -169,11 +170,49 @@ every expert, decoded exactly):
   (1.7e-3).
 
 So the *weights* are usable in float16, the half type that has a GEMM on gfx1030 (bfloat16 has
-none there, see `moe.md`), at a cast error far below any 2-4 bit quantization error. That says
-nothing about the activations of the loop layers (3 passes), which are not measured here: with
-unit-norm rows, soft-capped gate/up activations and normalized inputs the linear outputs are
-structurally bounded [inference], so a float16 teacher forward against a float32 one is the
-check to make.
+none there, see `moe.md`), at a cast error far below any 2-4 bit quantization error. The
+activations are measured by the next paragraph.
+
+**The whole model assembled from the reader, on the CPU** (`inkling_teacher_check.py`, the fork's
+transformers). `Inkling2LoopForConditionalGeneration` is built on the meta device, allocated in
+float32 / float16 / bfloat16 (105 / 52 GB of host memory) and filled from `InklingSource`:
+693 tensors (dense by `load`, `message_input.query`, the experts decoded on the CPU), none of
+the text model left empty, 53-78 s for the whole model (the experts 2-3 s per layer).
+
+* Against the fork's CPU oracle (`ref_checkpoint.py`: its own dequantization cache, bfloat16,
+  slot order `q, k, v, mlp`), the chat prompt "What is the capital of France?" (22 tokens) gives the
+  same top-8 tokens and logits to two decimals when the reader's model is allocated in bfloat16
+  (`<|message_model|>` 26.56, then 5.77, 5.62, 5.41, 4.83, 4.68, 4.28, 4.19). The reader, the
+  name map and `message_query` give the model the oracle runs. (It does not pin the slot order:
+  the oracle's three orders agree on the first token.)
+* float16 and bfloat16 against float32, KL(float32 || x) over every position, all 200,058
+  logits (CPU forward: float32 6 s, float16 5 s, bfloat16 4 s for 22 tokens; 23 s, 90 s and
+  115 s for 512):
+
+  | Input | dtype | largest decoder-layer activation | non-finite | KL mean / max | mean / max abs logit difference | top-1 agrees |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | chat prompt, 22 tokens | float32 | 348.9 | 0 | | | |
+  | | float16 | 349.0 | 0 | 6.6e-4 / 8.6e-3 | 0.039 / 2.8 | 22 / 22 |
+  | | bfloat16 | 350.0 | 0 | 1.0e-2 / 6.8e-2 | 0.200 / 3.2 | 21 / 22 |
+  | `texts/mixed.txt`: prose, code, French, Chinese, a table; 512 tokens | float32 | 396.3 | 0 | | | |
+  | | float16 | 404.2 | 0 | 3.2e-3 / 7.8e-2 | 0.212 / 11.5 | 510 / 512 |
+  | | bfloat16 | 384.0 | 0 | 4.2e-3 / 1.1e-1 | 0.249 / 11.4 | 504 / 512 |
+
+* `texts/long.txt` (docs and code of this repository, cut at 2,048 tokens) and `mixed.txt` are
+  in the results directory. The activations stay far from the float16 limit of 65,504: the output of a decoder layer
+  grows inside each of the four blocks (layers 0-5, 6-11, 12-17, 18-23) and peaks at the
+  full-attention layers, 396 at layer 17 in the 512-token text (341 at layer 5, 243 at
+  layer 11, 149 at layer 23) and 473 in a 2,048-token text of docs and code (float32 only,
+  133 s); a mlp output is at most 105 and an attention output at most 4.4. Nothing is
+  non-finite in any layer or pass.
+
+So float16 is usable for the teacher: the weights do not overflow, the activations of these two
+inputs have a headroom of 138-190x, and the half-precision noise (KL 6.6e-4 on the chat prompt,
+3.2e-3 on the longer text, about the same as bfloat16 there) is the floor of any KL measured
+against a half-precision teacher. That noise is probably router near-ties flipping experts
+[inference: not isolated], it is not larger in float16 than in bfloat16, and float16 is the
+dtype the fork serves the model in on gfx1030. Limits: three inputs of at most 2,048 tokens, not the long
+contexts the loop layers see in use; the activation bound is a measurement on them, not a proof.
 
 **Weight-only allocation** (`inkling_alloc_dryrun.py`). HI2 has a data-free mode:
 `build_table(stats=None)` (what `hi2 quantize` does without `--calib`) scores every
