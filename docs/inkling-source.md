@@ -469,8 +469,10 @@ subset pass unchanged, see the gates).
   done (the same `expert_min_tokens` blend and `_tabulate_layer` as the generic loop). A Linear whose
   gate/up sharing leader differs between calls stops the run with a message. The 12 loop layers hold
   their accumulators from the first to the third pass; with GPTQ rounding the Hessians are about
-  3.4 GB per layer, about 41 GB of host memory for the 12 [inference: arithmetic, not run on the
-  real model].
+  3.4 GB per layer in host memory (a full fp32 `[K, K]` per shared input), about 41 GB for the 12
+  [inference: arithmetic, not run on the real model]. The statistics cache on disk keeps the fp32
+  triangle: `cache.estimate_stats_bytes` on the real directory with the experts preset returns
+  42,148,823,040 bytes (39.3 GiB, measured; the build box had 138 GB free at 97 % use).
 * `teacher_head_inputs` is the same program without hooks: the unquantized model's input to the LM
   head, `[n, T, H]` in float32, for the final-KL phase.
 * Refused up front (`pipeline._check_looped`): `--sequential` (it feeds each layer call the quantized
@@ -490,10 +492,26 @@ subset pass unchanged, see the gates).
 expert tensors (three saw no token) equal those of forward hooks on the unfused per-expert linears
 of the whole-model forward: column statistics 0.0 and Hessians 2e-7 (relative to the largest entry)
 with one sequence per layer call, 7e-6 both with eight (float32 summation order). The head inputs
-equal the model's own to 1e-5 (one sequence) and 5e-5 (eight) absolute. Eight mutants of the program
-(statistics reset per call, no messages, outputs appended in place, `limit_layers` ignored, the
-hidden cast always, the batch ignored, the extras mis-indexed, the loop offset off by one) each fail
-a test.
+equal the model's own to 1e-5 (one sequence) and 5e-5 (eight) absolute. A second tiny model has the
+loop structure of the real one (12 layers in blocks of three, layers 3-8 run three times, 24 layer
+calls: the third pass takes its messages from the second): the schedule equals the order of the
+model's own calls, the head inputs equal its forward (1e-4) and the statistics of all 288 expert
+tensors equal the hooks' (1e-6); a mutant that is wrong only in the third pass fails there and
+passes the two-pass tests.
+
+Existing models are untouched: the seven-file subset (`test_inkling_source`, `test_moe`,
+`test_pinned`, `test_allocate_fast`, `test_lowbit`, `test_checkpoint_safety`, `test_stack`) gives 165
+passed, 3 skipped (164 before this stage plus the vision-carry test); the whole suite on the build
+box, 1011 passed, 60 skipped, 3 failed (the three that also fail on the pristine stage-1 tree:
+`test_cache::test_probe_prefix_replay_is_bit_identical`,
+`test_cli_contracts::test_version_works_without_compute_dependencies`,
+`test_cli_contracts::test_cancelled_concurrent_tuning_runs_only_cleanup_owned_scratch`). Twenty-seven
+hand-made mutants (the program: statistics reset per call, no messages, outputs appended in place,
+`limit_layers` ignored, the hidden cast always, the batch ignored, the extras mis-indexed, the loop
+offset off by one, a stale third pass; the final KL: soft cap dropped, `final_input` and message
+placement, expert checkpointing off, the Adam state forgotten, the saved inputs, the unpack width, a
+number taken for the soft-cap op, the head-input key; the preset and the guards; the vision carry and
+the stale file) each fail a test.
 
 ## Final KL on Inkling
 
