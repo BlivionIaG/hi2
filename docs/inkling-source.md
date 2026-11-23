@@ -86,7 +86,8 @@ an independent numpy implementation written from the format definitions; with th
 reference decoders (`tiny_reference.py`, `ref_checkpoint.py`) on the tiny checkpoint made by its
 `make_tiny_checkpoint.py` (five NVFP4 layers and one MXFP8 layer) and, with `INKLING2_CKPT`
 set, on real experts 0, 17, 64 and 127 of layers 0 (NVFP4) and 20 (MXFP8): the largest
-absolute difference is 0.0. Tiny checkpoints written by the test (with and without an index
+absolute difference is 0.0, and `inkling_reference_check.py` repeats it on every expert of
+every layer (all 24.46 G weights: bit-equal). Tiny checkpoints written by the test (with and without an index
 file) cover the de-interleave, chunk and expert-subset invariance, `fused_layer`, the name map
 and the `UnfusedExperts` integration. `INKLING2_TOOLS` names the fork's `tools/rdna/inkling2`
 directory when the sibling worktree is not at hand; without the fork the reference
@@ -95,6 +96,7 @@ comparisons are skipped.
 | Script (`experiments/`) | What it records |
 | --- | --- |
 | `inkling_inventory.py` | Tensor classes, elements, bytes and stock bits per weight from the safetensors headers (main shard, MTP, vision), checked against the design review. |
+| `inkling_reference_check.py` | The reader against the fork's reference decoders on all 128 experts of every layer (the tests do four experts of two layers): bit patterns and largest absolute difference. |
 | `inkling_scale_stats.py` | Histograms of the UE8M0 and E4M3 block scales and of the NVFP4 `amax`; the count of weights that overflow, underflow or fall in the subnormal range of float16 and bfloat16; the relative energy each cast changes. |
 | `inkling_alloc_dryrun.py` | HI2's weight-only mode and its allocators on sampled real experts and attention linears: share of INT2/INT4/INT8, block mix, effective bits per weight, implied size. |
 | `inkling_dequant_probe.py` | Exactness of the device decode against the CPU, and the cost (read, host-to-device, decode, whole layer, peak memory) of decoding one layer. |
@@ -121,6 +123,11 @@ The main file is 19,525,870,752 B (18.18 GiB, 26.39 B parameters with the vision
 design review's "26.4 B" is that file, without the 0.318 B of the MTP file, and its
 "18.68 GiB stock, 14.05 GiB at 3.5 bpw" are the main file plus the MTP file minus the 51.5 M
 table `markov_head.markov_w1` (102,924,288 B). Experts alone at 3.5 bpw are 9.967 GiB.
+
+**Exactness.** All 24,461,180,928 expert weights of the 24 layers (`w13` and `w2` of 128 experts,
+20 NVFP4 and 4 MXFP8 layers) decode to the same float32 bits as the fork's `tiny_reference.py`
+(`inkling_reference_check.py`, CPU, 534 s; the de-interleaved gate and up rows are its even
+and odd rows): largest absolute difference 0.0.
 
 **Every row has unit norm.** The rms of the dequantized `w13` weights of each of the 24 layers is
 0.020826-0.020833 (1/sqrt(2304) = 0.020833) and that of `w2` 0.029446-0.029462

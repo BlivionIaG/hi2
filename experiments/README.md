@@ -48,6 +48,7 @@ numbers they wrote on 2026-11-23 are in [`results/inkling2_mini_2026-11-23/`](re
 | Script | Job |
 | --- | --- |
 | `inkling_inventory.py` | Tensor classes, elements, bytes and stock bits per weight from the safetensors headers (main shard, MTP, vision); checks the design-review numbers and says which are definitions. |
+| `inkling_reference_check.py` | `hi2.inkling_source` against the vLLM fork's reference decoders (`tiny_reference.py`) on every expert of every layer: the float32 bit patterns and the largest absolute difference. |
 | `inkling_scale_stats.py` | Histograms of the UE8M0 / E4M3 block scales and the NVFP4 `amax`; the weights that overflow, underflow or are subnormal in float16 and bfloat16, and the energy of each cast, for every layer. |
 | `inkling_alloc_dryrun.py` | HI2's data-free mode (`build_table(stats=None)`) and its allocators on sampled real experts and attention linears, tiled to the whole population: INT2/INT4/INT8 and block mix, effective bpw and implied size at 3.0 / 3.5 / 4.0 bpw. First-order: no activations, no Hessian. |
 | `inkling_dequant_probe.py` | The device decode against the CPU decode, and what decoding one layer costs (read, host-to-device, decode, peak memory). |
