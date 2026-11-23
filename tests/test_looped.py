@@ -304,6 +304,105 @@ def test_a_calibrated_run_completes_from_the_stock_layout(src, ids, tmp_path):
     validate_checkpoint(rc.dst)
 
 
+# --------------------- the loop structure of the real model: three passes, blocks of layers
+
+
+@pytest.fixture(scope="module")
+def src3(tmp_path_factory):
+    """Twelve layers in blocks of three, layers 3-8 looped three times (Inkling-2-Mini:
+    24 layers in blocks of six, layers 6-17 three times): the third pass takes its
+    messages from the second, which the six-layer model with two passes never does."""
+    d = _tools_dir()
+    if d is None:
+        pytest.skip("the fork's tools/rdna/inkling2 is not available (INKLING2_TOOLS)")
+    make = _import("hi2_test_make_tiny", d / "make_tiny_checkpoint.py")
+    path = tmp_path_factory.mktemp("looped_tiny3")
+    spec = make.TinySpec(
+        num_hidden_layers=12,
+        n_layers_per_attn_res_block=3,
+        loop_start=3,
+        loop_end=9,
+        loop_num_passes=3,
+    )
+    make.write_checkpoint(path, spec, seed=13)
+    return path
+
+
+@pytest.fixture(scope="module")
+def model3(src3, tmp_path_factory):
+    return _load_model(
+        _rc(src3, tmp_path_factory.mktemp("looped_model3")), lambda *_: None
+    )
+
+
+def test_three_passes_are_what_the_model_calls(model3, ids):
+    from hi2.layerwise import find_layers
+
+    path, layers = find_layers(model3)
+    text = model3.get_submodule(path.rsplit(".", 1)[0])
+    sched = schedule(text.config)
+    assert len(sched) == 9 + 2 * 6 + 3  # the first pass and the layers before the end
+    assert [c.messages for c in sched] == [False] * 9 + [True] * 12 + [False] * 3
+    calls = record_calls(model3, layers, text, ids)
+    assert [(c.layer, c.messages) for c in calls] == [
+        (c.layer, c.messages) for c in sched
+    ]
+    assert [("cache_offset" in c.kwargs) for c in calls] == [c.messages for c in calls]
+
+
+def test_three_passes_reproduce_the_models_head_input(model3, ids, monkeypatch):
+    from hi2.finalkl import _head_input
+
+    monkeypatch.setenv("HI2_LOOP_SEQS", "1")
+    with torch.no_grad():
+        want = torch.stack([_head_input(model3, ids[i : i + 1]) for i in range(N_SEQ)])
+    got = teacher_head_inputs(model3, ids, Executor("cpu"), log=lambda *_: None)
+    assert torch.allclose(got, want.float(), rtol=1e-4, atol=1e-4), (
+        (got - want).abs().max()
+    )
+
+
+def test_three_passes_statistics_equal_whole_model_forward_hooks(
+    src3, model3, ids, tmp_path, monkeypatch
+):
+    import re
+
+    monkeypatch.setenv("HI2_LOOP_SEQS", "1")
+    resolve = make_resolver(source_map(src3))
+    want_col, want_hess = _reference(model3, ids, resolve)
+    sink = _Rec(tmp_path / "work")
+    tables = calibrate_layerwise(
+        model3,
+        ids,
+        Config(effort="fast", expert_min_tokens=0.0),
+        Executor("cpu"),
+        tmp_path / "work",
+        re.compile(EXPERTS),
+        re.compile(r"$^"),
+        log=lambda *_: None,
+        resolve=resolve,
+        sink=sink,
+    )
+    assert set(tables) == set(want_col) and len(tables) == 12 * 8 * 3
+    for members, st in sink.col.values():
+        for m in members:
+            ref = want_col[m]
+            if st is None:
+                assert ref.n == 0, m
+                continue
+            assert st.n == ref.n and _close(st.S, ref.S, 1e-6), (m, _gap(st.S, ref.S))
+    for ld, (members, _) in sink.col.items():
+        s, n = sink.sigma[ld]
+        for m in members:
+            assert n == want_hess[m].n and _close(s, want_hess[m].S, 1e-6), m
+    total = dict.fromkeys(range(12), 0)
+    for ckpt, ref in want_col.items():
+        if ".gate_proj." in ckpt:
+            total[int(ckpt.split(".layers.")[1].split(".")[0])] += ref.n
+    for layer, n in total.items():  # a layer of the loop is called once per pass
+        assert n == N_SEQ * T * 2 * (3 if 3 <= layer < 9 else 1), layer
+
+
 # ---------------------------------------------------------------- the preset and its guards
 
 
@@ -378,6 +477,8 @@ def test_a_model_without_a_soft_cap_keeps_its_head(model):
 
     plain = nn.Module()
     plain.get_output_embeddings = lambda: model.lm_head
+    assert _logits_fn(plain) is model.lm_head
+    plain.logit_softcap = 30.0  # a number is not the model's soft-cap op
     assert _logits_fn(plain) is model.lm_head
 
 
@@ -529,6 +630,33 @@ def _qad(**kw):
     from hi2.qad import make_config
 
     return make_config("fast", {"steps": 2, "samples": 3, "val": 1, "batch": 2, **kw})
+
+
+def test_the_teachers_head_inputs_are_kept_for_the_same_token_ids(src, ids, tmp_path):
+    """Every allocation of a run trains on the same windows: the head inputs of the layer
+    program are kept in the workdir and reused for the same source, dtype and token ids,
+    and recomputed when any of them changes."""
+    from hi2.pipeline import _teacher_head_inputs
+
+    rc = _rc(src, tmp_path, calib_ids=ids)
+    rc.workdir.mkdir(parents=True)
+    model = _load_model(rc, lambda *_: None)
+    ex = Executor("cpu")
+    notes: list[str] = []
+    first = _teacher_head_inputs(rc, ex, model, ids, notes.append)
+    assert (rc.workdir / "teacher_head_inputs.pt").exists()
+    assert any("layer program" in n for n in notes) and first.shape[0] == N_SEQ
+    notes.clear()
+    again = _teacher_head_inputs(rc, ex, model, ids, notes.append)
+    assert any("reusing" in n for n in notes) and torch.equal(first, again)
+    notes.clear()
+    other = ids.clone()
+    other[0, 0] = (other[0, 0] + 1) % 50
+    changed = _teacher_head_inputs(rc, ex, model, other, notes.append)
+    assert any("layer program" in n for n in notes)  # not reused: another token id
+    assert not torch.equal(first[0], changed[0])  # the changed window moved ...
+    # ... and the others only by the float noise of the batched expert GEMMs (4e-5)
+    assert torch.allclose(first[1:], changed[1:], atol=1e-3)
 
 
 def test_a_cpu_final_kl_of_two_steps_completes_on_the_looped_model(

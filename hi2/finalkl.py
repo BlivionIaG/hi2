@@ -205,7 +205,8 @@ class _Logits(nn.Module):
 def _logits_fn(model: nn.Module) -> nn.Module:
     head = model.get_output_embeddings()
     cap = getattr(model, "logit_softcap", None)
-    return head if cap is None else _Logits(head, cap)
+    # only a module is the model's own soft-cap op (another family may keep a number)
+    return _Logits(head, cap) if isinstance(cap, nn.Module) else head
 
 
 def _kl_loss(lm: nn.Module, hs: torch.Tensor, ht: torch.Tensor, pos=None, grad=True):
