@@ -300,6 +300,11 @@ def inspect_model(path: Path) -> dict:
                         largest_hessian_bytes, shape[1] ** 2 * 4
                     )
         size += shard.stat().st_size
+    from .inkling_source import stock_view
+
+    view = stock_view(path)
+    if view is not None:  # packed experts: the weights of the model, not of the files
+        parameters = view.parameters()
     text = config.get("text_config", config)
     return {
         "schema_version": SCHEMA_VERSION,

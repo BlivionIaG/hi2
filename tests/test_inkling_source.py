@@ -12,6 +12,8 @@ made by ``make_tiny_checkpoint.py``; the real checkpoint's layers 0 and 20 when
 import importlib.util
 import json
 import os
+import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -24,26 +26,39 @@ pytest.importorskip("safetensors")
 
 from safetensors.torch import save_file  # noqa: E402
 
+from hi2.checkpoint import (  # noqa: E402
+    DEFAULT_EXCLUDE,
+    make_resolver,
+    open_source,
+    source_map,
+    weight_map,
+)
 from hi2.inkling_source import (  # noqa: E402
     CROSS_PASS_KV_QUERIES,
     CROSS_PASS_QUERIES,
     FP4_VALUES,
     MESSAGE_QUERY,
+    PROJECTIONS,
     InklingSource,
+    StockView,
     dequant_mxfp8,
     dequant_nvfp4,
     e4m3_to_float32,
     expert_name,
     name_map,
+    register_auto_class,
+    stock_view,
     tensor_role,
     ue8m0_to_float32,
 )
 from hi2.moe import (  # noqa: E402
     ExpertMLP,
     UnfusedExperts,
+    check_unfused,
     expert_parts,
     group_key,
     sibling_leader,
+    unfuse_experts,
 )
 
 E, H, I_, VOCAB, UNPADDED = (
@@ -140,16 +155,16 @@ def _rel_rms(a: torch.Tensor, b: torch.Tensor) -> float:
 # ---------------------------------------------------------------- a tiny serving checkpoint
 
 
-def _write_tiny(path: Path, fmts, seed=0, index=True):
+def _write_tiny(path: Path, fmts, seed=0, index=True, inter=I_):
     """A checkpoint directory in the serving layout with the given expert formats per
     layer; returns the original fp32 ``(gate, up, down)`` of every layer."""
     g = torch.Generator().manual_seed(seed)
     t: dict[str, torch.Tensor] = {}
     truth = []
     for layer, fmt in enumerate(fmts):
-        gate = torch.randn(E, I_, H, generator=g) * (0.02 + 0.01 * layer)
-        up = torch.randn(E, I_, H, generator=g) * 0.03
-        down = torch.randn(E, H, I_, generator=g) * 0.025
+        gate = torch.randn(E, inter, H, generator=g) * (0.02 + 0.01 * layer)
+        up = torch.randn(E, inter, H, generator=g) * 0.03
+        down = torch.randn(E, H, inter, generator=g) * 0.025
         truth.append((gate, up, down))
         w13 = _interleave(torch.cat([gate, up], dim=1))
         base = f"model.llm.layers.{layer}.mlp.experts."
@@ -184,14 +199,15 @@ def _write_tiny(path: Path, fmts, seed=0, index=True):
     (path / "config.json").write_text(
         json.dumps(
             {
+                "model_type": "inkling2_loop",
                 "text_config": {
                     "num_hidden_layers": n,
                     "n_routed_experts": E,
                     "hidden_size": H,
-                    "intermediate_size": I_,
+                    "intermediate_size": inter,
                     "unpadded_vocab_size": UNPADDED,
                     "local_layer_ids": [i for i in range(n) if i % 2 == 0],
-                }
+                },
             }
         )
     )
@@ -203,6 +219,18 @@ def tiny(tmp_path_factory):
     path = tmp_path_factory.mktemp("inkling_tiny")
     fmts = ["nvfp4", "nvfp4", "mxfp8", "mxfp8"]
     return path, fmts, _write_tiny(path, fmts)
+
+
+@pytest.fixture(scope="module")
+def wide(tmp_path_factory):
+    """Every expert projection has K = 64, so all of them are HI2 candidates (in ``tiny``
+    the down projection has K = 32, below the 64 columns a tensor needs). Like the stock
+    directory it holds an ``mtp.safetensors`` the index does not list."""
+    path = tmp_path_factory.mktemp("inkling_wide")
+    fmts = ["nvfp4", "mxfp8"]
+    truth = _write_tiny(path, fmts, seed=3, inter=64)
+    save_file({"mtp.head.weight": torch.ones(8, 64)}, str(path / "mtp.safetensors"))
+    return path, fmts, truth
 
 
 # ---------------------------------------------------------------- the code tables
@@ -639,3 +667,344 @@ def test_matches_the_reference_decoders_on_the_real_checkpoint(tools):
                     report[(layer, "down")] = _equal_bits(down, ref_full)
     print("max abs diff vs tiny_reference:", report)
     assert set(report.values()) == {0.0}
+
+
+# ---------------------------------------------------------------- the transformers class
+
+
+@pytest.mark.parametrize("body", ['{"model_type": "qwen3"}', "{}", "not json", "[]"])
+def test_register_auto_class_ignores_other_models(tmp_path, body):
+    (tmp_path / "config.json").write_text(body)
+    assert register_auto_class(tmp_path) is False
+
+
+def test_register_auto_class_ignores_a_directory_without_config(tmp_path):
+    assert register_auto_class(tmp_path / "nothing") is False
+
+
+def test_register_auto_class_names_the_missing_fork(tiny, monkeypatch):
+    monkeypatch.setitem(sys.modules, "transformers.models.inkling2_loop", None)
+    with pytest.raises(SystemExit, match="fork's transformers"):
+        register_auto_class(tiny[0])
+
+
+def test_register_auto_class_registers_the_forks_class(tiny):
+    pytest.importorskip("transformers.models.inkling2_loop.modeling_inkling2_loop")
+    from transformers import AutoModelForCausalLM
+    from transformers.models.inkling2_loop.configuration_inkling2_loop import (
+        Inkling2LoopConfig,
+    )
+    from transformers.models.inkling2_loop.modeling_inkling2_loop import (
+        Inkling2LoopForConditionalGeneration,
+    )
+
+    assert register_auto_class(tiny[0]) is True
+    assert register_auto_class(tiny[0]) is True  # again is harmless
+    mapped = AutoModelForCausalLM._model_mapping[Inkling2LoopConfig]
+    assert mapped is Inkling2LoopForConditionalGeneration
+
+
+def test_the_sensitivity_probe_recomputes_a_prefix_that_loops(tools, tmp_path):
+    """Layers 2-3 of the fork's tiny model run twice per forward. For a unit in layer 3 the
+    replay fed the first pass the output of the last call of layer 2, and the sensitivities
+    differed from the full forward (by a factor of 10 on this model). The default probe now
+    recomputes such a prefix and equals the one without a replay."""
+    pytest.importorskip("transformers.models.inkling2_loop.modeling_inkling2_loop")
+    from hi2.calibrate import Config
+    from hi2.executor import Executor
+    from hi2.pipeline import RunConfig, run
+    from hi2.sensitivity import probe_sensitivity
+
+    _, make = tools
+    src = tmp_path / "src"
+    src.mkdir()
+    make.write_checkpoint(src, make.TinySpec(num_hidden_layers=6), seed=11)
+    rc = RunConfig(
+        src=src,
+        dst=tmp_path / "out",
+        workdir=tmp_path / "work",
+        include=r"\.mlp\.experts\.",
+        devices=["cpu"],
+        compute_dtype="float32",
+        target_bpw=3.5,
+        cfg=Config(effort="fast"),
+    )
+    run(rc, log=lambda *_: None)
+    inside_the_loop = re.compile(r"layers\.(2|3)\.mlp\.experts\.0\.")
+    tables = {
+        p.name.removesuffix(".pt"): torch.load(p, weights_only=False)
+        for p in (rc.workdir / "tables").iterdir()
+        if inside_the_loop.search(p.name)
+    }
+    assert len(tables) == 6
+    ids = torch.randint(0, 50, (3, 32), generator=torch.Generator().manual_seed(0))
+
+    def probe(**kw):
+        return probe_sensitivity(
+            src,
+            tables,
+            rc.workdir,
+            ids,
+            rc.cfg,
+            Executor("cpu"),
+            log=lambda *_: None,
+            **kw,
+        )
+
+    assert probe() == probe(skip_prefix=False)
+
+
+# ---------------------------------------------------------------- the view hi2 reads through
+
+SHARD = "model-00001-of-00001.safetensors"
+
+
+def _materialise(path: Path, out: Path) -> Path:
+    """A regular checkpoint directory that holds exactly what the stock view of ``path``
+    serves: the same names, shapes and dtypes in one ``model.safetensors``."""
+    view = stock_view(path)
+    out.mkdir()
+    save_file(
+        {n: view.get_tensor(n).contiguous() for n in view.keys()},  # noqa: SIM118
+        str(out / "model.safetensors"),
+        metadata={"format": "pt"},
+    )
+    shutil.copy(path / "config.json", out / "config.json")
+    return out
+
+
+def test_stock_view_serves_the_reader_tensors_under_their_hf_names(tiny):
+    path, fmts, _ = tiny
+    view = stock_view(path)
+    assert isinstance(view, StockView) and stock_view(path) is view  # one per directory
+    with InklingSource(path) as src:
+        want = [
+            *src.hf_names().values(),
+            MESSAGE_QUERY,
+            *(n for layer in range(len(fmts)) for n in src.hf_expert_names(layer)),
+        ]
+        assert view.keys() == want
+        assert view.weight_map() == dict.fromkeys(want, SHARD)
+        dtypes = {torch.float32: "F32", torch.bfloat16: "BF16"}
+        for name in want:
+            sl, t, ref = view.get_slice(name), view.get_tensor(name), src.load(name)
+            assert tuple(sl.get_shape()) == tuple(t.shape) == tuple(ref.shape), name
+            assert sl.get_dtype() == dtypes[t.dtype] and t.dtype == ref.dtype, name
+            assert torch.equal(_bits(t), _bits(ref)), name
+    assert tuple(view.get_slice("lm_head.weight").get_shape()) == (UNPADDED, H)
+    assert tuple(view.get_slice(MESSAGE_QUERY).get_shape()) == (N_LOOP, 4, H)
+    # the experts come layer by layer, expert by expert: gate, up, down
+    tail = view.keys()[-3 * E * len(fmts) :]
+    assert tail[:6] == [expert_name(0, e, p) for e in (0, 1) for p in PROJECTIONS]
+
+
+def test_stock_view_hands_out_each_tensor_once(tiny):
+    view = stock_view(tiny[0])
+    gate, up, _ = (expert_name(1, 2, p) for p in PROJECTIONS)
+    g1 = view.get_tensor(gate)
+    u1 = view.get_tensor(up)  # the sibling of the pair decoded for the gate
+    g2 = view.get_tensor(gate)
+    assert torch.equal(g1, g2) and g1.data_ptr() != g2.data_ptr()
+    g1.zero_()  # a caller changing its tensor changes nobody else's
+    assert torch.equal(view.get_tensor(gate), g2) and not torch.equal(g1, g2)
+    assert torch.equal(u1, view.get_tensor(up)) and u1.data_ptr() != g2.data_ptr()
+
+
+def test_stock_view_knows_the_text_model_only(tiny):
+    view = stock_view(tiny[0])
+    for name in (
+        "model.visual.patch_embed.weight",
+        "nothing",
+        expert_name(99, 0, "gate_proj"),
+        expert_name(0, 99, "up_proj"),
+    ):
+        with pytest.raises(KeyError):
+            view.get_slice(name)
+    with pytest.raises(KeyError):
+        view.get_tensor("nothing")
+
+
+def test_source_map_and_open_source_serve_a_stock_directory_only(tiny, tmp_path):
+    path = tiny[0]
+    view = stock_view(path)
+    assert source_map(path) == view.weight_map()
+    with open_source(path, view.shard) as f:
+        assert f is view and f.get_slice(MESSAGE_QUERY).get_shape() == [N_LOOP, 4, H]
+    # a regular checkpoint is read as its files say
+    reg = tmp_path / "reg"
+    reg.mkdir()
+    one = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+    save_file(
+        {"a.weight": one}, str(reg / "model.safetensors"), metadata={"format": "pt"}
+    )
+    (reg / "config.json").write_text('{"model_type": "qwen2"}')
+    assert stock_view(reg) is None
+    assert source_map(reg) == weight_map(reg) == {"a.weight": "model.safetensors"}
+    with open_source(reg, "model.safetensors") as f:
+        assert f.get_slice("a.weight").get_shape() == [2, 3]
+        assert torch.equal(f.get_tensor("a.weight"), one)
+    # so is the Hugging Face copy of this very model: no serving tensors in its index
+    (reg / "config.json").write_text(json.dumps({"model_type": "inkling2_loop"}))
+    assert stock_view(reg) is None and source_map(reg) == weight_map(reg)
+    # and a directory without a readable config
+    assert stock_view(tmp_path / "nothing") is None
+
+
+class _ToyExperts(nn.Module):
+    def __init__(self, gate_up, down):
+        super().__init__()
+        self.gate_up_proj = nn.Parameter(gate_up)
+        self.down_proj = nn.Parameter(down)
+        self.act_fn = nn.SiLU()
+
+
+def _toy_model(path: Path, dtype: torch.dtype) -> nn.Module:
+    """Fused experts holding the decoded tensors, named as in the transformers model."""
+    model = nn.Module()
+    model.model = nn.Module()
+    model.model.language_model = nn.Module()
+    layers = model.model.language_model.layers = nn.ModuleList()
+    with InklingSource(path) as src:
+        for layer in range(src.num_layers):
+            block = nn.Module()
+            block.mlp = nn.Module()
+            block.mlp.experts = _ToyExperts(*src.fused_layer(layer, dtype=dtype))
+            layers.append(block)
+    return model
+
+
+def _nudge(model: nn.Module, name: str, ulps: int = 1) -> None:
+    """Move the first element of a parameter ``ulps`` units in the last place toward the
+    next larger magnitude (the bit pattern of a float is sign and magnitude)."""
+    p = dict(model.named_parameters())[name].data.view(-1)
+    p.view({2: torch.int16, 4: torch.int32}[p.element_size()])[0] += ulps
+
+
+def test_check_unfused_reads_the_stock_directory(tiny, tmp_path):
+    path, fmts, _ = tiny
+    first = f"model.language_model.layers.0.mlp.experts.0.{PROJECTIONS[0]}.weight"
+    fused = first.replace(".0.gate_proj.weight", ".gate_up_proj")
+    twin = _materialise(path, tmp_path / "twin")
+
+    def check(model, src=path):
+        assert unfuse_experts(model) == len(fmts)
+        check_unfused(model, src, make_resolver(source_map(src)), log=lambda *_: None)
+
+    for dtype in (torch.float32, torch.float16):
+        check(_toy_model(path, dtype))
+        # a wrong split is caught in every dtype: gate and up swapped in layer 0
+        model = _toy_model(path, dtype)
+        gu = model.model.language_model.layers[0].mlp.experts.gate_up_proj.data
+        gate, up = gu[:, :I_].clone(), gu[:, I_:].clone()
+        gu[:, :I_], gu[:, I_:] = up, gate
+        with pytest.raises(SystemExit, match="differs from"):
+            check(model)
+        # The loader's own dequantization of a stock directory is a second implementation
+        # of the formats (another order of the factors in float32, a cast of amax in half
+        # precision): one unit in the last place off is accepted there, in every dtype;
+        # eight are not; a regular copy of the same tensors must match exactly.
+        near = _toy_model(path, dtype)
+        _nudge(near, fused)
+        check(near)
+        far = _toy_model(path, dtype)
+        _nudge(far, fused, ulps=8)
+        with pytest.raises(SystemExit, match="differs from"):
+            check(far)
+        exact = _toy_model(path, dtype)
+        _nudge(exact, fused)
+        with pytest.raises(SystemExit, match="differs from"):
+            check(exact, twin)
+
+
+def test_source_estimates_see_the_decoded_shapes(tiny, tmp_path):
+    """Every size the plan reads from the source, on the stock directory and on a regular
+    directory with the same tensors."""
+    import regex
+
+    from hi2.cache import estimate_stats_bytes
+    from hi2.qad import QadConfig, estimate_seconds
+    from hi2.sensitivity import fp32_weight_bytes
+    from hi2.service import inspect_model
+
+    path, fmts, _ = tiny
+    twin = _materialise(path, tmp_path / "twin")
+    exc = regex.compile(DEFAULT_EXCLUDE)
+    stats = estimate_stats_bytes(path, None, exc)
+    assert stats > 0 and stats == estimate_stats_bytes(twin, None, exc)
+    assert estimate_seconds(path, QadConfig(), 64) == estimate_seconds(
+        twin, QadConfig(), 64
+    )
+    elements = (
+        (VOCAB + UNPADDED) * H  # embed (as stored), lm_head (cut to the vocabulary)
+        + len(fmts) * (48 * H + E * H)  # q projection, router
+        + 4 * N_LOOP * H  # message_input.query
+        + len(fmts) * E * 3 * I_ * H  # the experts, decoded
+    )
+    assert (
+        inspect_model(path)["parameters"]
+        == inspect_model(twin)["parameters"]
+        == elements
+    )
+    assert fp32_weight_bytes(path) == 4 * elements
+
+
+def test_a_data_free_run_from_the_stock_directory_equals_the_one_from_its_twin(
+    wide, tmp_path
+):
+    """``hi2 quantize`` data-free: planning, tables, allocation, encoding and the
+    passthrough of the dense tensors read the stock directory through the view and give
+    the same checkpoint as a regular directory holding the same tensors."""
+    from safetensors.torch import load_file
+
+    from hi2.calibrate import Config
+    from hi2.pipeline import RunConfig, run
+
+    path, fmts, _ = wide
+    twin = _materialise(path, tmp_path / "twin")
+    outs = {}
+    for tag, src in (("stock", path), ("twin", twin)):
+        rc = RunConfig(
+            src=src,
+            dst=tmp_path / f"out-{tag}",
+            workdir=tmp_path / f"work-{tag}",
+            target_bpw=3.5,
+            include=r"\.mlp\.experts\.",
+            cfg=Config(effort="fast"),
+        )
+        summary = run(rc, log=lambda *_: None)
+        shard = SHARD if tag == "stock" else "model.safetensors"
+        outs[tag] = (summary, load_file(str(rc.dst / shard)))
+    (s_stock, t_stock), (s_twin, t_twin) = outs["stock"], outs["twin"]
+    assert s_stock["tensors"] == s_twin["tensors"] == len(fmts) * E * 3
+    assert s_stock["avg_bpw"] == s_twin["avg_bpw"] and s_stock["avg_bpw"] <= 3.55
+    assert t_stock.keys() == t_twin.keys()
+    assert all(torch.equal(t_stock[k], t_twin[k]) for k in t_stock)
+    # the weights the source index does not list are not linked: validate_checkpoint
+    # (run above) refuses an unindexed shard
+    assert (path / "mtp.safetensors").exists()
+    assert not (tmp_path / "out-stock" / "mtp.safetensors").exists()
+    experts_out = [k for k in t_stock if ".mlp.experts." in k]
+    # every projection is encoded (the output layout is stacked: no decoded ``.weight``) ...
+    assert experts_out and all(".hi2_" in k for k in experts_out)
+    assert (
+        MESSAGE_QUERY in t_stock and "lm_head.weight" in t_stock
+    )  # ... the rest passes
+
+
+def test_a_stock_directory_with_unquantized_experts_is_refused(tiny, tmp_path):
+    """Passing decoded experts through would write them at 4 bytes per weight; in ``tiny``
+    the down projections (K = 32) are not HI2 candidates."""
+    from hi2.calibrate import Config
+    from hi2.pipeline import RunConfig, run
+
+    rc = RunConfig(
+        src=tiny[0],
+        dst=tmp_path / "out",
+        workdir=tmp_path / "work",
+        target_bpw=3.5,
+        include=r"\.mlp\.experts\.",
+        cfg=Config(effort="fast"),
+    )
+    with pytest.raises(ValueError, match="4 bytes per weight"):
+        run(rc, log=lambda *_: None)
+    assert not list((tmp_path / "out").glob("*.safetensors"))

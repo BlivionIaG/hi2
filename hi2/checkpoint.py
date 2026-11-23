@@ -96,6 +96,30 @@ def weight_map(d: Path) -> dict[str, str]:
         return dict.fromkeys(f.keys(), "model.safetensors")  # noqa: SIM118
 
 
+def source_map(d: Path) -> dict[str, str]:
+    """:func:`weight_map` of the checkpoint a run reads its weights from. A stock Inkling-2
+    directory (:mod:`hi2.inkling_source`) is read through its decoded view: the Hugging
+    Face names of the transformers model, all in one virtual shard. Any other directory is
+    exactly :func:`weight_map`."""
+    from .inkling_source import stock_view
+
+    view = stock_view(d)
+    return weight_map(d) if view is None else view.weight_map()
+
+
+def open_source(d: Path, shard: str):
+    """``safe_open`` of a shard of :func:`source_map`: the decoded view for a stock
+    Inkling-2 directory, the file itself for any other checkpoint."""
+    from safetensors import safe_open
+
+    from .inkling_source import stock_view
+
+    view = stock_view(d)
+    if view is not None and shard == view.shard:
+        return view
+    return safe_open(Path(d) / shard, "pt")
+
+
 _LAYER_KEY = re.compile(r"^(?:.*\.)?layers\.(\d+)\.(.*)$")
 
 
@@ -193,12 +217,10 @@ class Output:
     dense: dict | None = None
 
 
-def _requests_for(names, path, view, tables, outs, cfg):
-    """Load the source tensors, statistics and Hessians of ``names`` (one shard file)
-    and build an :class:`EncodeRequest` per tensor and output that still needs it."""
-    from safetensors import safe_open
-
-    with safe_open(path, "pt") as f:
+def _requests_for(names, src, shard, view, tables, outs, cfg):
+    """Load the source tensors, statistics and Hessians of ``names`` (one shard of the
+    source) and build an :class:`EncodeRequest` per tensor and output that still needs it."""
+    with open_source(src, shard) as f:
         return _requests_from(names, f, view, tables, outs, cfg)
 
 
@@ -334,10 +356,11 @@ def write_checkpoints(
     Destination ownership is established by the pipeline before calling this API."""
     from concurrent.futures import ThreadPoolExecutor
 
-    from safetensors import safe_open
     from safetensors.torch import save_file
 
     from .cache import StatsView
+    from .inkling_source import stock_view
+    from .moe import expert_parts
     from .runtime import atomic_json
 
     check_output_paths(
@@ -347,10 +370,18 @@ def write_checkpoints(
         raise ValueError("cannot write an HI2 checkpoint with zero expected tensors")
 
     view = StatsView(workdir)
-    wmap = weight_map(src)
+    wmap = source_map(src)
     shards = sorted(set(wmap.values()))
     if not set(tables).issubset(wmap):
         raise ValueError("expected quantized tensors are missing from the source index")
+    if stock_view(src) is not None:
+        loose = [n for n in wmap if expert_parts(n) is not None and n not in tables]
+        if loose:
+            raise ValueError(
+                f"{src}: {len(loose)} expert tensors are not quantized (first: {loose[0]}); "
+                "the stock view decodes experts to float32 and a passthrough copies them "
+                "at 4 bytes per weight: quantize every expert (--include, --limit-layers)"
+            )
     for o in outs:
         for root in (o.dst, o.done_dir):
             for name in [*shards, "config.json", "model.safetensors.index.json"]:
@@ -379,7 +410,7 @@ def write_checkpoints(
                         artifact=str(o.dst),
                     )
         data: dict[int, dict[str, torch.Tensor | None]] = {id(o): {} for o in outs}
-        with safe_open(src / shard, "pt") as f:
+        with open_source(src, shard) as f:
             for name in names:
                 if name in tables:
                     continue
@@ -411,9 +442,10 @@ def write_checkpoints(
                     2 if cfg.refine_passes else 1
                 )  # hs stays next to u
                 groups = list(_batches(enc_names, tables, todo, budget))
-                sp = src / shard
                 nxt = (
-                    io.submit(_requests_for, groups[0], sp, view, tables, todo, cfg)
+                    io.submit(
+                        _requests_for, groups[0], src, shard, view, tables, todo, cfg
+                    )
                     if groups
                     else None
                 )
@@ -421,7 +453,14 @@ def write_checkpoints(
                     reqs, slots = nxt.result()
                     if gi + 1 < len(groups):
                         nxt = io.submit(
-                            _requests_for, groups[gi + 1], sp, view, tables, todo, cfg
+                            _requests_for,
+                            groups[gi + 1],
+                            src,
+                            shard,
+                            view,
+                            tables,
+                            todo,
+                            cfg,
                         )
                     encoded = encode_many(reqs, cfg, ex) if reqs else []
                     by = {(n, id(o)): t for (n, o), t in zip(slots, encoded)}
@@ -519,7 +558,14 @@ def _finish_output(src: Path, o: Output, shards) -> None:
     atomic_json(o.dst / "config.json", cfgj)
     skip = {"config.json", "model.safetensors.index.json", *shards}
     for entry in src.iterdir():
-        if entry.name in skip or entry.name.startswith("."):
+        # A weight file the source index does not list (the stock Inkling directory's
+        # mtp.safetensors) is not part of this checkpoint, and validate_checkpoint
+        # refuses an unindexed shard: it is not linked.
+        if (
+            entry.name in skip
+            or entry.name.startswith(".")
+            or entry.suffix == ".safetensors"
+        ):
             continue
         link = o.dst / entry.name
         if not link.exists():
@@ -886,7 +932,6 @@ def validate_checkpoint(
 
 def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> dict:
     """Cheap sampled diagnostics with exact logical report coverage, not a full scan."""
-    from safetensors import safe_open
 
     from .stack import Hi2Checkpoint, to_fields
 
@@ -923,7 +968,7 @@ def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> 
         raise ValueError(
             f"{dst}/hi2_report.json: tensor coverage mismatch with checkpoint"
         )
-    wsrc = weight_map(src)
+    wsrc = source_map(src)
     missing = set(report) - set(wsrc)
     if missing:
         raise ValueError(f"{src}: missing expected source tensors {sorted(missing)}")
@@ -932,7 +977,7 @@ def verify_checkpoint(src: Path, dst: Path, max_tensors: int = 8, log=print) -> 
         t = ck.get(name.removesuffix(".weight"))
         _validate_fields(f"{dst}:{name}", to_fields(t))
         _check_report_entry(name, report[name], t)
-        with safe_open(src / wsrc[name], "pt") as f:
+        with open_source(src, wsrc[name]) as f:
             w = f.get_tensor(name).double()
         if tuple(w.shape) != t.shape:
             raise ValueError(

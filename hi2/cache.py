@@ -455,16 +455,14 @@ def prune(
 def estimate_stats_bytes(src: Path, include, exclude) -> int:
     """Upper bound of a stats entry: an fp32 triangle per eligible Linear input (inputs
     shared by q/k/v or gate/up are counted once per layer and width)."""
-    from safetensors import safe_open
-
-    from .checkpoint import is_eligible, weight_map
+    from .checkpoint import is_eligible, open_source, source_map
     from .moe import expert_parts
 
-    wmap = weight_map(src)
+    wmap = source_map(src)
     seen: set[tuple] = set()
     total = 0
     for shard in sorted(set(wmap.values())):
-        with safe_open(src / shard, "pt") as f:
+        with open_source(src, shard) as f:
             for name in [n for n, s in wmap.items() if s == shard]:
                 sl = f.get_slice(name)
                 shape = sl.get_shape()

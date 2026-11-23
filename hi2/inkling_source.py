@@ -33,6 +33,8 @@ Formats (value of one element)
 """
 
 import json
+import math
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -45,6 +47,7 @@ from .pinned import PinnedWindow
 
 HF_PREFIX = "model.language_model"
 SERVING_PREFIX = "model.llm"
+MODEL_TYPE = "inkling2_loop"  # ``model_type`` of the stock config.json
 PROJECTIONS = ("gate_proj", "up_proj", "down_proj")
 # The one Hugging Face parameter that is built from two serving tensors: the four
 # message-attention queries per loop layer (``[L, 4, H]``). The serving file keeps them as
@@ -268,6 +271,45 @@ def tensor_role(name: str) -> str:
         if rx.search(name):
             return role
     return "other"
+
+
+# ---------------------------------------------------------------- the transformers class
+
+
+def register_auto_class(path: str | Path) -> bool:
+    """Make ``AutoModelForCausalLM.from_pretrained(path)`` work on a stock Inkling-2
+    directory; False, and nothing done, for any other model.
+
+    transformers maps ``model_type`` ``inkling2_loop`` to its config class but registers
+    no ``AutoModelForCausalLM`` class, so the model loaders of :mod:`hi2` (pipeline, probe,
+    eval) stop at ``Unrecognized configuration class``. The class is in the vLLM fork's
+    transformers tree, not in a release: put that tree on ``PYTHONPATH``
+    (docs/inkling-source.md). Registering again is harmless."""
+    try:
+        model_type = json.loads((Path(path) / "config.json").read_text()).get(
+            "model_type"
+        )
+    except (OSError, ValueError, AttributeError):
+        return False
+    if model_type != MODEL_TYPE:
+        return False
+    try:
+        from transformers import AutoModelForCausalLM
+        from transformers.models.inkling2_loop import (
+            configuration_inkling2_loop as config,
+        )
+        from transformers.models.inkling2_loop import modeling_inkling2_loop as modeling
+    except ImportError as exc:
+        raise SystemExit(
+            f"{path}: model_type {MODEL_TYPE!r} needs the vLLM fork's transformers "
+            f"(transformers.models.inkling2_loop) on PYTHONPATH: {exc}"
+        ) from exc
+    AutoModelForCausalLM.register(
+        config.Inkling2LoopConfig,
+        modeling.Inkling2LoopForConditionalGeneration,
+        exist_ok=True,
+    )
+    return True
 
 
 # ---------------------------------------------------------------- the reader
@@ -565,3 +607,150 @@ class InklingSource:
                 t = t[: self.unpadded_vocab]
             t = t.to(dev)
         return t if dtype is None else t.to(dtype)
+
+
+# ---------------------------------------------------------------- the view hi2 reads through
+
+VISION_PREFIX = (
+    "model.visual."  # tensors the view leaves out (the model has them anyway)
+)
+_EXPERT_HF = re.compile(
+    rf"^{re.escape(HF_PREFIX)}\.layers\.(\d+)\.mlp\.experts\.(\d+)"
+    r"\.(gate_proj|up_proj|down_proj)\.weight$"
+)
+
+
+class _Slice:
+    """What ``safe_open(...).get_slice(name)`` returns, as far as hi2 reads it."""
+
+    def __init__(self, dtype: str, shape):
+        self._dtype, self._shape = dtype, list(shape)
+
+    def get_dtype(self) -> str:
+        return self._dtype
+
+    def get_shape(self) -> list[int]:
+        return list(self._shape)
+
+
+class StockView:
+    """The text tensors of a stock Inkling-2 directory under their Hugging Face names,
+    as the read-only ``safe_open`` handle of one shard (:meth:`get_slice`,
+    :meth:`get_tensor`, :meth:`keys`, context manager), decoded on the fly.
+
+    The names are those of the transformers model after :func:`hi2.moe.unfuse_experts`:
+    the dense text tensors (:func:`name_map`, as stored, ``lm_head`` cut to the unpadded
+    vocabulary), :data:`MESSAGE_QUERY` and every expert's ``gate_proj`` / ``up_proj`` /
+    ``down_proj`` (float32, :class:`InklingSource`'s exact decode), layer by layer and
+    expert by expert. The vision tower and ``mtp.safetensors`` are not part of it. All
+    names map to one shard file name, the directory's main shard, so a ``{name: shard}``
+    map (:meth:`weight_map`) and ``open_source(dir, shard)`` stand in for the index and
+    ``safe_open`` of a regular checkpoint (:func:`hi2.checkpoint.source_map`). Nothing is
+    staged on disk; an expert projection is decoded (about 0.1 s) each time it is read.
+    """
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._src = InklingSource(self.path)
+        s = self._src
+        self.shard: str = s._wmap[f"{SERVING_PREFIX}.embed.weight"]
+        self._serving = {hf: srv for srv, hf in s.hf_names().items()}
+        self._keys = [
+            *self._serving,
+            MESSAGE_QUERY,
+            *(n for layer in range(s.num_layers) for n in s.hf_expert_names(layer)),
+        ]
+        self._lock = threading.RLock()  # write_checkpoints reads from a worker thread
+        self._sibling: tuple[str, torch.Tensor] | None = None
+
+    def __enter__(self) -> "StockView":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        pass  # the view is shared by every reader of the directory
+
+    def keys(self) -> list[str]:
+        return list(self._keys)
+
+    def weight_map(self) -> dict[str, str]:
+        return dict.fromkeys(self._keys, self.shard)
+
+    def metadata(self) -> dict[str, str]:
+        return {"format": "pt"}
+
+    def get_slice(self, name: str) -> _Slice:
+        """Dtype string and shape, from the headers: nothing is decoded."""
+        s = self._src
+        m = _EXPERT_HF.match(name)
+        if m:
+            if int(m.group(1)) >= s.num_layers or int(m.group(2)) >= s.n_experts:
+                raise KeyError(name)
+            down = m.group(3) == "down_proj"
+            return _Slice("F32", (s.hidden, s.inter) if down else (s.inter, s.hidden))
+        if name == MESSAGE_QUERY:
+            return _Slice("F32", (s.header(CROSS_PASS_QUERIES)[1][0] // 2, 4, s.hidden))
+        if name not in self._serving:
+            raise KeyError(name)
+        dtype, shape = s.header(self._serving[name])
+        if name == "lm_head.weight":
+            shape = (s.unpadded_vocab, *shape[1:])
+        return _Slice(dtype, shape)
+
+    def get_tensor(self, name: str) -> torch.Tensor:
+        """The tensor as :meth:`InklingSource.load` has it (CPU). A tensor is handed out
+        once per call: the decode of the sibling that a gate/up pair costs anyway is kept
+        for the next call only, so no caller sees storage another one has changed."""
+        with self._lock:
+            m = _EXPERT_HF.match(name)
+            if m is None:
+                return self._src.load(name)
+            layer, e, proj = int(m.group(1)), int(m.group(2)), m.group(3)
+            if proj == "down_proj":
+                return self._src.down(layer, [e])[0]
+            if self._sibling is not None and self._sibling[0] == name:
+                _, t = self._sibling
+                self._sibling = None
+                return t
+            gate, up = self._src.gate_up(layer, [e])
+            if proj == "gate_proj":
+                self._sibling = (expert_name(layer, e, "up_proj"), up[0])
+                return gate[0]
+            self._sibling = (expert_name(layer, e, "gate_proj"), gate[0])
+            return up[0]
+
+    def parameters(self) -> int:
+        """Elements of the model transformers builds from the directory: every tensor of
+        the view at its decoded shape, and the vision tower as stored (the view leaves it
+        out, the model has it)."""
+        n = sum(math.prod(self.get_slice(k).get_shape()) for k in self._keys)
+        raw = self._src._wmap
+        return n + sum(
+            math.prod(self._src.header(k)[1])
+            for k in raw
+            if k.startswith(VISION_PREFIX)
+        )
+
+
+_VIEWS: dict[str, StockView] = {}
+
+
+def stock_view(path: str | Path) -> StockView | None:
+    """The :class:`StockView` of ``path`` when it is a stock Inkling-2 serving directory
+    (``model_type`` and the fused ``model.llm`` expert tensors in the index), else None:
+    every other directory, an exported Hugging Face-layout copy of this model included,
+    is read as its files say. One view per directory and process."""
+    path = Path(path)
+    key = str(path.resolve())
+    view = _VIEWS.get(key)
+    if view is not None:
+        return view
+    try:
+        cfg = json.loads((path / "config.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(cfg, dict) or cfg.get("model_type") != MODEL_TYPE:
+        return None
+    if f"{SERVING_PREFIX}.layers.0.mlp.experts.w13_weight" not in weight_map(path):
+        return None
+    view = _VIEWS[key] = StockView(path)
+    return view

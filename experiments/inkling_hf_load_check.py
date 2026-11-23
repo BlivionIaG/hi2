@@ -4,7 +4,8 @@
 
 ``AutoModelForCausalLM.from_pretrained(CKPT)`` is how ``hi2.pipeline._load_model`` builds a
 model. With the fork's transformers (``--transformers``) and ``Inkling2LoopForConditionalGeneration``
-registered for the causal-LM auto class, this loads the serving checkpoint (the unknown
+registered for the causal-LM auto class (``hi2.inkling_source.register_auto_class``, which the
+model loaders of hi2 call themselves), this loads the serving checkpoint (the unknown
 ``modelopt`` quantization tag is skipped with a warning) and its own conversion renames the
 tensors, composes ``message_input.query`` and dequantizes the experts. This script loads the
 model in ``--dtype`` and compares every text-model tensor with ``hi2.inkling_source``: the
@@ -31,7 +32,12 @@ from pathlib import Path
 
 import torch
 
-from hi2.inkling_source import MESSAGE_QUERY, SERVING_PREFIX, InklingSource
+from hi2.inkling_source import (
+    MESSAGE_QUERY,
+    SERVING_PREFIX,
+    InklingSource,
+    register_auto_class,
+)
 
 DTYPES = {
     "float32": torch.float32,
@@ -139,17 +145,11 @@ def main() -> int:
     a = ap.parse_args()
     torch.set_num_threads(a.threads)
     sys.path.insert(0, str(a.transformers))
-    from transformers import AutoConfig, AutoModelForCausalLM
-    from transformers.models.inkling2_loop.modeling_inkling2_loop import (
-        Inkling2LoopForConditionalGeneration,
-    )
+    from transformers import AutoModelForCausalLM
 
     dtype = DTYPES[a.dtype]
-    AutoModelForCausalLM.register(
-        type(AutoConfig.from_pretrained(a.ckpt)),
-        Inkling2LoopForConditionalGeneration,
-        exist_ok=True,
-    )
+    if not register_auto_class(a.ckpt):
+        raise SystemExit(f"{a.ckpt}: not an Inkling-2 directory (model_type)")
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(
         a.ckpt,

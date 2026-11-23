@@ -22,7 +22,7 @@ from torch import nn
 
 from .cache import StatsView
 from .calibrate import Config, TensorTable, encode_with_picks
-from .checkpoint import make_resolver, weight_map
+from .checkpoint import make_resolver, source_map
 from .executor import Executor
 from .format import dequantize
 from .pinned import PinnedWindow, module_to_device
@@ -81,11 +81,17 @@ def probe_fits(weight_bytes: int, device_bytes: int, n_devices: int) -> bool:
 
 def fp32_weight_bytes(src) -> int:
     """The model's weights in float32, estimated from the stored files and the checkpoint
-    dtype (bf16/fp16 store half the fp32 bytes). Used to resolve ``--sens-dtype auto``
-    without loading the model twice."""
+    dtype (bf16/fp16 store half the fp32 bytes), or from the parameter count for a stock
+    Inkling-2 directory, whose experts are stored in 4 or 8 bits. Used to resolve
+    ``--sens-dtype auto`` without loading the model twice."""
     import json
     from pathlib import Path
 
+    from .inkling_source import stock_view
+
+    view = stock_view(src)
+    if view is not None:
+        return 4 * view.parameters()
     src = Path(src)
     cfg = json.loads((src / "config.json").read_text())
     dt = cfg.get("torch_dtype") or cfg.get("dtype") or "bfloat16"
@@ -184,8 +190,10 @@ def load_probe_model(src, dtype: torch.dtype, ex: Executor, log=print):
     executor's devices (``HI2_PROBE_SHARD=1`` forces the split, for tests)."""
     from transformers import AutoModelForCausalLM
 
+    from .inkling_source import register_auto_class
     from .moe import unfuse_experts
 
+    register_auto_class(src)  # Inkling-2 only: transformers has no auto class for it
     model = AutoModelForCausalLM.from_pretrained(
         src, dtype=dtype, trust_remote_code=False
     ).eval()
@@ -238,11 +246,13 @@ def probe_sensitivity(
 
     ``skip_prefix`` replays the reference outputs of the decoder layers before a unit's
     first layer instead of recomputing them (they do not change), which gives the same
-    logits bit for bit. ``batch`` sequences go through the model per forward (1 = the
-    original per-sequence probe; larger is faster but rounds the logits differently)."""
+    logits bit for bit; a model that runs a layer more than once per forward (a loop: the
+    output of its last call is not the input of the next layer) recomputes the prefix.
+    ``batch`` sequences go through the model per forward (1 = the original per-sequence
+    probe; larger is faster but rounds the logits differently)."""
     model, dev, sharded = load_probe_model(src, dtype, ex, log)
     fwd = {"use_cache": False} if sharded else {}  # no per-layer caches across devices
-    resolve = make_resolver(weight_map(src))
+    resolve = make_resolver(source_map(src))
     params = {}
     for name, p in model.named_parameters():
         ckpt = resolve(name)
@@ -255,11 +265,13 @@ def probe_sensitivity(
         dict() for _ in chunks
     ]  # chunk -> layer -> output
     hooks = []
+    calls = [0] * (len(layers) if layers is not None else 0)
     if skip_prefix and layers is not None:
         for li, layer in enumerate(layers):
 
             def keep(_m, _a, out, li=li):
                 replay[_current[0]][li] = out
+                calls[li] += 1
 
             hooks.append(layer.register_forward_hook(keep))
     _current = [0]
@@ -280,10 +292,17 @@ def probe_sensitivity(
         del lg
     for h in hooks:
         h.remove()
+    replaying = bool(hooks)
+    if replaying and max(calls) > len(chunks):
+        log(
+            "sensitivity probe: a decoder layer runs more than once per forward; "
+            "recomputing the unchanged prefix instead of replaying it"
+        )
+        replaying = False
 
     def kl(first_layer: int) -> float:
         total, n = 0.0, 0
-        start = first_layer if hooks else 0
+        start = first_layer if replaying else 0
         saved = []
         for ci, c in enumerate(chunks):
             for li in range(start):  # unchanged prefix: replay its outputs

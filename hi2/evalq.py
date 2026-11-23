@@ -47,8 +47,10 @@ def evaluate(
 ) -> dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    from .inkling_source import register_auto_class
     from .pipeline import _attach_mmap_ngram, _shrink_ngram_embedding
 
+    register_auto_class(src)  # Inkling-2 only: transformers has no auto class for it
     devices = [d for d in device.split(",") if d]
     tok = AutoTokenizer.from_pretrained(src, trust_remote_code=False)
     ids = load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens)

@@ -706,12 +706,10 @@ def tables_from_stats(
     weights are read from the checkpoint (the HF model holds exactly these values cast
     to ``compute_dtype``) and every input group is tabulated as in
     :func:`calibrate_layerwise`, with its statistics on the same device."""
-    from safetensors import safe_open
-
-    from .checkpoint import weight_map
+    from .checkpoint import open_source, source_map
 
     meta = json.loads((entry / "layers.json").read_text())
-    wmap = weight_map(src)
+    wmap = source_map(src)
     dtype = getattr(torch, compute_dtype)
     tables = {}
     handles: dict[str, object] = {}
@@ -720,7 +718,7 @@ def tables_from_stats(
         def tensor(name):
             shard = wmap[name]
             if shard not in handles:
-                handles[shard] = stack.enter_context(safe_open(src / shard, "pt"))
+                handles[shard] = stack.enter_context(open_source(src, shard))
             return handles[shard].get_tensor(name).to(dtype).float()
 
         for li, groups in meta["groups"]:

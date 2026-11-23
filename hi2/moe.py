@@ -151,14 +151,33 @@ def unfuse_experts(model: nn.Module) -> int:
     return len(targets)
 
 
+def _within_ulps(ref: torch.Tensor, got: torch.Tensor, ulps: int) -> bool:
+    """``ref`` equals ``got`` bit for bit (``ulps`` 0), or differs by at most ``ulps`` units
+    in the last place of ``got``'s dtype (``ulps * eps * |ref|``, and one subnormal step)."""
+    if not ulps:
+        return torch.equal(ref, got)
+    fi = torch.finfo(got.dtype)
+    ref, got = ref.double(), got.double()
+    return bool(((ref - got).abs() <= ulps * fi.eps * (ref.abs() + fi.tiny)).all())
+
+
 def check_unfused(model: nn.Module, src, resolve, log=print) -> None:
     """Compare the first expert Linear views with the checkpoint tensors they claim to
-    be, so a wrong split (e.g. up before gate) fails loudly instead of silently."""
-    from safetensors import safe_open
+    be, so a wrong split (e.g. up before gate) fails loudly instead of silently.
 
-    from .checkpoint import weight_map
+    The tensors are read through :func:`hi2.checkpoint.open_source`. For a stock
+    Inkling-2 directory (decoded on the fly) the model's own loader is the other side, a
+    second implementation of the NVFP4 and MXFP8 formats: it multiplies the block scale,
+    the code and the per-expert factor in another order than the reader (float32: one unit
+    in the last place, in about a tenth of the elements of an NVFP4 layer) and casts the
+    NVFP4 ``amax`` to the model's dtype first (float16 and bfloat16: up to two units, in
+    about a fifth of them). The comparison allows two units there; every other model must
+    match exactly."""
+    from .checkpoint import open_source, source_map
+    from .inkling_source import stock_view
 
-    wmap = weight_map(src)
+    wmap = source_map(src)
+    stock = stock_view(src) is not None
     checked = 0
     for name, p in model.named_parameters():
         if expert_parts(name) is None or expert_parts(name)[1] != 0:
@@ -166,9 +185,10 @@ def check_unfused(model: nn.Module, src, resolve, log=print) -> None:
         ckpt = resolve(name)
         if ckpt is None:
             raise SystemExit(f"{name}: no checkpoint tensor (fused experts on disk?)")
-        with safe_open(src / wmap[ckpt], "pt") as f:
+        with open_source(src, wmap[ckpt]) as f:
             ref = f.get_tensor(ckpt).to(p.dtype)
-        if ref.shape != p.shape or not torch.equal(ref, p.data.cpu()):
+        ulps = 2 if stock else 0
+        if ref.shape != p.shape or not _within_ulps(ref, p.data.cpu(), ulps):
             raise SystemExit(f"{name}: unfused expert view differs from {ckpt}")
         checked += 1
         if checked >= 3:

@@ -20,7 +20,8 @@ from .checkpoint import (
     Output,
     is_eligible,
     make_resolver,
-    weight_map,
+    open_source,
+    source_map,
     write_checkpoints,
 )
 from .executor import Executor
@@ -258,8 +259,10 @@ def _load_model(rc: RunConfig, log=print):
     """The HF model in RAM, with fused 3-D experts replaced by per-expert Linears."""
     from transformers import AutoModelForCausalLM
 
+    from .inkling_source import register_auto_class
     from .moe import check_unfused, unfuse_experts
 
+    register_auto_class(rc.src)  # Inkling-2 only: transformers has no auto class for it
     if os.environ.get("HI2_NGRAM_MMAP"):
         _shrink_ngram_embedding(log)
     model = AutoModelForCausalLM.from_pretrained(
@@ -271,7 +274,7 @@ def _load_model(rc: RunConfig, log=print):
     ).eval()
     _attach_mmap_ngram(model, log)
     if unfuse_experts(model):
-        check_unfused(model, rc.src, make_resolver(weight_map(rc.src)), log)
+        check_unfused(model, rc.src, make_resolver(source_map(rc.src)), log)
     return model
 
 
@@ -317,7 +320,7 @@ def phase1_tables(rc: RunConfig, ex: Executor, log=print) -> dict[str, TensorTab
 
     ids = _calib_ids(rc)
     model = _load_model(rc, log)
-    wmap = weight_map(rc.src)
+    wmap = source_map(rc.src)
     tables = calibrate_layerwise(
         model,
         ids,
@@ -364,7 +367,7 @@ def _phase1_cached(
                 sent.begin()
                 try:
                     model = _load_model(rc, log)
-                    wmap = weight_map(rc.src)
+                    wmap = source_map(rc.src)
                     sink = CacheSink(sent.work, rc.sigma_fp16_above)
                     tables = calibrate_layerwise(
                         model,
@@ -425,12 +428,10 @@ def _phase1_cached(
 
 def _tabulate_streaming(rc, ex, inc, exc, tdir, log) -> dict[str, TensorTable]:
     """Data-free: stream tensors from the checkpoint (resumable per tensor)."""
-    from safetensors import safe_open
-
-    wmap = weight_map(rc.src)
+    wmap = source_map(rc.src)
     tables: dict[str, TensorTable] = {}
     for shard in sorted(set(wmap.values())):
-        with safe_open(rc.src / shard, "pt") as f:
+        with open_source(rc.src, shard) as f:
             for name in [n for n, s in wmap.items() if s == shard]:
                 if rc.limit_layers is not None:
                     layer = re.search(r"(?:^|\.)layers\.(\d+)\.", name)
@@ -495,7 +496,7 @@ def _sequential_encode(rc, ex, tables, picks, log) -> dict:
         re.compile(rc.exclude),
         rc.limit_layers,
         log,
-        make_resolver(weight_map(rc.src)),
+        make_resolver(source_map(rc.src)),
     )
 
 
@@ -564,7 +565,7 @@ def _qad_encode(
         rc.workdir,
         inc,
         re.compile(rc.exclude),
-        make_resolver(weight_map(rc.src)),
+        make_resolver(source_map(rc.src)),
         fp,
         rc.limit_layers,
         log,
@@ -613,7 +614,7 @@ def _final_kl_fits(rc, ex, model, tensors, have_head_inputs, log) -> bool:
     devs = ex.devices
     if devs[0].type != "cuda":
         return True
-    resolve = make_resolver(weight_map(rc.src))
+    resolve = make_resolver(source_map(rc.src))
     quant, rest, teacher = 0, 0, 0
     for name, p in model.named_parameters():
         teacher += p.numel() * p.element_size()
@@ -671,7 +672,7 @@ def _final_kl(rc, ex, model, ids, tensors, dense, fp, log, tag="", head_inputs=N
         dense,
         qc,
         ex.devices,
-        make_resolver(weight_map(rc.src)),
+        make_resolver(source_map(rc.src)),
         log,
         head_inputs=head_inputs,
     )

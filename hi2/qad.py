@@ -188,9 +188,8 @@ def estimate_seconds(
     from pathlib import Path as _Path
 
     import regex as re
-    from safetensors import safe_open
 
-    from .checkpoint import DEFAULT_EXCLUDE, is_eligible, weight_map
+    from .checkpoint import DEFAULT_EXCLUDE, is_eligible, open_source, source_map
 
     src = _Path(src)
     cfg = _json.loads((src / "config.json").read_text())
@@ -198,9 +197,9 @@ def estimate_seconds(
     inc = re.compile(include) if include else None
     exc = re.compile(exclude or DEFAULT_EXCLUDE)
     total = 0
-    wmap = weight_map(src)
+    wmap = source_map(src)
     for shard in sorted(set(wmap.values())):
-        with safe_open(src / shard, "pt") as f:
+        with open_source(src, shard) as f:
             for name in f.keys():  # noqa: SIM118
                 if "layers." not in name or name.startswith("mtp"):
                     continue
