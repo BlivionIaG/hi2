@@ -317,7 +317,7 @@ class InklingSource:
         return f
 
     def names(self) -> list[str]:
-        """The serving names of the index (the MTP and vision files are not read here)."""
+        """The serving names of the index (``mtp.safetensors`` is not in it)."""
         return list(self._wmap)
 
     def header(self, name: str) -> tuple[str, tuple[int, ...]]:
