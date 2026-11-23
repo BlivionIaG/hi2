@@ -35,7 +35,7 @@ they do not replace current help or guarantee installation compatibility.
 | [overview.html](overview.html) | Interactive orientation, format anatomy and educational size estimate; not a quantization result |
 | [format-spec.md](format-spec.md) | Published v3.2 serialization reference: section 2 is normative for the tensor representation; experimental/runtime discussion is separately scoped |
 | [moe.md](moe.md) | Mixture-of-experts (MoE) eligibility, current stacked layout, dated OLMoE measurements |
-| [inkling-source.md](inkling-source.md) | Optional reader of the stock Inkling-2-Mini NVFP4/MXFP8 checkpoint: layout, dequantization, exactness, a half-precision teacher, weight-only allocation, device decode cost |
+| [inkling-source.md](inkling-source.md) | Optional reader of the stock Inkling-2-Mini NVFP4/MXFP8 checkpoint: layout, dequantization, exactness, a half-precision teacher, weight-only allocation, device decode cost, the decoded source view `hi2 quantize` reads, and what blocks a quantization run |
 | [qad.md](qad.md) | Quantization-aware distillation (QAD), exceptions, dated quality and runtime studies |
 | [speed.md](speed.md) | Cache identities, fused encoder and measured speed |
 | [results.md](results.md) | Model/corpus-specific numerical, task and runtime results |

@@ -120,7 +120,7 @@ to measure and accept or reject the published artifact.
 | `qad.py`, `finalkl.py` | Layer-wise distillation and the final logit-KL phase. |
 | `moe.py`, `stack.py` | Expert views, routed-token statistics, the stacked layout. |
 | `checkpoint.py` | Shard enumeration, the streaming writer, verification. |
-| `inkling_source.py` | Optional source reader of the stock Inkling-2-Mini NVFP4/MXFP8 checkpoint ([inkling-source.md](inkling-source.md)); not on any default path. |
+| `inkling_source.py` | Optional source reader of the stock Inkling-2-Mini NVFP4/MXFP8 checkpoint and its decoded view for `checkpoint.source_map` / `open_source` ([inkling-source.md](inkling-source.md)); reached only for a directory of that layout. |
 | `cache.py` | The persistent cache. |
 | `executor.py` | Compute placement on one or more devices. |
 | `evalq.py`, `quality.py` | Dense held-out fidelity and explicit acceptance thresholds. |

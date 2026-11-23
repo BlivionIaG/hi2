@@ -1,0 +1,1028 @@
+{
+ "plan": {
+  "ptq_data_free": {
+   "seconds": 0.1,
+   "phases": [
+    "data_free_tables",
+    "allocation",
+    "encode",
+    "validation"
+   ],
+   "layers": 24,
+   "checkpoint": {
+    "model_type": "inkling2_loop",
+    "layers": 24,
+    "hidden_size": 2304,
+    "tensor_count": 1244,
+    "shard_bytes": 19526019168,
+    "parameters": 26386415616,
+    "tensor_bytes": 19525870752,
+    "largest_tensor_bytes": 926318592,
+    "largest_hessian_bytes_fp32": 67108864
+   },
+   "resource_estimates": {
+    "source_tensor_bytes": 19525870752,
+    "largest_source_tensor_bytes": 926318592,
+    "largest_hessian_bytes_fp32": 0,
+    "dense_export_bytes_fp16": 52772831232,
+    "full_model_weights_bytes_fp32": 105545662464,
+    "full_model_stages": [],
+    "host_physical_memory_bytes": 540660150272,
+    "total_runtime_s": null,
+    "peak_vram_bytes": null
+   },
+   "view_parameters": 26386415616
+  },
+  "qad_final_kl": {
+   "seconds": 2.0,
+   "phases": [
+    "calibration",
+    "allocation",
+    "qad",
+    "final_kl",
+    "encode",
+    "validation"
+   ],
+   "calib_tokens_available": 20457,
+   "calib_tokens_needed": 3072,
+   "qad_trained_layers": 24,
+   "qad_hidden_state_ram_gib_fp32": 0.11,
+   "qad_estimate_seconds_gpu": 7337,
+   "qad_estimate_layers": 24
+  },
+  "ok": true,
+  "stage_seconds": 2.2
+ },
+ "census": {
+  "tensors": 9861,
+  "elements": 26068159488,
+  "expert_elements": 24461180928,
+  "candidate_elements_default_exclude": 25135497216,
+  "candidate_elements_experts_only": 24461180928,
+  "non_expert_candidates_by_default": {
+   "model.language_model.layers.N.self_attn.q_proj.linear.weight": {
+    "tensors": 24,
+    "elements": 169869312,
+    "dtype": "BF16",
+    "shape": [
+     3072,
+     2304
+    ]
+   },
+   "model.language_model.layers.N.self_attn.o_proj.linear.weight": {
+    "tensors": 24,
+    "elements": 169869312,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     3072
+    ]
+   },
+   "model.language_model.layers.N.self_attn.o_proj.gate_proj.weight": {
+    "tensors": 24,
+    "elements": 169869312,
+    "dtype": "BF16",
+    "shape": [
+     3072,
+     2304
+    ]
+   },
+   "model.language_model.layers.N.self_attn.k_proj.linear.weight": {
+    "tensors": 24,
+    "elements": 56623104,
+    "dtype": "BF16",
+    "shape": [
+     1024,
+     2304
+    ]
+   },
+   "model.language_model.layers.N.self_attn.v_proj.linear.weight": {
+    "tensors": 24,
+    "elements": 56623104,
+    "dtype": "BF16",
+    "shape": [
+     1024,
+     2304
+    ]
+   },
+   "model.language_model.layers.N.self_attn.relative_position_bias.linear.weight": {
+    "tensors": 24,
+    "elements": 21233664,
+    "dtype": "BF16",
+    "shape": [
+     384,
+     2304
+    ]
+   },
+   "model.language_model.layers.N.q_message_gate.down_proj.weight": {
+    "tensors": 12,
+    "elements": 3538944,
+    "dtype": "BF16",
+    "shape": [
+     64,
+     4608
+    ]
+   },
+   "model.language_model.layers.N.k_message_gate.down_proj.weight": {
+    "tensors": 12,
+    "elements": 3538944,
+    "dtype": "BF16",
+    "shape": [
+     64,
+     4608
+    ]
+   },
+   "model.language_model.layers.N.v_message_gate.down_proj.weight": {
+    "tensors": 12,
+    "elements": 3538944,
+    "dtype": "BF16",
+    "shape": [
+     64,
+     4608
+    ]
+   },
+   "model.language_model.layers.N.mlp_message_gate.down_proj.weight": {
+    "tensors": 12,
+    "elements": 3538944,
+    "dtype": "BF16",
+    "shape": [
+     64,
+     4608
+    ]
+   },
+   "model.language_model.layers.N.q_message_gate.forget_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ]
+   },
+   "model.language_model.layers.N.q_message_gate.message_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ]
+   },
+   "model.language_model.layers.N.k_message_gate.forget_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ]
+   },
+   "model.language_model.layers.N.k_message_gate.message_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ]
+   },
+   "model.language_model.layers.N.v_message_gate.forget_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ]
+   },
+   "model.language_model.layers.N.v_message_gate.message_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ]
+   },
+   "model.language_model.layers.N.mlp_message_gate.forget_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ]
+   },
+   "model.language_model.layers.N.mlp_message_gate.message_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ]
+   },
+   "model.language_model.layers.N.self_attn.sink_proj.weight": {
+    "tensors": 24,
+    "elements": 1327104,
+    "dtype": "BF16",
+    "shape": [
+     24,
+     2304
+    ]
+   },
+   "model.language_model.layers.N.self_attn.k_proj.sconv.weight_proj.weight": {
+    "tensors": 4,
+    "elements": 294912,
+    "dtype": "BF16",
+    "shape": [
+     32,
+     2304
+    ]
+   },
+   "model.language_model.layers.N.self_attn.v_proj.sconv.weight_proj.weight": {
+    "tensors": 4,
+    "elements": 294912,
+    "dtype": "BF16",
+    "shape": [
+     32,
+     2304
+    ]
+   }
+  },
+  "patterns": {
+   "model.language_model.layers.N.mlp.experts.N.gate_proj.weight": {
+    "tensors": 3072,
+    "elements": 8153726976,
+    "dtype": "F32",
+    "shape": [
+     1152,
+     2304
+    ],
+    "candidate_default": 3072,
+    "candidate_experts_only": 3072
+   },
+   "model.language_model.layers.N.mlp.experts.N.up_proj.weight": {
+    "tensors": 3072,
+    "elements": 8153726976,
+    "dtype": "F32",
+    "shape": [
+     1152,
+     2304
+    ],
+    "candidate_default": 3072,
+    "candidate_experts_only": 3072
+   },
+   "model.language_model.layers.N.mlp.experts.N.down_proj.weight": {
+    "tensors": 3072,
+    "elements": 8153726976,
+    "dtype": "F32",
+    "shape": [
+     2304,
+     1152
+    ],
+    "candidate_default": 3072,
+    "candidate_experts_only": 3072
+   },
+   "model.language_model.embed_tokens.weight": {
+    "tensors": 1,
+    "elements": 463159296,
+    "dtype": "BF16",
+    "shape": [
+     201024,
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "lm_head.weight": {
+    "tensors": 1,
+    "elements": 460933632,
+    "dtype": "BF16",
+    "shape": [
+     200058,
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.q_proj.linear.weight": {
+    "tensors": 24,
+    "elements": 169869312,
+    "dtype": "BF16",
+    "shape": [
+     3072,
+     2304
+    ],
+    "candidate_default": 24,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.o_proj.linear.weight": {
+    "tensors": 24,
+    "elements": 169869312,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     3072
+    ],
+    "candidate_default": 24,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.o_proj.gate_proj.weight": {
+    "tensors": 24,
+    "elements": 169869312,
+    "dtype": "BF16",
+    "shape": [
+     3072,
+     2304
+    ],
+    "candidate_default": 24,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.k_proj.linear.weight": {
+    "tensors": 24,
+    "elements": 56623104,
+    "dtype": "BF16",
+    "shape": [
+     1024,
+     2304
+    ],
+    "candidate_default": 24,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.v_proj.linear.weight": {
+    "tensors": 24,
+    "elements": 56623104,
+    "dtype": "BF16",
+    "shape": [
+     1024,
+     2304
+    ],
+    "candidate_default": 24,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.relative_position_bias.linear.weight": {
+    "tensors": 24,
+    "elements": 21233664,
+    "dtype": "BF16",
+    "shape": [
+     384,
+     2304
+    ],
+    "candidate_default": 24,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.mlp.gate.weight": {
+    "tensors": 24,
+    "elements": 7077888,
+    "dtype": "BF16",
+    "shape": [
+     128,
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.q_message_gate.down_proj.weight": {
+    "tensors": 12,
+    "elements": 3538944,
+    "dtype": "BF16",
+    "shape": [
+     64,
+     4608
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.k_message_gate.down_proj.weight": {
+    "tensors": 12,
+    "elements": 3538944,
+    "dtype": "BF16",
+    "shape": [
+     64,
+     4608
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.v_message_gate.down_proj.weight": {
+    "tensors": 12,
+    "elements": 3538944,
+    "dtype": "BF16",
+    "shape": [
+     64,
+     4608
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.mlp_message_gate.down_proj.weight": {
+    "tensors": 12,
+    "elements": 3538944,
+    "dtype": "BF16",
+    "shape": [
+     64,
+     4608
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.q_message_gate.forget_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.q_message_gate.message_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.k_message_gate.forget_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.k_message_gate.message_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.v_message_gate.forget_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.v_message_gate.message_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.mlp_message_gate.forget_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.mlp_message_gate.message_gate_proj.weight": {
+    "tensors": 12,
+    "elements": 1769472,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     64
+    ],
+    "candidate_default": 12,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.sink_proj.weight": {
+    "tensors": 24,
+    "elements": 1327104,
+    "dtype": "BF16",
+    "shape": [
+     24,
+     2304
+    ],
+    "candidate_default": 24,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.relative_position_bias.proj": {
+    "tensors": 24,
+    "elements": 393216,
+    "dtype": "BF16",
+    "shape": [
+     16,
+     1024
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.k_proj.sconv.weight_proj.weight": {
+    "tensors": 4,
+    "elements": 294912,
+    "dtype": "BF16",
+    "shape": [
+     32,
+     2304
+    ],
+    "candidate_default": 4,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.v_proj.sconv.weight_proj.weight": {
+    "tensors": 4,
+    "elements": 294912,
+    "dtype": "BF16",
+    "shape": [
+     32,
+     2304
+    ],
+    "candidate_default": 4,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.post_attention_convolution.conv1d.weight": {
+    "tensors": 24,
+    "elements": 221184,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     1,
+     4
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.post_mlp_convolution.conv1d.weight": {
+    "tensors": 24,
+    "elements": 221184,
+    "dtype": "BF16",
+    "shape": [
+     2304,
+     1,
+     4
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.message_input.query": {
+    "tensors": 1,
+    "elements": 110592,
+    "dtype": "F32",
+    "shape": [
+     12,
+     4,
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.k_proj.sconv.conv1d.weight": {
+    "tensors": 20,
+    "elements": 81920,
+    "dtype": "BF16",
+    "shape": [
+     1024,
+     1,
+     4
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.v_proj.sconv.conv1d.weight": {
+    "tensors": 20,
+    "elements": 81920,
+    "dtype": "BF16",
+    "shape": [
+     1024,
+     1,
+     4
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.q_proj.norm.scale": {
+    "tensors": 24,
+    "elements": 73728,
+    "dtype": "BF16",
+    "shape": [
+     24,
+     128
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.attention_input.query": {
+    "tensors": 23,
+    "elements": 71424,
+    "dtype": "F32",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.mlp_input.query": {
+    "tensors": 24,
+    "elements": 55296,
+    "dtype": "F32",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.post_attention_layernorm.weight": {
+    "tensors": 24,
+    "elements": 55296,
+    "dtype": "BF16",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.input_layernorm.weight": {
+    "tensors": 20,
+    "elements": 46080,
+    "dtype": "BF16",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.k_proj.sconv.static_weight": {
+    "tensors": 4,
+    "elements": 16384,
+    "dtype": "BF16",
+    "shape": [
+     4,
+     1024
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.v_proj.sconv.static_weight": {
+    "tensors": 4,
+    "elements": 16384,
+    "dtype": "BF16",
+    "shape": [
+     4,
+     1024
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.self_attn.relative_position_bias.norm.scale": {
+    "tensors": 24,
+    "elements": 9216,
+    "dtype": "BF16",
+    "shape": [
+     24,
+     16
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.q_input_layernorm.weight": {
+    "tensors": 4,
+    "elements": 9216,
+    "dtype": "BF16",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.k_input_layernorm.weight": {
+    "tensors": 4,
+    "elements": 9216,
+    "dtype": "BF16",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.v_input_layernorm.weight": {
+    "tensors": 4,
+    "elements": 9216,
+    "dtype": "BF16",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.layers.N.mlp.gate.e_score_correction_bias": {
+    "tensors": 24,
+    "elements": 3072,
+    "dtype": "F32",
+    "shape": [
+     128
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.embed_tokens.embed_norm.weight": {
+    "tensors": 1,
+    "elements": 2304,
+    "dtype": "BF16",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.norm.weight": {
+    "tensors": 1,
+    "elements": 2304,
+    "dtype": "BF16",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   },
+   "model.language_model.final_input.query": {
+    "tensors": 1,
+    "elements": 2304,
+    "dtype": "F32",
+    "shape": [
+     2304
+    ],
+    "candidate_default": 0,
+    "candidate_experts_only": 0
+   }
+  },
+  "ok": true,
+  "stage_seconds": 0.1
+ },
+ "sample": {
+  "layers": [
+   0,
+   20
+  ],
+  "experts": [
+   0,
+   64
+  ],
+  "include": "(\\.layers\\.(0|20)\\.self_attn\\.(q|k|v|o)_proj\\.linear\\.weight$|\\.layers\\.(0|20)\\.mlp\\.experts\\.(0|64)\\.)",
+  "view_names": 657,
+  "seconds": 41.8,
+  "tensors": 20,
+  "avg_bpw": 3.4992,
+  "allocation_bpw": 3.5,
+  "frac_rows_by_bits": {
+   "2": 0.3881610576923077,
+   "4": 0.6118389423076923,
+   "8": 0.0
+  },
+  "runtime_s": {
+   "phase1": 18.5,
+   "probe": 0.0,
+   "allocate": 0.1,
+   "encode": 5.4,
+   "total": 24.0,
+   "outputs_in_this_run": 1
+  },
+  "peak_memory_gib": {
+   "host_rss": 4.01
+  },
+  "experts_summary": {
+   "expert": {
+    "tensors": 12,
+    "params": 31850496,
+    "avg_bpw": 4.138663209514854,
+    "frac_int4_rows": 0.8824869841337204
+   },
+   "non_expert": {
+    "tensors": 8,
+    "params": 37748736,
+    "avg_bpw": 2.9595644209120007,
+    "frac_int4_rows": 0.27586206896551724
+   }
+  },
+  "verify": {
+   "mode": "sampled_numerical",
+   "status": "ok",
+   "checked": 8,
+   "expected": 20,
+   "coverage": 0.4,
+   "worst_unweighted_energy_loss": 0.09120629385191974,
+   "structural": {
+    "mode": "full_structural",
+    "status": "not_run"
+   },
+   "native_runtime": "not_run"
+  },
+  "groups": {
+   "L0:mlp.experts.E.down_proj.weight": {
+    "tensors": 2,
+    "params": 5308416,
+    "int4": 3832.0000762939453,
+    "int8": 0.0,
+    "blocks": {
+     "16": 538,
+     "32": 236,
+     "64": 3834
+    },
+    "bpw": 4.058
+   },
+   "L0:mlp.experts.E.gate_proj.weight": {
+    "tensors": 2,
+    "params": 5308416,
+    "int4": 2145.999984741211,
+    "int8": 0.0,
+    "blocks": {
+     "16": 129,
+     "32": 29,
+     "64": 2146
+    },
+    "bpw": 4.18
+   },
+   "L0:mlp.experts.E.up_proj.weight": {
+    "tensors": 2,
+    "params": 5308416,
+    "int4": 2120.9999771118164,
+    "int8": 0.0,
+    "blocks": {
+     "16": 139,
+     "32": 44,
+     "64": 2121
+    },
+    "bpw": 4.163
+   },
+   "L0:self_attn.k_proj.linear.weight": {
+    "tensors": 1,
+    "params": 2359296,
+    "int4": 1024.0,
+    "int8": 0.0,
+    "blocks": {
+     "16": 0,
+     "32": 0,
+     "64": 1024
+    },
+    "bpw": 4.271
+   },
+   "L0:self_attn.o_proj.linear.weight": {
+    "tensors": 1,
+    "params": 7077888,
+    "int4": 0.0,
+    "int8": 0.0,
+    "blocks": {
+     "16": 29,
+     "32": 2248,
+     "64": 27
+    },
+    "bpw": 2.52
+   },
+   "L0:self_attn.q_proj.linear.weight": {
+    "tensors": 1,
+    "params": 7077888,
+    "int4": 0.0,
+    "int8": 0.0,
+    "blocks": {
+     "16": 48,
+     "32": 2933,
+     "64": 91
+    },
+    "bpw": 2.522
+   },
+   "L0:self_attn.v_proj.linear.weight": {
+    "tensors": 1,
+    "params": 2359296,
+    "int4": 1024.0,
+    "int8": 0.0,
+    "blocks": {
+     "16": 0,
+     "32": 0,
+     "64": 1024
+    },
+    "bpw": 4.271
+   },
+   "L20:mlp.experts.E.down_proj.weight": {
+    "tensors": 2,
+    "params": 5308416,
+    "int4": 3866.000015258789,
+    "int8": 0.0,
+    "blocks": {
+     "16": 523,
+     "32": 216,
+     "64": 3869
+    },
+    "bpw": 4.069
+   },
+   "L20:mlp.experts.E.gate_proj.weight": {
+    "tensors": 2,
+    "params": 5308416,
+    "int4": 2157.000045776367,
+    "int8": 0.0,
+    "blocks": {
+     "16": 110,
+     "32": 37,
+     "64": 2157
+    },
+    "bpw": 4.184
+   },
+   "L20:mlp.experts.E.up_proj.weight": {
+    "tensors": 2,
+    "params": 5308416,
+    "int4": 2143.9999923706055,
+    "int8": 0.0,
+    "blocks": {
+     "16": 123,
+     "32": 37,
+     "64": 2144
+    },
+    "bpw": 4.177
+   },
+   "L20:self_attn.k_proj.linear.weight": {
+    "tensors": 1,
+    "params": 2359296,
+    "int4": 1024.0,
+    "int8": 0.0,
+    "blocks": {
+     "16": 0,
+     "32": 0,
+     "64": 1024
+    },
+    "bpw": 4.271
+   },
+   "L20:self_attn.o_proj.linear.weight": {
+    "tensors": 1,
+    "params": 7077888,
+    "int4": 0.0,
+    "int8": 0.0,
+    "blocks": {
+     "16": 29,
+     "32": 2238,
+     "64": 37
+    },
+    "bpw": 2.519
+   },
+   "L20:self_attn.q_proj.linear.weight": {
+    "tensors": 1,
+    "params": 7077888,
+    "int4": 0.0,
+    "int8": 0.0,
+    "blocks": {
+     "16": 80,
+     "32": 2929,
+     "64": 63
+    },
+    "bpw": 2.53
+   },
+   "L20:self_attn.v_proj.linear.weight": {
+    "tensors": 1,
+    "params": 2359296,
+    "int4": 1024.0,
+    "int8": 0.0,
+    "blocks": {
+     "16": 0,
+     "32": 0,
+     "64": 1024
+    },
+    "bpw": 4.271
+   }
+  },
+  "output_files": [
+   ".hi2-owner.json",
+   "README.md",
+   "chat_template.jinja",
+   "config.json",
+   "generation_config.json",
+   "hf_quant_config.json",
+   "hi2_report.json",
+   "hi2_run.json",
+   "model-00001-of-00001.safetensors",
+   "model.safetensors.index.json",
+   "processor_config.json",
+   "special_tokens_map.json",
+   "tiktoken",
+   "tokenizer.json",
+   "tokenizer_config.json"
+  ],
+  "ok": true,
+  "stage_seconds": 41.8
+ }
+}

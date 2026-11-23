@@ -1,0 +1,41 @@
+{
+ "probe": {
+  "layers_path": "model.language_model.layers",
+  "layer_class": "Inkling2LoopSlidingDecoderLayer",
+  "captured_hidden_shape": [
+   1,
+   12,
+   256
+  ],
+  "captured_kwargs": [
+   "attention_mask",
+   "cache",
+   "conv_mask",
+   "position_ids",
+   "relative_distance",
+   "use_cache"
+  ],
+  "layer_replay": "TypeError: Inkling2LoopSlidingDecoderLayer.forward() missing 1 required positional argument: 'block_states'",
+  "calibrate_layerwise": "TypeError: Inkling2LoopSlidingDecoderLayer.forward() missing 1 required positional argument: 'block_states'",
+  "expected_failure": true,
+  "pipeline": {
+   "data_free_ptq": {
+    "ok": true,
+    "tensors": 144,
+    "avg_bpw": 3.5
+   },
+   "calibrated_ptq": {
+    "ok": false,
+    "error": "TypeError: Inkling2LoopSlidingDecoderLayer.forward() missing 1 required positional argument: 'block_states'"
+   },
+   "sensitivity_probe": {
+    "ok": true,
+    "units": 144,
+    "prefix_replay_equals_full_forward": false,
+    "largest_relative_difference": 9.696880904636279
+   }
+  },
+  "ok": true,
+  "stage_seconds": 49.3
+ }
+}

@@ -1,0 +1,57 @@
+{
+ "model": {
+  "compute_dtype": "float32",
+  "load_seconds": 134.0,
+  "peak_rss_gib": 120.5,
+  "parameters": 26386412544,
+  "view_parameters": 26386415616,
+  "class": "Inkling2LoopForConditionalGeneration",
+  "experts_class": "UnfusedExperts",
+  "experts_gated_activation": true,
+  "prompt_tokens": 22,
+  "forward_seconds": 6.4,
+  "logits_finite": true,
+  "top8": [
+   [
+    "<|message_model|>",
+    26.58
+   ],
+   [
+    "\u4071",
+    5.948
+   ],
+   [
+    "user",
+    5.619
+   ],
+   [
+    "<|content_thinking|>",
+    5.517
+   ],
+   [
+    "\u92fd",
+    4.838
+   ],
+   [
+    "\ufffd\ufffd",
+    4.833
+   ],
+   [
+    "\ufffd",
+    4.482
+   ],
+   [
+    "\u5acf",
+    4.313
+   ]
+  ],
+  "versus_saved_logits": {
+   "file": "/home/chenco_adm/w4a8_runs/inkling-hi2/out/teacher_fp32_logits.pt",
+   "max_abs_logit_diff": 4.124641418457031e-05,
+   "kl_max_over_positions": 1.1074058647864149e-07,
+   "top1_agree": true
+  },
+  "ok": true,
+  "stage_seconds": 157.3
+ }
+}

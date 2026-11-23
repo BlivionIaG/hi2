@@ -1,0 +1,166 @@
+{
+  "src": "/home/chenco_adm/hfcache/inkling2-mini",
+  "dst": "/home/chenco_adm/w4a8_runs/inkling-hi2/out/cli_dst",
+  "workdir": "/home/chenco_adm/w4a8_runs/inkling-hi2/out/cli_work",
+  "devices": [
+    "cpu"
+  ],
+  "target_bpw": 3.5,
+  "max_error_ratio": null,
+  "sensitivity": "none",
+  "rounding": "gptq",
+  "layers": 24,
+  "moe_layout": "stacked",
+  "calibrated": true,
+  "calib_tokens_available": 20457,
+  "calib_tokens_needed": 2048,
+  "schema_version": 1,
+  "config": {
+    "src": "/home/chenco_adm/hfcache/inkling2-mini",
+    "dst": "/home/chenco_adm/w4a8_runs/inkling-hi2/out/cli_dst",
+    "workdir": "/home/chenco_adm/w4a8_runs/inkling-hi2/out/cli_work",
+    "devices": [
+      "cpu"
+    ],
+    "cache_devices": 0,
+    "calib": [
+      "/home/chenco_adm/w4a8_runs/inkling-hi2/out/texts/long.txt"
+    ],
+    "calib_ids": null,
+    "calib_samples": 4,
+    "seq_len": 512,
+    "target_bpw": 3.5,
+    "max_error_ratio": null,
+    "max_error_ratios": null,
+    "include": "\\.mlp\\.experts\\.",
+    "exclude": "(embed|lm_head|norm|\\.mlp\\.gate(\\.weight)?$|router|indexer|conv1d|\\.bias$)",
+    "limit_layers": null,
+    "compute_dtype": "float32",
+    "cfg": {
+      "candidates": [
+        [
+          2,
+          16
+        ],
+        [
+          2,
+          32
+        ],
+        [
+          2,
+          64
+        ],
+        [
+          4,
+          16
+        ],
+        [
+          4,
+          32
+        ],
+        [
+          4,
+          64
+        ],
+        [
+          8,
+          32
+        ],
+        [
+          8,
+          64
+        ]
+      ],
+      "rotation": "on",
+      "smooth": 0.5,
+      "smooth_search": [],
+      "rounding": "gptq",
+      "sequential": false,
+      "damp": 0.01,
+      "act_order": false,
+      "refine_passes": 2,
+      "effort": "normal",
+      "expert_min_tokens": 2.0
+    },
+    "sensitivity": "none",
+    "sens_seqs": 8,
+    "sens_len": 512,
+    "sens_floor": 0.05,
+    "sens_batch": 1,
+    "sens_dtype": "auto",
+    "expert_share_floor": 0.05,
+    "cache_dir": "/home/chenco_adm/.cache/hi2",
+    "sigma_fp16_above": 0,
+    "qad": null,
+    "moe_layout": "stacked",
+    "int8_force": 0
+  },
+  "outputs": [
+    "/home/chenco_adm/w4a8_runs/inkling-hi2/out/cli_dst"
+  ],
+  "checkpoint": {
+    "schema_version": 1,
+    "path": "/home/chenco_adm/hfcache/inkling2-mini",
+    "model_type": "inkling2_loop",
+    "architectures": [
+      "Inkling2LoopForConditionalGeneration"
+    ],
+    "layers": 24,
+    "hidden_size": 2304,
+    "quantization_config": {
+      "quant_method": "modelopt",
+      "quant_algo": "NVFP4"
+    },
+    "tensor_count": 1244,
+    "shard_bytes": 19526019168,
+    "parameters": 26386415616,
+    "tensor_bytes": 19525870752,
+    "largest_tensor_bytes": 926318592,
+    "largest_hessian_bytes_fp32": 67108864,
+    "compatibility": {
+      "metadata": "readable",
+      "native_runtime": "not_measured",
+      "model_execution": "not_measured"
+    }
+  },
+  "phases": [
+    "calibration",
+    "allocation",
+    "encode",
+    "validation"
+  ],
+  "phase_repetitions": {
+    "qad": 0,
+    "final_kl": 0,
+    "validation": 1
+  },
+  "native_runtime": "not_measured",
+  "resource_estimates": {
+    "scope": "metadata-derived component sizes; not simultaneous peak estimates",
+    "source_tensor_bytes": 19525870752,
+    "largest_source_tensor_bytes": 926318592,
+    "largest_hessian_bytes_fp32": 67108864,
+    "dense_export_bytes_fp16": 52772831232,
+    "full_model_weights_bytes_fp32": 105545662464,
+    "full_model_stages": [],
+    "host_physical_memory_bytes": 540660150272,
+    "storage": [
+      {
+        "purpose": "work",
+        "path": "/home/chenco_adm/w4a8_runs/inkling-hi2/out/cli_work",
+        "free_bytes": 153633898496
+      },
+      {
+        "purpose": "output",
+        "path": "/home/chenco_adm/w4a8_runs/inkling-hi2/out/cli_dst",
+        "free_bytes": 153633898496
+      }
+    ],
+    "total_runtime_s": null,
+    "peak_vram_bytes": null,
+    "warning": "These are component sizes, not fit guarantees. Candidate tables, activations, optimizer state, cache copies and evaluation exports require additional space."
+  },
+  "command": "quantize",
+  "status": "ok",
+  "artifacts": []
+}
