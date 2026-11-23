@@ -40,6 +40,18 @@ the MC and decision sets below as paired tasks) is in [`../bench/`](../bench/REA
 | `refine_study.py` | How much does coordinate descent on the codes gain over GPTQ? 6-9 % of the objective (spec 8.9). |
 | `refine_cost.py` | What `--refine-passes` costs (seconds per sweep against the GPTQ encode, with the fused kernel or `HI2_REFINE_BACKEND=torch`) and what two sweeps gain on whole models (spec 8.9). |
 
+## Inkling-2-Mini, the stock NVFP4 / MXFP8 checkpoint
+
+Read by `hi2/inkling_source.py` ([../docs/inkling-source.md](../docs/inkling-source.md)). The
+numbers they wrote on 2026-11-23 are in [`results/inkling2_mini_2026-11-23/`](results/inkling2_mini_2026-11-23/).
+
+| Script | Job |
+| --- | --- |
+| `inkling_inventory.py` | Tensor classes, elements, bytes and stock bits per weight from the safetensors headers (main shard, MTP, vision); checks the design-review numbers and says which are definitions. |
+| `inkling_scale_stats.py` | Histograms of the UE8M0 / E4M3 block scales and the NVFP4 `amax`; the weights that overflow, underflow or are subnormal in float16 and bfloat16, and the energy of each cast, for every layer. |
+| `inkling_alloc_dryrun.py` | HI2's data-free mode (`build_table(stats=None)`) and its allocators on sampled real experts and attention linears, tiled to the whole population: INT2/INT4/INT8 and block mix, effective bpw and implied size at 3.0 / 3.5 / 4.0 bpw. First-order: no activations, no Hessian. |
+| `inkling_dequant_probe.py` | The device decode against the CPU decode, and what decoding one layer costs (read, host-to-device, decode, peak memory). |
+
 ## Calibration text
 
 | Script | Job |

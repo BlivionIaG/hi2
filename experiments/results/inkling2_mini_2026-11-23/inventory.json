@@ -1,0 +1,860 @@
+{
+ "checkpoint": "/home/chenco_adm/hfcache/inkling2-mini",
+ "config": {
+  "num_hidden_layers": 24,
+  "hidden_size": 2304,
+  "intermediate_size": 1152,
+  "n_routed_experts": 128,
+  "num_experts_per_tok": 8,
+  "vocab_size": 201024,
+  "unpadded_vocab_size": 200058
+ },
+ "files": {
+  "model-00001-of-00001.safetensors": {
+   "tensors": 1244,
+   "bytes": 19525870752
+  },
+  "mtp.safetensors": {
+   "tensors": 54,
+   "bytes": 635795744
+  }
+ },
+ "expert_format_by_layer": {
+  "0": "nvfp4",
+  "1": "nvfp4",
+  "2": "nvfp4",
+  "3": "nvfp4",
+  "4": "nvfp4",
+  "5": "nvfp4",
+  "6": "nvfp4",
+  "7": "nvfp4",
+  "8": "nvfp4",
+  "9": "nvfp4",
+  "10": "nvfp4",
+  "11": "nvfp4",
+  "12": "nvfp4",
+  "13": "nvfp4",
+  "14": "nvfp4",
+  "15": "nvfp4",
+  "16": "nvfp4",
+  "17": "nvfp4",
+  "18": "nvfp4",
+  "19": "nvfp4",
+  "20": "mxfp8",
+  "21": "mxfp8",
+  "22": "mxfp8",
+  "23": "mxfp8"
+ },
+ "classes": [
+  {
+   "class": "expert_nvfp4",
+   "tensors": 160,
+   "elements": 11466183720,
+   "weights": 20384317440,
+   "bytes": 11466199200,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w13_weight_amax F32 [128]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w13_weight_outer_scale_denominator F32 [1]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w2_weight_amax F32 [128]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w2_weight_outer_scale_denominator F32 [1]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w13_weight_scale F8_E4M3 [128, 2304, 144]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w2_weight_scale F8_E4M3 [128, 2304, 72]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w13_weight U8 [128, 2304, 1152]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w2_weight U8 [128, 2304, 576]",
+     "count": 20
+    }
+   ],
+   "stock_bpw": 4.500008100344811
+  },
+  {
+   "class": "expert_mxfp8",
+   "tensors": 16,
+   "elements": 4204265472,
+   "weights": 4076863488,
+   "bytes": 4204265472,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w13_weight F8_E4M3 [128, 2304, 2304]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w2_weight F8_E4M3 [128, 2304, 1152]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w13_weight_scale U8 [128, 2304, 72]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp.experts.w2_weight_scale U8 [128, 2304, 36]",
+     "count": 4
+    }
+   ],
+   "stock_bpw": 8.25
+  },
+  {
+   "class": "attn_linear",
+   "tensors": 144,
+   "elements": 644087808,
+   "weights": 644087808,
+   "bytes": 1288175616,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.attn.gate_attn.weight BF16 [3072, 2304]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.wk_dv.weight BF16 [1024, 2304]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.wo_ud.weight BF16 [2304, 3072]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.wq_du.weight BF16 [3072, 2304]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.wr_du.weight BF16 [384, 2304]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.wv_dv.weight BF16 [1024, 2304]",
+     "count": 24
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "embed",
+   "tensors": 1,
+   "elements": 463159296,
+   "weights": 463159296,
+   "bytes": 926318592,
+   "patterns": [
+    {
+     "pattern": "model.llm.embed.weight BF16 [201024, 2304]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "unembed",
+   "tensors": 1,
+   "elements": 463159296,
+   "weights": 463159296,
+   "bytes": 926318592,
+   "patterns": [
+    {
+     "pattern": "model.llm.unembed.weight BF16 [201024, 2304]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "vision",
+   "tensors": 422,
+   "elements": 318256128,
+   "weights": 318256128,
+   "bytes": 636512256,
+   "patterns": [
+    {
+     "pattern": "model.visual.backbone.embeddings.class_embedding BF16 [1024]",
+     "count": 1
+    },
+    {
+     "pattern": "model.visual.backbone.embeddings.cls_position_embedding BF16 [1024]",
+     "count": 1
+    },
+    {
+     "pattern": "model.visual.backbone.embeddings.patch_embedding.weight BF16 [1024, 1200]",
+     "count": 1
+    },
+    {
+     "pattern": "model.visual.backbone.embeddings.position_embedding BF16 [1024, 1024]",
+     "count": 1
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.ln_1.bias BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.ln_1.weight BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.ln_2.bias BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.ln_2.weight BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.ls_1.gamma BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.ls_2.gamma BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.mlp.c_fc.bias BF16 [4096]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.mlp.c_fc.weight BF16 [4096, 1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.mlp.c_proj.bias BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.mlp.c_proj.weight BF16 [1024, 4096]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.self_attn.k_proj.bias BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.self_attn.k_proj.weight BF16 [1024, 1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.self_attn.out_proj.bias BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.self_attn.out_proj.weight BF16 [1024, 1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.self_attn.q_proj.bias BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.self_attn.q_proj.weight BF16 [1024, 1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.self_attn.v_proj.bias BF16 [1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.layers.N.self_attn.v_proj.weight BF16 [1024, 1024]",
+     "count": 23
+    },
+    {
+     "pattern": "model.visual.backbone.ln_pre.bias BF16 [1024]",
+     "count": 1
+    },
+    {
+     "pattern": "model.visual.backbone.ln_pre.weight BF16 [1024]",
+     "count": 1
+    },
+    {
+     "pattern": "model.visual.proj_in.weight BF16 [4096, 4096]",
+     "count": 1
+    },
+    {
+     "pattern": "model.visual.proj_out.weight BF16 [2304, 4096]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "mtp_mlp_linear",
+   "tensors": 9,
+   "elements": 191102976,
+   "weights": 191102976,
+   "bytes": 382205952,
+   "patterns": [
+    {
+     "pattern": "layers.N.mlp.down_proj.weight BF16 [2304, 9216]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.mlp.gate_proj.weight BF16 [9216, 2304]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.mlp.up_proj.weight BF16 [9216, 2304]",
+     "count": 3
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "mtp_attn_linear",
+   "tensors": 18,
+   "elements": 70778880,
+   "weights": 70778880,
+   "bytes": 141557760,
+   "patterns": [
+    {
+     "pattern": "layers.N.self_attn.k_proj.weight BF16 [1024, 2304]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.self_attn.k_proj_ctx.weight BF16 [1024, 2304]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.self_attn.o_proj.weight BF16 [2304, 3072]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.self_attn.q_proj.weight BF16 [3072, 2304]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.self_attn.v_proj.weight BF16 [1024, 2304]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.self_attn.v_proj_ctx.weight BF16 [1024, 2304]",
+     "count": 3
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "mtp_markov_head",
+   "tensors": 6,
+   "elements": 55989504,
+   "weights": 55989504,
+   "bytes": 111979008,
+   "patterns": [
+    {
+     "pattern": "markov_head.dflare_norm.weight BF16 [2304]",
+     "count": 1
+    },
+    {
+     "pattern": "markov_head.hidden_out.bias BF16 [2304]",
+     "count": 1
+    },
+    {
+     "pattern": "markov_head.hidden_out.weight BF16 [2304, 256]",
+     "count": 1
+    },
+    {
+     "pattern": "markov_head.markov_w1.weight BF16 [201024, 256]",
+     "count": 1
+    },
+    {
+     "pattern": "markov_head.rnn_proj.bias BF16 [768]",
+     "count": 1
+    },
+    {
+     "pattern": "markov_head.rnn_proj.weight BF16 [768, 5120]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "controller",
+   "tensors": 144,
+   "elements": 28311552,
+   "weights": 28311552,
+   "bytes": 56623104,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.controllers.attn.down_weight BF16 [64, 4608]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.attn.forget_weight BF16 [2304, 64]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.attn.gain_weight BF16 [2304, 64]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.k.down_weight BF16 [64, 4608]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.k.forget_weight BF16 [2304, 64]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.k.gain_weight BF16 [2304, 64]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.mlp.down_weight BF16 [64, 4608]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.mlp.forget_weight BF16 [2304, 64]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.mlp.gain_weight BF16 [2304, 64]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.v.down_weight BF16 [64, 4608]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.v.forget_weight BF16 [2304, 64]",
+     "count": 12
+    },
+    {
+     "pattern": "model.llm.layers.N.controllers.v.gain_weight BF16 [2304, 64]",
+     "count": 12
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "router",
+   "tensors": 24,
+   "elements": 7077888,
+   "weights": 7077888,
+   "bytes": 14155776,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.mlp.gate.weight BF16 [128, 2304]",
+     "count": 24
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "attn_sink",
+   "tensors": 24,
+   "elements": 1327104,
+   "weights": 1327104,
+   "bytes": 2654208,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.attn.attn_sink_proj.weight BF16 [24, 2304]",
+     "count": 24
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "kv_sconv",
+   "tensors": 56,
+   "elements": 786432,
+   "weights": 786432,
+   "bytes": 1572864,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.attn.k_sconv.weight BF16 [1024, 1, 4]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.v_sconv.weight BF16 [1024, 1, 4]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.k_sconv.static_w BF16 [4, 1024]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.k_sconv.weight_proj BF16 [32, 2304]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.v_sconv.static_w BF16 [4, 1024]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.v_sconv.weight_proj BF16 [32, 2304]",
+     "count": 4
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "attn_aux",
+   "tensors": 72,
+   "elements": 476160,
+   "weights": 476160,
+   "bytes": 952320,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.attn.q_l2_clip.scale BF16 [24, 128]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.rel_l2_clip.scale BF16 [24, 16]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.attn.rel_logits_proj.proj BF16 [16, 1024]",
+     "count": 24
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "sconv",
+   "tensors": 48,
+   "elements": 442368,
+   "weights": 442368,
+   "bytes": 884736,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.attn_sconv.weight BF16 [2304, 1, 4]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp_sconv.weight BF16 [2304, 1, 4]",
+     "count": 24
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "attn_res_query",
+   "tensors": 48,
+   "elements": 129024,
+   "weights": 129024,
+   "bytes": 516096,
+   "patterns": [
+    {
+     "pattern": "model.llm.attn_res.attn_queries.N F32 [2304]",
+     "count": 19
+    },
+    {
+     "pattern": "model.llm.attn_res.attn_queries.N F32 [3, 2304]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.attn_res.mlp_queries.N F32 [2304]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.attn_res.output_query F32 [2304]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 32.0
+  },
+  {
+   "class": "cross_pass_query",
+   "tensors": 2,
+   "elements": 110592,
+   "weights": 110592,
+   "bytes": 442368,
+   "patterns": [
+    {
+     "pattern": "model.llm.middle_cycle_cross_pass_kv_queries F32 [24, 2304]",
+     "count": 1
+    },
+    {
+     "pattern": "model.llm.middle_cycle_cross_pass_queries F32 [24, 2304]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 32.0
+  },
+  {
+   "class": "norm",
+   "tensors": 58,
+   "elements": 133632,
+   "weights": 133632,
+   "bytes": 267264,
+   "patterns": [
+    {
+     "pattern": "model.llm.embed_norm.weight BF16 [2304]",
+     "count": 1
+    },
+    {
+     "pattern": "model.llm.layers.N.attn_norm.weight BF16 [2304]",
+     "count": 20
+    },
+    {
+     "pattern": "model.llm.layers.N.mlp_norm.weight BF16 [2304]",
+     "count": 24
+    },
+    {
+     "pattern": "model.llm.layers.N.k_input_norm.weight BF16 [2304]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.layers.N.q_input_norm.weight BF16 [2304]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.layers.N.v_input_norm.weight BF16 [2304]",
+     "count": 4
+    },
+    {
+     "pattern": "model.llm.norm.weight BF16 [2304]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "mtp_norm",
+   "tensors": 19,
+   "elements": 24192,
+   "weights": 24192,
+   "bytes": 48384,
+   "patterns": [
+    {
+     "pattern": "layers.N.dflare_norm.weight BF16 [2304]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.input_layernorm.weight BF16 [2304]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.post_attention_layernorm.weight BF16 [2304]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.self_attn.k_norm.weight BF16 [128]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.self_attn.k_norm_ctx.weight BF16 [128]",
+     "count": 3
+    },
+    {
+     "pattern": "layers.N.self_attn.q_norm.weight BF16 [128]",
+     "count": 3
+    },
+    {
+     "pattern": "norm.weight BF16 [2304]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 16.0
+  },
+  {
+   "class": "router_bias",
+   "tensors": 24,
+   "elements": 3072,
+   "weights": 3072,
+   "bytes": 12288,
+   "patterns": [
+    {
+     "pattern": "model.llm.layers.N.mlp.gate.bias F32 [128]",
+     "count": 24
+    }
+   ],
+   "stock_bpw": 32.0
+  },
+  {
+   "class": "mtp_other",
+   "tensors": 2,
+   "elements": 2320,
+   "weights": 2320,
+   "bytes": 4640,
+   "patterns": [
+    {
+     "pattern": "fuse_weight BF16 [4, 4]",
+     "count": 1
+    },
+    {
+     "pattern": "mask_embed BF16 [2304]",
+     "count": 1
+    }
+   ],
+   "stock_bpw": 16.0
+  }
+ ],
+ "totals": {
+  "tensors": 1298,
+  "bytes_main_file": 19525870752,
+  "bytes_mtp_file": 635795744,
+  "bytes_vision": 636512256,
+  "bytes_non_expert_main_file": 3855406080,
+  "bytes_markov_w1": 102924288,
+  "expert_weights": 24461180928,
+  "params_main_file": 26388641280,
+  "params_mtp_file": 317897872,
+  "stock_total_gib_review_definition": 18.68115943670273
+ },
+ "sizes_by_expert_bpw": {
+  "3.0": {
+   "experts_gib": 8.54296875,
+   "total_main_file_gib": 12.13359546661377,
+   "total_text_only_gib": 11.540797233581543,
+   "total_review_definition_gib": 12.629870682954788
+  },
+  "3.5": {
+   "experts_gib": 9.966796875,
+   "total_main_file_gib": 13.55742359161377,
+   "total_text_only_gib": 12.964625358581543,
+   "total_review_definition_gib": 14.053698807954788
+  },
+  "4.0": {
+   "experts_gib": 11.390625,
+   "total_main_file_gib": 14.98125171661377,
+   "total_text_only_gib": 14.388453483581543,
+   "total_review_definition_gib": 15.477526932954788
+  }
+ },
+ "checks": [
+  {
+   "check": "experts NVFP4 bytes (weights + scales)",
+   "expected": 11466178560,
+   "got": 11466178560,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "experts MXFP8 bytes (weights + scales)",
+   "expected": 4204265472,
+   "got": 4204265472,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "NVFP4 stock bpw",
+   "expected": 4.5,
+   "got": 4.5,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "MXFP8 stock bpw",
+   "expected": 8.25,
+   "got": 8.25,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "NVFP4 layers",
+   "expected": 20,
+   "got": 20,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "MXFP8 layers",
+   "expected": 4,
+   "got": 4,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "routed experts per layer",
+   "expected": 128,
+   "got": 128,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "weights per expert",
+   "expected": 7962624,
+   "got": 7962624,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "embedding elements",
+   "expected": 463159296,
+   "got": 463159296,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "unembedding elements",
+   "expected": 463159296,
+   "got": 463159296,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "attention linear elements (q k v o gate wr)",
+   "expected": [
+    640000000.0,
+    650000000.0
+   ],
+   "got": 644087808,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "non-expert bytes of the main file (incl. vision)",
+   "expected": 3860000000.0,
+   "got": 3855406080,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "index metadata.total_size = main file bytes",
+   "expected": 19525870752,
+   "got": 19525870752,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "parameters of the main file (text + vision)",
+   "expected": 26400000000.0,
+   "got": 26388641280,
+   "ok": true,
+   "note": "the review's 26.4 B excludes the MTP file; MTP adds 0.318 B (26.707 B in all)"
+  },
+  {
+   "check": "stock experts GiB (weights, scales, amax)",
+   "expected": 14.59,
+   "got": 14.59425750374794,
+   "ok": true,
+   "note": null
+  },
+  {
+   "check": "experts at 3.5 bpw GiB",
+   "expected": 9.96,
+   "got": 9.966796875,
+   "ok": true,
+   "note": "9.967 GiB: the review truncated the third decimal"
+  },
+  {
+   "check": "stock total GiB",
+   "expected": 18.68,
+   "got": 18.68115943670273,
+   "ok": true,
+   "note": "definition: main file + MTP file - markov_head.markov_w1 (main file alone is 18.18 GiB)"
+  },
+  {
+   "check": "HI2 total GiB at 3.5 bpw",
+   "expected": 14.05,
+   "got": 14.053698807954788,
+   "ok": true,
+   "note": "same definition; the main file alone is 13.56 GiB"
+  }
+ ],
+ "discrepancies": []
+}
