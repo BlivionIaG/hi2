@@ -92,11 +92,12 @@ reference decoders (`tiny_reference.py`, `ref_checkpoint.py`) on the tiny checkp
 `make_tiny_checkpoint.py` (five NVFP4 layers and one MXFP8 layer) and, with `INKLING2_CKPT`
 set, on real experts 0, 17, 64 and 127 of layers 0 (NVFP4) and 20 (MXFP8): the largest
 absolute difference is 0.0, and `inkling_reference_check.py` repeats it on every expert of
-every layer (all 24.46 G weights: bit-equal). Tiny checkpoints written by the test (with and without an index
-file) cover the de-interleave, chunk and expert-subset invariance, `fused_layer`, the name map
-and the `UnfusedExperts` integration. `INKLING2_TOOLS` names the fork's `tools/rdna/inkling2`
-directory when the sibling worktree is not at hand; without the fork the reference
-comparisons are skipped.
+every layer (all 24.46 G weights: bit-equal). Tiny checkpoints written by the test (with and
+without an index file) cover the de-interleave, chunk and expert-subset invariance,
+`fused_layer`, the name map, `message_query` and the `UnfusedExperts` integration (with a
+one-argument activation: Inkling's takes two, see the gaps below). `INKLING2_TOOLS` names the
+fork's `tools/rdna/inkling2` directory when the sibling worktree is not at hand; without the
+fork the reference comparisons are skipped.
 
 | Script (`experiments/`) | What it records |
 | --- | --- |
@@ -199,21 +200,22 @@ the text model left empty, 53-78 s for the whole model (the experts 2-3 s per la
   | | float16 | 404.2 | 0 | 3.2e-3 / 7.8e-2 | 0.212 / 11.5 | 510 / 512 |
   | | bfloat16 | 384.0 | 0 | 4.2e-3 / 1.1e-1 | 0.249 / 11.4 | 504 / 512 |
 
-* `texts/long.txt` (docs and code of this repository, cut at 2,048 tokens) and `mixed.txt` are
-  in the results directory. The activations stay far from the float16 limit of 65,504: the output of a decoder layer
+* The activations stay far from the float16 limit of 65,504. The output of a decoder layer
   grows inside each of the four blocks (layers 0-5, 6-11, 12-17, 18-23) and peaks at the
-  full-attention layers, 396 at layer 17 in the 512-token text (341 at layer 5, 243 at
-  layer 11, 149 at layer 23) and 473 in a 2,048-token text of docs and code (float32 only,
-  133 s); a mlp output is at most 105 and an attention output at most 4.4. Nothing is
-  non-finite in any layer or pass.
+  full-attention layers: 396 at layer 17 in the 512-token text (341 at layer 5, 243 at
+  layer 11, 149 at layer 23) and 473 in `texts/long.txt`, 2,048 tokens of docs and code of this
+  repository (float32 only, 133 s); a mlp output is at most 105 and an attention output at
+  most 4.4. Nothing is non-finite in any layer or pass.
 
-So float16 is usable for the teacher: the weights do not overflow, the activations of these two
+So float16 is usable for the teacher: the weights do not overflow, the activations of these
 inputs have a headroom of 138-190x, and the half-precision noise (KL 6.6e-4 on the chat prompt,
 3.2e-3 on the longer text, about the same as bfloat16 there) is the floor of any KL measured
 against a half-precision teacher. That noise is probably router near-ties flipping experts
-[inference: not isolated], it is not larger in float16 than in bfloat16, and float16 is the
-dtype the fork serves the model in on gfx1030. Limits: three inputs of at most 2,048 tokens, not the long
-contexts the loop layers see in use; the activation bound is a measurement on them, not a proof.
+[inference: not isolated]; in KL it is not larger in float16 than in bfloat16 (the largest
+logit difference, 11.5 against 11.4 on the 512 tokens, is the same), and float16 is the dtype
+the fork serves the model in on gfx1030. Limits: three inputs of at most 2,048 tokens,
+not the long contexts the loop layers see in use; the activation bound is a measurement on
+them, not a proof.
 
 **Weight-only allocation** (`inkling_alloc_dryrun.py`). HI2 has a data-free mode:
 `build_table(stats=None)` (what `hi2 quantize` does without `--calib`) scores every
