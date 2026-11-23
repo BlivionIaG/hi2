@@ -8,8 +8,11 @@ directory that is the stock Inkling layout (see [`hi2` on the stock
 directory](#hi2-on-the-stock-directory)). The quantization itself (allocation, PTQ, QAD,
 final KL) is not in this note: it records the reader, the checkpoint it reads, the first
 measurements behind the plan (exactness, scale ranges, a model assembled from the reader,
-weight-only allocation, what the device decode costs) and how far `hi2 quantize` gets on
-this directory.
+weight-only allocation, what the device decode costs), how far `hi2 quantize` gets on
+this directory, and what a calibrated run and the final-KL phase needed on this model:
+[the layer program](#the-layer-program-hi2loopedpy), [final KL on
+Inkling](#final-kl-on-inkling) and [what the runtime needs from the
+output](#what-a-loadable-hi2-inkling-directory-needs).
 
 The teacher of a quantization from this source is the stock model dequantized, so the
 KL that is measured is the fidelity to the stock quantized model, not to its bf16
@@ -107,6 +110,12 @@ worktree is not at hand; without the fork the reference comparisons are skipped,
 registration test and the sensitivity-probe test (the probe on the tiny looped model) need the
 fork's transformers on `PYTHONPATH`.
 
+`tests/test_looped.py` (the fork's transformers and `tools/rdna/inkling2` on the path, like the
+registration test; skipped without them) and `tests/test_layerwise_extras.py` (toy layers, no
+fork) cover the layer program, the preset and its guards, the pieces of the final-KL phase and a
+CPU end-to-end run on the fork's tiny real model; the vision carry of the output is tested in
+`tests/test_inkling_source.py`.
+
 | Script (`experiments/`) | What it records |
 | --- | --- |
 | `inkling_inventory.py` | Tensor classes, elements, bytes and stock bits per weight from the safetensors headers (main shard, MTP, vision), checked against the design review. |
@@ -119,6 +128,9 @@ fork's transformers on `PYTHONPATH`.
 | `inkling_alloc_dryrun.py` | HI2's weight-only mode and its allocators on sampled real experts and attention linears: share of INT2/INT4/INT8, block mix, effective bits per weight, implied size. |
 | `inkling_dequant_probe.py` | Exactness of the device decode against the CPU, and the cost (read, host-to-device, decode, whole layer, peak memory) of decoding one layer. |
 | `inkling_quantize_dryrun.py` | `hi2 quantize` on the real directory as far as a CPU goes: `--dry-run` plan, a census of every tensor against the default `--exclude`, a data-free `run` on a sample of experts and attention linears, `_load_model` with `check_unfused` and a forward against the saved float32 logits, and `hi2` on a tiny real Inkling model (data-free `run`, the layer-wise calibration driver, the sensitivity probe). |
+| `inkling_carry_check.py` | `hi2.inkling_source.carry_vision` on the real directory into a scratch directory, read back tensor by tensor (name, dtype, shape, bit pattern) against the stock vision tower and its index entries. |
+| `inkling_footprint.py` | `hi2.finalkl.student_footprint` on the real configuration (meta model, stand-in HI2 tensors at a given code width and block size): the static bytes, saved layer inputs and loss chunk of the final-KL student per device. No weights, no device. |
+| `inkling_looped_smoke.py` | The layer program on the real model, for a GPU lease: `teacher_head_inputs` (48 layer calls), optionally `calibrate_looped` over the first layers, then `shard_layers` over the devices and the model's own forward against the program's head inputs; time and peak memory per stage and device. `--devices cpu` runs it on the fork's tiny model (measured: ok, the head inputs equal, 2 layers calibrated: 48 tables). Not run on the real model. |
 
 ## Measured on the stock checkpoint (2026-11-23)
 
@@ -368,10 +380,15 @@ and this one a decoded view.
 * `write_checkpoints` refuses a stock directory in which an expert tensor is left unquantized (an
   `--include` or `--limit-layers` that does not cover them): the view hands the experts out as
   float32 and a passthrough would write them at 4 bytes per weight.
-* `_finish_output` no longer links a source `*.safetensors` the source index does not list (the
-  stock `mtp.safetensors`) into the output: `validate_checkpoint` refuses an unindexed shard, so
-  every run on this directory ended in `ValueError: shard/index coverage mismatch;
-  unindexed=['mtp.safetensors']` (found by the dry run below).
+* `_finish_output` links the source's other files (the tokenizer, ...) into the output, but not
+  a source `*.safetensors` its index does not list (the stock `mtp.safetensors`:
+  `validate_checkpoint` refuses an unindexed shard, and every run on this directory ended in
+  `ValueError: shard/index coverage mismatch; unindexed=['mtp.safetensors']`, found by the dry
+  run below) and, for the stock Inkling directory only, not `hf_quant_config.json` (it describes
+  the NVFP4 / MXFP8 experts the output no longer has). It carries the vision tower:
+  `carry_vision` copies the 422 `model.visual.*` tensors bit for bit into
+  `model-vision.safetensors` and lists them in the output index
+  ([what the runtime needs](#what-a-loadable-hi2-inkling-directory-needs)).
 
 **What the CPU dry run found** (`inkling_quantize_dryrun.py`, the build box, no GPU; results in
 [`experiments/results/inkling2_mini_2026-11-23/`](../experiments/results/inkling2_mini_2026-11-23/)):
@@ -399,8 +416,8 @@ and this one a decoded view.
   weight (rows INT2 38.8 %, INT4 61.2 %, INT8 0), the experts at 4.14 and the attention linears at
   2.96 (`q`, `o` INT2 at 2.52; `k`, `v` INT4/B64 at 4.27): a sample of 20 tensors, so the split is
   not the model's. The output has `config.json` rewritten, the index, one shard and the links of
-  the tokenizer and the other assets (`hf_quant_config.json`, which lists the stock NVFP4
-  layout, is linked too).
+  the tokenizer and the other assets (at that time `hf_quant_config.json`, which lists the stock
+  NVFP4 layout, was linked too: it is not any more).
 * `model`: `_load_model` on the real directory loads in 142 s in float16 (70 GiB peak resident) and
   134 s in float32 (120.5 GiB), unfuses the experts (`UnfusedExperts`, gated activation) and passes
   `check_unfused` in both; the model has 26,386,412,544 parameters, 3,072 fewer than the view (the
@@ -425,6 +442,156 @@ and this one a decoded view.
   probe without replay 9.7, no error (`quantize_dryrun_probe_before_guard.json`). A layer that runs
   more than once per forward now makes the probe recompute the prefix, 0.0 difference
   (`quantize_dryrun_probe.json`; `tests/test_inkling_source.py`, which fails with the guard off).
+  The layer-wise failure is fixed on this branch: [the layer program](#the-layer-program-hi2loopedpy).
+
+## The layer program (`hi2/looped.py`)
+
+The generic loop of `hi2.layerwise` replays `layer(hidden, **kwargs) -> hidden`, one layer after the
+other. Inkling-2's text model does not run like that: layers 0-5, then the loop layers 6-17 three
+times (the second and third pass restart from the states before the loop and receive `messages =
+message_input(previous block states, previous hidden states, loop layer)`), then layers 18-23,
+`final_input` and the norm, and every layer takes `(hidden, block_states[, messages], ...)` with
+`block_states` `[B, T, blocks, H]` growing at the block-boundary layers: the 24 layers are **48
+layer calls**, and a loop layer's weights see three different inputs. For `model_type ==
+"inkling2_loop"` (`looped.LOOPED_MODEL_TYPES`) `calibrate_layerwise` hands over to
+`looped.calibrate_looped`; every other model keeps the generic loop (the tests of the existing
+subset pass unchanged, see the gates).
+
+* `schedule(config)` lists the layer calls with their `messages` flag (the tiny model: layers `[0, 1,
+  2, 3, 2, 3, 4, 5]`; Inkling-2-Mini: 48). `record_calls` runs the model's own forward once with
+  every layer replaced by a recorder, so the keyword arguments of each call (attention masks,
+  relative distances, conv masks, the cache offset of a pass) are read from the model, not rebuilt.
+  `run_program` is the control flow over per-sequence states `(hidden, block_states)` that stay in
+  host memory, one layer at a time on the devices.
+* **Statistics are pooled per tensor across the calls.** A loop layer shares its weights across the
+  passes, so every call is a sample of the same Linear: the column statistics and the Hessian sums
+  are accumulated on the host (`_Acc`) and the tables are built once, when the layer's last call is
+  done (the same `expert_min_tokens` blend and `_tabulate_layer` as the generic loop). A Linear whose
+  gate/up sharing leader differs between calls stops the run with a message. The 12 loop layers hold
+  their accumulators from the first to the third pass; with GPTQ rounding the Hessians are about
+  3.4 GB per layer, about 41 GB of host memory for the 12 [inference: arithmetic, not run on the
+  real model].
+* `teacher_head_inputs` is the same program without hooks: the unquantized model's input to the LM
+  head, `[n, T, H]` in float32, for the final-KL phase.
+* Refused up front (`pipeline._check_looped`): `--sequential` (it feeds each layer call the quantized
+  prefix) and a `--qad-layers` other than none / all (layer-wise QAD training needs a layer's own
+  input). The layer-wise phase then runs with `layers="none"`: PTQ per layer, nothing trained; the
+  final-KL phase does the training. `HI2_LOOP_SEQS` (default 4) is the number of sequences in one
+  layer call.
+* `--include` defaults to `\.mlp\.experts\.` for this model family (`looped.DEFAULT_INCLUDE`, set in
+  `service.resolve_config`; an explicit `--include` wins; no other model gets a default): the
+  attention linears, the loop controllers, the sinks, the short convolutions, the router and the
+  vision tower stay as they are (dense bf16), the experts are 93.8 % of the text weights.
+
+**Gates (measured, CPU, the fork's tiny real `Inkling2LoopForConditionalGeneration`: 6 layers, hidden
+256, 8 experts, top-2, loop layers 2-3 with two passes; 4 sequences of 12 tokens;
+`tests/test_looped.py`).** A calibrated `run` (`calib_ids`, GPTQ) completes; it raised `TypeError:
+... missing 1 required positional argument: 'block_states'` before. The statistics of 141 of the 144
+expert tensors (three saw no token) equal those of forward hooks on the unfused per-expert linears
+of the whole-model forward: column statistics 0.0 and Hessians 2e-7 (relative to the largest entry)
+with one sequence per layer call, 7e-6 both with eight (float32 summation order). The head inputs
+equal the model's own to 1e-5 (one sequence) and 5e-5 (eight) absolute. Eight mutants of the program
+(statistics reset per call, no messages, outputs appended in place, `limit_layers` ignored, the
+hidden cast always, the batch ignored, the extras mis-indexed, the loop offset off by one) each fail
+a test.
+
+## Final KL on Inkling
+
+`pipeline._qad_encode` runs the layer-wise phase (PTQ per layer), then `hi2.finalkl.final_kl`: the
+quantized student's logits against the teacher's, a KL over the sequence, training the per-block
+ladder values and the norms. What changed for this model:
+
+* **The loss had no soft cap.** The model's logits are `logit_softcap(lm_head(h).float())`
+  (`tanh(x / 30) * 30`); `final_kl` took the raw head's. `_logits_fn(model)` applies the model's cap
+  (a model without one keeps its head); a test compares the loss with a manual capped KL and shows
+  the uncapped loss is another number.
+* **Placement.** `sensitivity.shard_layers` left `message_input` and `final_input` on the first
+  device while their inputs live on the devices of the layers before them. `final_input` now goes
+  with the last layers, the head and the final norm, `message_input` with the embeddings, both with
+  the input-moving pre-hook of a layer (a test records the placement and the device the hooks move
+  to).
+* **The teacher is not placed.** Its head inputs come from the layer program, are kept in
+  `workdir/teacher_head_inputs.pt` (keyed by source, dtype and the token ids) and shared by every
+  allocation of the run.
+* **Packed code words.** `LadderLinear` kept one `uint8` per weight; it keeps the `int32` words of
+  the checkpoint (`nbits` per weight) and unpacks per forward: the experts' codes at 3.5 bits per
+  weight are about 10 GiB instead of 24 (the decode, the export and the codes are unchanged:
+  `tests/test_lowbit.py::test_ladder_linear_is_the_exact_decode`).
+* **Per-expert activation checkpointing** (`UnfusedExperts.checkpoint_experts`, set by `final_kl` for
+  a looped model only): the fp32 weight of an expert Linear is rebuilt in the backward, one expert at
+  a time, instead of kept (128 experts x 3 projections x 10.6 MB = 4 GiB per layer). Outputs and
+  gradients are bit-identical to the unchecked ones and fewer bytes are saved (a test).
+* **The fit check.** `pipeline._final_kl_fits` ("codes at one byte per weight", too optimistic for
+  this model) is replaced, for a looped model, by `finalkl.student_footprint`: per device the static
+  bytes (packed codes, the trained ladder values at 16 bytes each with their gradient and Adam
+  moments, buffers, dense parameters), the layer inputs one sequence's backward keeps
+  (`looped.saved_input_bytes`), a transient allowance (3 GiB) and the loss chunk on the last device;
+  the student must fit within 92 % of the smallest device. On the tiny model the static part equals
+  the parameters and buffers of the converted student plus 12 bytes per trained value (the ladder
+  linears byte for byte, the whole within the vision tower's norms, 2e-3) and the saved inputs equal
+  the sizes read from the layers' own inputs (`tests/test_looped.py`, measured). The transient
+  allowance and the backward's working set are **not measured** [inference until a GPU run logs its
+  peak].
+* On the real configuration (`experiments/inkling_footprint.py`; meta model, stand-in tensors with
+  3.0 code bits per weight in blocks of 32, about 3.5 bits per weight, float32, two devices of
+  29.98 GiB): static 20.0 and 18.8 GiB (38.8 GiB: the packed codes are only 8.5 GiB of it, the
+  trained ladder values with their gradients and Adam moments about 22.8 GiB, the dense parameters
+  7.2 GiB [arithmetic on the numbers above]), saved inputs 1.9 and 2.8 GiB at 2048 tokens (0.5 and
+  0.7 at 512), transient 3.0, loss chunk 0.57: about **25.2 GiB on the busiest device, inside the
+  27.6 GiB of the 92 % limit**. The student is therefore not the 13.6 GiB of packed weights and
+  dense parameters: its trained state is about twice that. Blocks of 16 everywhere would need
+  36.6 GiB and be skipped (the ladder values are two per block at 16 bytes each, so the size
+  depends on the block mix the allocator chose; the check reads the actual tensors); blocks of 64
+  everywhere would need 12.2 and 11.6 GiB of static in bfloat16 [inference: the formula, not a run].
+
+**Gate (measured, CPU).** `hi2 quantize` of the tiny real Inkling model with calibration and `--qad`
+(`final_kl=2`) runs the layer program, PTQ per layer, the teacher's head inputs and two final-KL
+steps and writes a checkpoint that `validate_checkpoint` accepts
+(`tests/test_looped.py::test_a_cpu_final_kl_of_two_steps_completes_on_the_looped_model`).
+
+## What a loadable HI2 Inkling directory needs
+
+Read from the fork's runtime (`vllm-inkling2-merge` at `ee27e18374`, `vllm/models/inkling2_loop/amd/`,
+and the parked `vllm-inkling2-qlinear`), not run; nothing there was edited.
+
+What `hi2 quantize` writes for this model now: the text model under Hugging Face names in
+`model-00001-of-00001.safetensors` (HI2 containers for the experts, dense tensors as stored),
+`model-vision.safetensors` (the 422 vision tensors, bit for bit, stock names), one index over both,
+`config.json` with HI2's `quantization_config` in place of the stock `modelopt` one, and the links of
+the tokenizer files. Not written: `hf_quant_config.json` and `mtp.safetensors`.
+
+* **The runtime has no HI2 expert path for Inkling** (none in the eight `vllm-inkling2-*`
+  worktrees; the only `rdna_hint_flex` mention under `inkling2_loop` is a comment in `dspark.py`).
+  `loader.read_expert_formats` needs `hf_quant_config.json` with `parameter_groups[].compute_dtype`
+  in `{nvfp4, mxfp8}` for every `layers.N.mlp.experts.w13_weight` and raises `lists no nvfp4/mxfp8
+  experts for layers [...]` otherwise; the experts run on `moe_nvfp4_gemm_rdna2` /
+  `moe_mxfp8_gemm_rdna2`. The generic `rdna_hint_flex` method (`quantization/rdna_hint_flex.py`,
+  `rdna_hint_flex_moe.py`) serves other models: `quantization_config = {"quant_method":
+  "rdna_hint_flex", "version": "3.2"}` and `<name>.hi2_<field>` tensors. An HI2 MoE for Inkling needs
+  the soft-capped two-argument gated activation in float32, `route_scale` 8.0 and, as for every HI2
+  MoE, gate-first rows with one transform for gate and up (the stock's interleaved `w13` is not
+  HI2's).
+* **Names.** `Inkling2LoopTextForCausalLM.load_weights` maps serving names (`model.llm.*`) and raises
+  `KeyError: unmapped Inkling-2 checkpoint tensor` (or `no such parameter`) for any other, every
+  `.hi2_*` field included. The output has Hugging Face names (`model.language_model.*`). Either the
+  writer emits serving names (the inverse of `hf_names()` plus a convention for the expert
+  containers) or the runtime maps the Hugging Face ones. **Not decided.**
+* **Quantization config.** The stock `config.json` says `modelopt` / `NVFP4` for the whole model
+  (layers 20-23 are MXFP8); the runtime reads the formats from `hf_quant_config.json`, which
+  describes experts the output no longer has: it is not linked any more, and the HI2 formats need a
+  declaration the runtime can read (the first item).
+* **Vision tower.** `model.visual.backbone.*` (422 tensors, 318,256,128 elements, bf16) is read by
+  `Inkling2MultiModalMixin.load_weights`; the output carries it. Measured on the real directory
+  (`inkling_carry_check.py`): 422 tensors, 636,512,256 bytes, 0 mismatches, 0.27 s, every name
+  indexed.
+* **MTP.** The DSpark draft reads `mtp.safetensors` through `allow_patterns_overrides =
+  ["mtp.safetensors"]`, which skips the index filter (`filter_duplicate_safetensors_files`) that
+  keeps the main loader to the files its index lists. So the file must sit next to the output and
+  **stay out of the index** (listed, its tensors would reach the main model's `load_weights`);
+  `validate_checkpoint` refuses an unlisted weight file, so `hi2` does not link it: copy or link it
+  when deploying [inference: from the loaders, not run].
+* **Attention** stays bf16 (the fork's dense quantized-linear packers, `linear_pack.py`, are parked
+  in `vllm-inkling2-qlinear`); quantizing it with HI2 needs a runtime path that does not exist.
 
 ## Known gaps before a quantization run
 
@@ -441,32 +608,17 @@ and this one a decoded view.
   (`tests/test_moe.py`: the first forward copied verbatim against the current one in float32,
   bfloat16 and float16). The gate script now exits 0, largest logit difference 8.3e-7 against
   the fused model; the router applies `route_scale` 8.0 itself.
-* **There is no layer program for Inkling: calibrated PTQ, QAD and sequential rounding cannot
-  run.** `hi2.layerwise` (`capture_inputs`, `_run`, `calibrate_layerwise`, `encode_layerwise`) and
-  `hi2.qad.qad_layerwise` replay each decoder layer as `layer(hidden, **kwargs) -> hidden`, one
-  layer after the other (`pipeline._qad_encode` and the calibrated `run` both stop there). The
-  sensitivity probe does not need one since its guard (above). The model runs
-  (`Inkling2LoopTextModel.forward`) layers 0-5, then layers 6-17 as a loop of three passes (the
-  second and third restart from the state before the loop and receive `messages` from
-  `message_input(previous block states, previous hidden states, layer)`), then layers 18-23,
-  `final_input` and the norm; every layer takes `(hidden, block_states[, messages], ...)` with a
-  `block_states` `[B, T, blocks, H]` that grows at the block-boundary layers, so the 24 layers are 48
-  layer calls and a loop layer's weights see three different inputs. A driver has to carry
-  `(hidden, block_states, messages)` per sequence.
-  The final-KL phase (`hi2.finalkl.final_kl`) does not have this problem as written [from the code,
-  not run on Inkling]: it runs `model(ids)`, takes the head's input and wraps each layer's `forward`
-  in activation checkpointing with all its arguments. It is only reached through
-  `pipeline._qad_encode`, after `qad_layerwise`, and its teacher placement
-  (`sensitivity.shard_layers`) leaves `message_input` and `final_input` (children of the text model,
-  not of a layer, whose queries are used without a device move) on the first device while their
-  inputs live on later ones [inference: a device mismatch on two cards, not run].
-* **The default `--exclude` does not keep Inkling's small linears dense** (the census above): use
-  `--include '\.mlp\.experts\.'` (plus the attention pattern if attention is to be quantized).
-* The output carries Hugging Face names (`model.language_model...`) in one shard named like the
-  stock main shard, the tokenizer files and `hf_quant_config.json` of the stock model, no vision
-  tower (424 tensors) and no MTP head (`mtp.safetensors`). What the fork's runtime expects from an
-  HI2 directory of this model (names, the MTP file, the stale `hf_quant_config.json`) is not
-  checked here [inference].
+* **Layer program, final KL and preset (fixed on this branch, not run on a GPU or on the real
+  model).** Calibrated PTQ runs on Inkling through [the layer program](#the-layer-program-hi2loopedpy);
+  [the final-KL phase](#final-kl-on-inkling) has the soft cap, the placement, packed codes,
+  per-expert checkpointing and its own fit check; `--include '\.mlp\.experts\.'` is the default. Still
+  unsupported on this model, and refused up front: `--sequential` and layer-wise QAD training.
+* **The default `--exclude` does not keep Inkling's small linears dense** (the census above); the
+  preset's include avoids it, an explicit `--include` that selects attention must add its own
+  exclusions.
+* **The output is not loadable by the fork's runtime yet**: see [what a loadable HI2 Inkling
+  directory needs](#what-a-loadable-hi2-inkling-directory-needs) (no HI2 expert path, the names, the
+  declaration of the formats, `mtp.safetensors` to deploy beside it).
 * `hi2 eval` and `export_dense` write a dense float16 copy next to the output (52.8 GB; the build
   box disk is at 97 %).
 * `--compute-dtype float32` holds the teacher at 105 GB and float16 at 52 GB (stage 1: KL against
@@ -485,5 +637,6 @@ and this one a decoded view.
 * `config.json` says `quantization_config: {quant_method: modelopt, quant_algo: NVFP4}` for
   the whole model, but layers 20-23 are MXFP8 in the file: the reader decides from the dtypes
   in the header, never from the config.
-* The vision tower (`model.visual.*`, 23 layers, 1024 wide) and the MTP head are not read, and
-  not carried to the output.
+* The vision tower (`model.visual.*`, 23 layers, 1024 wide) is carried to the output bit for bit
+  but not read by `hi2`; the MTP head is neither read nor carried (deploy `mtp.safetensors` beside
+  the output).

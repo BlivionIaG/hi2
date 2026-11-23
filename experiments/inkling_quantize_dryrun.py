@@ -22,16 +22,18 @@ records what happened in ``--out/quantize_dryrun.json``:
   ``register_auto_class``, ``unfuse_experts``, ``check_unfused``) in ``--compute-dtype``,
   the parameter count against the view's, and a forward of the chat prompt of
   ``inkling_teacher_check.py`` against its saved float32 logits (``--compare``);
-* ``probe``: the calibrated layer-wise driver (``hi2.layerwise.calibrate_layerwise``) on a
-  tiny real ``Inkling2LoopForConditionalGeneration`` (the fork's ``make_tiny_checkpoint``):
-  it assumes ``layer(hidden, **kwargs) -> hidden``, the layers of Inkling take
-  ``(hidden, block_states[, messages], ...)`` and the loop layers run three passes.
+* ``probe``: the layer-wise driver on a tiny real ``Inkling2LoopForConditionalGeneration``
+  (the fork's ``make_tiny_checkpoint``). The generic replay ``layer(hidden, **kwargs) ->
+  hidden`` still fails: the layers of Inkling take ``(hidden, block_states[, messages],
+  ...)`` and the loop layers run three passes. That is the stage's expected result.
+  ``calibrate_layerwise`` and a calibrated ``run`` complete since the layer program
+  (``hi2.looped``); the JSON records both.
 
     python experiments/inkling_quantize_dryrun.py CKPT --out DIR --transformers DIR \\
         [--tools DIR] [--calib TEXT] [--compare LOGITS.pt] [--compute-dtype float16]
 
-Exit code 0 when every requested stage did what it should (``probe`` is expected to fail:
-it passes when the failure is the one described above).
+Exit code 0 when every requested stage did what it should (``probe`` passes when the
+single-layer replay fails the way described above).
 """
 
 import argparse
