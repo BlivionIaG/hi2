@@ -222,4 +222,3 @@ def run_plan(
     }
     log(json.dumps(summary, sort_keys=True))
     return summary
-
