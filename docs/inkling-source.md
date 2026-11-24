@@ -891,6 +891,44 @@ INT2, 3.498 bpw; INT4 67.5 % in layers 0-5 against 65.4 %, 56.4 % against 58.0 %
 18-19, the same elsewhere. The split says where the cost tables put the bits; whether it is the
 split the KL wants is the evaluation's question.
 
+### KL of the 3.5 bpw encode against the stock model (measured, 2026-11-24)
+
+`eval-3.5-mixed` of the chain: the held-out `mixed` set (32 windows of 2,048 tokens = 65,536
+tokens, disjoint from the calibration by text hash), float32 on the two V620, the teacher the
+stock NVFP4/MXFP8 model decoded to float32. All eleven gates ok. 1,474 s for the step.
+
+| Layers quantized | Windows | KL(stock \|\| HI2) | Median / worst window | Top-1 | NLL stock -> HI2 | Perplexity |
+| --- | --- | --- | --- | --- | --- | --- |
+| all | 32 | 0.0996 +- 0.0178 | 0.061 / 0.538 | 0.930 | 1.7630 -> 1.7724 | x1.0095 |
+| all | 8 of them | 0.1027 +- 0.0156 | 0.085 / 0.177 | 0.926 | 1.9069 -> 1.9139 | x1.0071 |
+| 0-5 only | 8 | 0.0717 +- 0.0144 | 0.050 / 0.132 | 0.947 | | x0.9992 |
+| 6-17 only | 8 | 0.0861 +- 0.0137 | 0.081 / 0.152 | 0.935 | | x1.0126 |
+| 18-19 only | 8 | 0.0042 +- 0.0006 | 0.003 / 0.007 | 0.987 | | x0.9984 |
+| 20-23 only | 8 | 0.0085 +- 0.0017 | | 0.978 | | x0.9991 |
+
+The group rows quantize one layer group and restore the stock weights elsewhere (gate: max
+difference 0). What they show, all measured on the same 8 windows:
+
+* The damage is in layers 0-17. Layers 18-23 hold 25 % of the expert weights at the same 3.5
+  bits and cost 0.004-0.009 nats, against 0.072 and 0.086 for layers 0-5 and 6-17, while the
+  relative RMS of the weights is alike (0.24-0.29 in 18-19 and 20-23, 0.25-0.35 in 0-17, per
+  layer in the evaluation's JSON). The same weight error costs about 17 times more KL in
+  layers 0-5 than in 18-19.
+* The groups do not add: 0.171 alone against 0.103 together. The errors of different groups
+  overlap rather than sum [the sums are measured, the mechanism is not].
+* The allocator gave layers 18-23 the same bits as the others (3.49-3.51 bpw against 3.42-3.65):
+  its costs are layer-local and this run has `--sensitivity none`. Moving bits from layers 18-23
+  to layers 0-17, which a sensitivity-weighted allocation would do, is the first lever to try
+  [inference: no run has tested it].
+* The mean is carried by few windows: median 0.061 against a mean of 0.0996 and a worst window
+  of 0.538.
+
+The step: `install_teacher` 25 s, teacher program 240 s, probe program 82 s, `install_student`
+59 s, student program 240 s, metrics 12 s, four group passes, restore 82 s. A float32 pass over
+65,536 tokens (48 layer calls, four windows per forward) costs 240 s: 3.1 times the pilot's 75 s
+for 32 times the tokens. Peak host RSS 232 GiB, MemAvailable at least 259 GiB, VRAM 19.1 and 15.5
+GiB, 59 C.
+
 ### Costs and risks
 
 * **GPU needs.** A lease of slot a2 (HIP 0,1, both cards free, 28 GiB each as in the smoke)
@@ -917,12 +955,12 @@ split the KL wants is the evaluation's question.
 * **KL cost [inference].** The evaluation runs in float32 (`EVAL_DTYPE`; the encode keeps
   float16): float16 rounding alone is a KL of 3.2e-3 against float32 on the same weights
   [measured, stage 2, 512 tokens], which would be a large part of the signal at 4 bpw. The
-  program is transfer-bound (52-55 s per forward of two windows in float16 [measured]; float32
-  doubles the bytes): the pilot's float32 passes over 2,048 tokens took 75 s (teacher) and 72 s
-  (student) [measured, 1.6 s per layer call], so a 65k-token pass is 13 min if the cost stays
-  flat in the tokens and 40 min if it is linear [inference]; the first student adds the cached
-  teacher pass and the group breakdown (4 groups x 8 windows), the later ones the student pass
-  alone.
+  program is transfer-bound at small token counts (52-55 s per forward of two windows in float16
+  [measured]; float32 doubles the bytes): the pilot's float32 passes over 2,048 tokens took 75 s
+  (teacher) and 72 s (student); a pass over 65,536 tokens took 240 s [measured, the 3.5
+  evaluation], 3.1 times for 32 times the tokens. The first student adds the teacher pass
+  and the group breakdown (4 groups x 8 windows, 25 min for the whole step), the later ones the
+  student pass alone.
 * The held-out set is chat, tool use, instructions, arithmetic and docs: it says nothing about
   long context, code or other languages; the OOD sets are small (17 windows each).
 
