@@ -214,6 +214,9 @@ def test_the_later_passes_see_the_states_of_the_pass_before(prog3, tmp_path):
         assert torch.allclose(
             got["block_states"], ref_bs[ci][w], atol=0.0
         ), (ci, w)
+        wide = calls.kwargs(i, torch.device("cpu"), torch.float64)
+        assert wide["messages"].dtype == torch.float64
+        assert wide["block_states"].dtype == torch.float64
         seen += 1
     assert seen == 2 * prog.n_seq  # two passes with messages per window
 

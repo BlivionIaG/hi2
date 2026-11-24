@@ -336,7 +336,7 @@ class _Samples:
             bs = x.new_empty((x.shape[0], x.shape[1], 0, x.shape[2]), device=dev)
         return bs if bs.dtype == dtype else bs.to(dtype)
 
-    def _messages(self, ci: int, w: int, dev):
+    def _messages(self, ci: int, w: int, dev, dtype):
         lay = self.layout
         end = lay.pass_end[lay.pass_of[ci] - 1]
         prev = self.stager.to_device(self.teacher.slots[self.teacher.outputs[end]][w], dev)
@@ -354,14 +354,14 @@ class _Samples:
             )
         k = self.prog.calls[ci].layer - self.a
         with torch.no_grad():
-            return self.msg[dev](blocks, prev, k).detach()
+            return self.msg[dev](blocks, prev, k).detach().to(dtype)
 
     def kwargs(self, i: int, dev, dtype) -> dict:
         w, ci = self.samples[i]
         kw = dict(self.base[(ci, dev)])
         kw["block_states"] = self._blocks(ci, w, dev, dtype)
         if self.prog.calls[ci].messages:
-            kw["messages"] = self._messages(ci, w, dev)
+            kw["messages"] = self._messages(ci, w, dev, dtype)
         return kw
 
 
