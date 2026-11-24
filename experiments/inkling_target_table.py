@@ -109,6 +109,50 @@ def spearman(xs: list[float], ys: list[float]) -> float | None:
     return sum((a - mx) * (b - my) for a, b in zip(rx, ry)) / math.sqrt(sxx * syy)
 
 
+def expert_load(report: dict) -> dict[int, dict]:
+    """Per layer, from the ``gate_proj`` of every expert (its gate, up and down see the same tokens):
+    the tokens per expert, how skewed they are (``cv``: the standard deviation over the mean; ``hot``:
+    the share of all tokens that go to the hottest eighth of the experts, 16 of 128), the bits per
+    weight of the layer, of its least routed quarter of experts (``bpw_cold``) and of its most routed
+    quarter (``bpw_hot``), and the Spearman correlation of an expert's tokens with its bits (``rho``)."""
+    mod = _sibling("inkling_alloc_report")
+    per: dict[int, list[tuple[float, float, int]]] = {}
+    for name, t in report["tensors"].items():
+        m = mod.EXPERT.search(name)
+        if m is None or m.group(2) != "gate_proj" or t.get("n_tokens") is None:
+            continue
+        rows, cols = t["shape"]
+        per.setdefault(int(m.group(1)), []).append(
+            (t["n_tokens"], t["bpw"], rows * cols)
+        )
+
+    def bits(part):
+        return sum(b * w for _, b, w in part) / sum(w for _, _, w in part)
+
+    out: dict[int, dict] = {}
+    for layer, experts in per.items():
+        n = len(experts)
+        tokens = [x[0] for x in experts]
+        mean = sum(tokens) / n
+        by_load = sorted(experts, key=lambda x: x[0])
+        quarter = max(1, n // 4)
+        out[layer] = {
+            "experts": n,
+            "mean_tokens": mean,
+            "cv": math.sqrt(sum((x - mean) ** 2 for x in tokens) / n) / mean
+            if mean
+            else 0.0,
+            "hot": sum(x[0] for x in by_load[-max(1, n // 8) :]) / sum(tokens)
+            if mean
+            else 0.0,
+            "bpw": bits(experts),
+            "bpw_cold": bits(by_load[:quarter]),
+            "bpw_hot": bits(by_load[-quarter:]),
+            "rho": spearman(tokens, [x[1] for x in experts]),
+        }
+    return out
+
+
 def _load(path: Path) -> dict | None:
     return json.loads(path.read_text()) if path.is_file() else None
 
@@ -134,6 +178,7 @@ def collect(runs: Path, evals: Path, targets: list[str], stock: Path | None) -> 
             alloc = mod.allocation_by_group(report)
             entry["experts"] = alloc.get("all")
             entry["layers"] = layer_stats(report)
+            entry["load"] = expert_load(report)
             entry["total_gib"] = _dir_gib(run, "model*.safetensors")
         for s in (*SETS, "fine"):
             ev = _load(evals / f"bpw{t}_{s}.json")
@@ -200,6 +245,49 @@ def render(data: dict) -> str:
                 row.append(_f(a and a["bits"] / a["weights"], ".3f"))
             L.append("| " + " | ".join(row) + " |")
 
+    loads = {t: e["load"] for t, e in data["targets"].items() if e.get("load")}
+    if loads:
+        first = next(iter(loads.values()))
+        L += [
+            "",
+            "#### Expert load against bits (the gate of each expert; tokens counted by the calibration)",
+            "",
+            "| layer | tokens per expert | CV | hottest eighth of the experts: % of the tokens | "
+            + " | ".join(
+                f"{t}: bpw of the coldest / hottest quarter (rho)" for t in targets
+            )
+            + " |",
+            "| " + " | ".join(["---"] * (4 + len(targets))) + " |",
+        ]
+        for i in sorted(first):
+            a = first[i]
+            cells = [
+                f"{i:02d}",
+                f"{a['mean_tokens']:.0f}",
+                f"{a['cv']:.2f}",
+                f"{100 * a['hot']:.0f}",
+            ]
+            for t in targets:
+                b = loads.get(t, {}).get(i)
+                cells.append(
+                    "-"
+                    if not b
+                    else f"{b['bpw_cold']:.2f} / {b['bpw_hot']:.2f} ({_f(b['rho'], '+.2f')})"
+                )
+            L.append("| " + " | ".join(cells) + " |")
+        for t, load in loads.items():
+            ls = sorted(load)
+            rhos = [load[i]["rho"] for i in ls if load[i]["rho"] is not None]
+            bpw = [load[i]["bpw"] for i in ls]
+            L += [
+                "",
+                f"At {t}: a layer's bits per weight against the CV of its load "
+                f"{_f(spearman(bpw, [load[i]['cv'] for i in ls]), '+.2f')} and against the share of "
+                f"its hottest eighth {_f(spearman(bpw, [load[i]['hot'] for i in ls]), '+.2f')} "
+                f"(Spearman over {len(ls)} layers); an expert's bits against its tokens, within a "
+                f"layer: mean {_f(sum(rhos) / len(rhos) if rhos else None, '+.2f')}.",
+            ]
+
     for t in targets:
         fine = data["targets"][t]["evals"].get("fine")
         if not fine or not fine.get("groups"):
@@ -219,26 +307,32 @@ def render(data: dict) -> str:
                 for i in range(lo, hi + 1)
                 if str(i) in wer and wer[str(i)].get("relative_rms") is not None
             ]
+            kl = g["kl_mean"]
+            prms = own.get("pred_err_rms")
+            wrms = sum(rms) / len(rms) if rms else None
             rows.append(
                 {
                     "group": spec,
-                    "kl": g["kl_mean"],
+                    "kl": kl,
                     "sem": g.get("kl_sem"),
                     "top1": g.get("top1_agreement"),
                     "ppl": g.get("ppl_ratio"),
                     "bpw": {tt: gs[tt].get("bpw") for tt in targets},
                     "int2": own.get("int2"),
                     "pred_err": own.get("pred_err"),
-                    "pred_err_rms": own.get("pred_err_rms"),
-                    "weight_rms": sum(rms) / len(rms) if rms else None,
+                    "pred_err_rms": prms,
+                    "weight_rms": wrms,
                     "weights_g": own.get("weights_g"),
+                    "kl_per_pred2": kl / prms**2 if prms else None,
+                    "kl_per_weight2": kl / wrms**2 if wrms else None,
                 }
             )
         L += [
             "| layers | weights G | KL +- sem | top-1 | "
             + " | ".join(f"bpw {tt}" for tt in targets)
-            + " | INT2 % | predicted rel. err (mean / rms) | weight RMS err |",
-            "| " + " | ".join(["---"] * (8 + len(targets))) + " |",
+            + " | INT2 % | predicted rel. err (mean / rms) | weight RMS err"
+            + " | KL / predicted rms^2 | KL / weight RMS^2 |",
+            "| " + " | ".join(["---"] * (10 + len(targets))) + " |",
         ]
         for r in rows:
             L.append(
@@ -247,7 +341,8 @@ def render(data: dict) -> str:
                 + " | ".join(_f(r["bpw"][tt], ".3f") for tt in targets)
                 + f" | {_f(None if r['int2'] is None else 100 * r['int2'], '.1f')} "
                 f"| {_f(r['pred_err'], '.4f')} / {_f(r['pred_err_rms'], '.4f')} "
-                f"| {_f(r['weight_rms'], '.3f')} |"
+                f"| {_f(r['weight_rms'], '.3f')} "
+                f"| {_f(r['kl_per_pred2'], '.1f')} | {_f(r['kl_per_weight2'], '.1f')} |"
             )
         kls = [r["kl"] for r in rows]
         corr = {
@@ -258,11 +353,25 @@ def render(data: dict) -> str:
             ),
             "weight RMS error": spearman(kls, [r["weight_rms"] or 0.0 for r in rows]),
         }
+        spread = []
+        for key, what in (
+            ("kl_per_pred2", "predicted error"),
+            ("kl_per_weight2", "weight error"),
+        ):
+            v = [r[key] for r in rows if r[key]]
+            if len(v) > 1:
+                spread.append(
+                    f"{min(v):.1f} to {max(v):.1f} (x{max(v) / min(v):.1f}) per squared {what}"
+                )
         L += [
             "",
             "Spearman rank correlation of the groups' KL with: "
             + ", ".join(f"{k} {_f(v, '+.2f')}" for k, v in corr.items())
             + f" ({len(rows)} groups).",
+            "KL per squared error, "
+            + "; ".join(spread)
+            + ": the same value in every group"
+            " would mean that the error alone sets the KL.",
         ]
     return "\n".join(L) + "\n"
 
@@ -301,6 +410,7 @@ def main(argv=None) -> int:
                         str(i): {**v, "bpw": v["bits"] / v["weights"]}
                         for i, v in e.get("layers", {}).items()
                     },
+                    "load": {str(i): v for i, v in e.get("load", {}).items()},
                     "evals": {
                         s: {
                             "student": ev.get("student"),

@@ -211,6 +211,156 @@ def test_the_group_table_ranks_the_kl_against_bits_int2_predicted_and_measured_e
     # the first group: 3.0 bits at 3.5, 2.5 at 3.0, KL 0.4, weight error 0.1
     row = next(x for x in text.splitlines() if x.startswith("| 0 |"))
     assert "0.4000" in row and "3.000" in row and "2.500" in row and "0.100" in row
+    # the KL per squared error: 0.4 / 0.04^2 = 250 and 0.4 / 0.1^2 = 40 in the first group
+    assert row.endswith("| 0.100 | 250.0 | 40.0 |")
+    # over the four groups: 250, 333.3, 500, 1000 (x4.0) and 40, 3.33, 5, 0.625 (x64.0)
+    assert "250.0 to 1000.0 (x4.0) per squared predicted error" in text
+    assert "0.6 to 40.0 (x64.0) per squared weight error" in text
+
+
+def test_kl_per_squared_error_uses_the_rms_of_the_predicted_error(tmp_path):
+    m = _import()
+    run = tmp_path / "runs" / "bpw3.5"
+    run.mkdir(parents=True)
+    # one layer, two tensors of equal weights: errors 0.02 and 0.06 (mean 0.04, rms^2 0.002)
+    tensors = {}
+    for name, err in (("0.up_proj", 0.02), ("1.up_proj", 0.06)):
+        tensors[f"model.language_model.layers.0.mlp.experts.{name}.weight"] = {
+            "shape": [10, 100],
+            "bpw": 3.5,
+            "frac_int4": 0.5,
+            "frac_int8": 0.0,
+            "pred_rel_err": err,
+        }
+    (run / "hi2_report.json").write_text(json.dumps({"tensors": tensors}))
+    evals = tmp_path / "eval"
+    evals.mkdir()
+    (evals / "bpw3.5_fine.json").write_text(
+        json.dumps(_eval(0.4, groups={"0": 0.4}, rms=[0.2]))
+    )
+    text = m.render(m.collect(tmp_path / "runs", evals, ["3.5"], None))
+    row = next(x for x in text.splitlines() if x.startswith("| 0 |"))
+    assert "| 0.0400 / 0.0447 |" in row  # mean and rms of the predicted error
+    assert row.endswith("| 0.200 | 200.0 | 10.0 |")  # 0.4 / 0.002 and 0.4 / 0.2^2
+
+
+def _load_report(shift):
+    """Four layers of eight experts: the load gets more skewed with the layer, the bits follow the
+    tokens inside a layer and fall with the layer (``shift`` moves them all)."""
+    tensors = {}
+    for layer in range(4):
+        for i in range(8):
+            base = f"model.language_model.layers.{layer}.mlp.experts.{i}."
+            tensors[base + "gate_proj.weight"] = {
+                "shape": [10, 100],
+                "bpw": 4.0 - 0.4 * layer + 0.1 * i + shift,
+                "frac_int4": 0.5,
+                "n_tokens": (i + 1) ** (1 + layer),
+            }
+            # the up projection sees the same tokens: its count must not be read
+            tensors[base + "up_proj.weight"] = {
+                "shape": [10, 100],
+                "bpw": 1.0,
+                "frac_int4": 0.5,
+                "n_tokens": 1,
+            }
+    return {"tensors": tensors}
+
+
+def test_expert_load_is_read_from_the_gate_and_ranks_tokens_against_bits():
+    m = _import()
+    report = _load_report(0.0)
+    # shuffle one layer's tensors: the order of the report must not matter
+    items = list(report["tensors"].items())
+    report["tensors"] = dict(reversed(items))
+    load = m.expert_load(report)
+    a = load[0]  # tokens 1..8
+    assert a["experts"] == 8 and a["mean_tokens"] == pytest.approx(4.5)
+    assert a["cv"] == pytest.approx((5.25**0.5) / 4.5)
+    assert a["hot"] == pytest.approx(
+        8 / 36
+    )  # the hottest eighth of 8 experts is one expert
+    assert a["bpw"] == pytest.approx(4.35)
+    assert a["bpw_cold"] == pytest.approx(
+        (4.0 + 4.1) / 2
+    )  # the two least routed experts
+    assert a["bpw_hot"] == pytest.approx((4.6 + 4.7) / 2)
+    assert a["rho"] == pytest.approx(1.0)
+    assert load[3]["cv"] > load[0]["cv"] and load[3]["hot"] > load[0]["hot"]
+    # a layer whose bits fall with the tokens
+    for i in range(8):
+        report["tensors"][
+            f"model.language_model.layers.0.mlp.experts.{i}.gate_proj.weight"
+        ]["bpw"] = 5.0 - 0.1 * i
+    assert m.expert_load(report)[0]["rho"] == pytest.approx(-1.0)
+    assert m.expert_load({"tensors": {}}) == {}
+
+
+def test_bits_of_the_cold_and_hot_quarters_are_weighted_by_weights():
+    m = _import()
+    tensors = {}
+    for i in range(8):
+        tensors[f"model.language_model.layers.0.mlp.experts.{i}.gate_proj.weight"] = {
+            # the least routed expert is three times as large as the others
+            "shape": [30 if i == 0 else 10, 100],
+            "bpw": 4.0 + 0.1 * i,
+            "n_tokens": 1 + i,
+        }
+    a = m.expert_load({"tensors": tensors})[0]
+    assert a["bpw_cold"] == pytest.approx((3 * 4.0 + 4.1) / 4)  # experts 0 and 1
+    assert a["bpw_hot"] == pytest.approx((4.6 + 4.7) / 2)
+    assert a["bpw"] == pytest.approx(
+        (3 * 4.0 + sum(4.0 + 0.1 * i for i in range(1, 8))) / 10
+    )
+
+
+def test_the_two_layer_correlations_are_told_apart_in_the_summary_line():
+    m = _import()
+    load = {
+        i: {
+            "experts": 8,
+            "mean_tokens": 100.0,
+            "cv": 0.1 * (i + 1),  # grows with the layer, the bits fall: -1
+            "hot": 0.4 - 0.1 * i,  # falls with the layer like the bits: +1
+            "bpw": 4.0 - i,
+            "bpw_cold": 1.0,
+            "bpw_hot": 2.0,
+            "rho": rho,
+        }
+        for i, rho in enumerate((0.9, 0.8, None, 1.0))
+    }
+    text = m.render({"stock": None, "targets": {"3.0": {"evals": {}, "load": load}}})
+    assert (
+        "against the CV of its load -1.00 and against the share of its hottest eighth +1.00"
+        in text
+    )
+    assert (
+        "within a layer: mean +0.90." in text
+    )  # the layer without a correlation is not counted
+
+
+def test_the_load_table_and_its_correlations(tmp_path):
+    m = _import()
+    runs, evals = tmp_path / "runs", tmp_path / "eval"
+    evals.mkdir()
+    for t, shift in (("3.0", -0.5), ("3.5", 0.0)):
+        (runs / f"bpw{t}").mkdir(parents=True)
+        (runs / f"bpw{t}" / "hi2_report.json").write_text(
+            json.dumps(_load_report(shift))
+        )
+    text = m.render(m.collect(runs, evals, ["3.0", "3.5"], None))
+    assert "#### Expert load against bits" in text
+    # layer 0: 4.5 tokens per expert on average (printed as an integer), CV 0.51, the hottest eighth
+    # (one expert of eight) takes 8 / 36 = 22 % of the tokens; the bits of its two least and two most
+    # routed experts at 3.0 (shift -0.5) and at 3.5
+    assert "| 00 | 4 | 0.51 | 22 | 3.55 / 4.15 (+1.00) | 4.05 / 4.65 (+1.00) |" in text
+    assert (
+        "| 03 | 1096 | 1.25 | 47 | 2.35 / 2.95 (+1.00) | 2.85 / 3.45 (+1.00) |" in text
+    )
+    # the layer bits fall as the skew grows: -1 against both measures, and every expert's bits follow its tokens
+    assert text.count("a layer's bits per weight against the CV of its load -1.00") == 2
+    assert text.count("against the share of its hottest eighth -1.00") == 2
+    assert text.count("within a layer: mean +1.00") == 2
 
 
 def test_bits_per_layer_are_listed_for_every_target(tree):
