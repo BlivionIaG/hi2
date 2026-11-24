@@ -1267,7 +1267,7 @@ What is still refused is `--qad-kl-layers` (a decoder layer's output is not the 
 * **Tests.** `tests/test_qad_looped.py` (CPU, the fork's tiny looped checkpoint): the exact unique-state count, the
   dedupe identity, the memory guard, the head cache, the later passes' messages and block states against a reference
   `run_program`, the group split, the pass groups, a full `hi2 quantize` (layers 0-2, loop layer 2 with two passes)
-  and its resume; 20 mutants of the module and its groundwork are killed (QL3-QL19, QG1/QG2/QG4).
+  and its resume; 21 mutants of the module and its groundwork are killed (QL3-QL20, QG1/QG2/QG4).
 * **Not yet measured on the GPU:** one 3.5 bpw run over layers 0-5 (`--qad-layers 0-5 --qad-final-kl 0`) and its
   held-out group KL is the next step; the time [INFERENCE] follows `estimate_seconds`: 3.6 s per 4 x 2048-token
   step at 1.019 G expert weights, 300 steps x 6 layers -> about 2 h on one card, plus the capture and the final
