@@ -32,6 +32,7 @@ import math
 import os
 import time
 from dataclasses import asdict, dataclass, field
+from functools import partial
 from pathlib import Path
 
 import torch
@@ -90,6 +91,11 @@ class QadConfig:
     # the layer; the decoded weights go out and the gradients come back). Same gradient up
     # to summation order; off for train_norms and the KL term, which run on the first device.
     data_parallel: bool = True
+    # A looped model's expert layer (hi2.qad_looped): the fake-quantised Linears hold 20 bytes per
+    # weight (latent, step unit, gradient, two Adam moments), 19 GiB for the 1.02 G weights of one
+    # Inkling-2-Mini layer. The layer's experts train in this many sequential groups, the others
+    # frozen at their current decode; 0 = as many as keep a group under 300 M weights.
+    expert_groups: int = 0
     seed: int = 0
     evals: int = 4  # held-out evaluations per layer (logged)
     # random: windows across the whole calibration text; balanced: equal windows per
@@ -171,6 +177,8 @@ def make_config(preset: str = "default", overrides: dict | None = None) -> QadCo
         raise SystemExit("QAD dtype must be 'float32', 'float16' or 'bfloat16'")
     if qc.samples < 1 or qc.steps < 0 or qc.batch < 1 or qc.val < 1:
         raise SystemExit("QAD samples/batch/val must be >= 1 and steps >= 0")
+    if qc.expert_groups < 0:
+        raise SystemExit("QAD expert_groups must be >= 0 (0 = as many as fit)")
     return qc
 
 
@@ -484,6 +492,12 @@ def head_kl(head, out: torch.Tensor, tgt: torch.Tensor, pos) -> torch.Tensor:
     return (lt.exp() * (lt - ls)).sum(-1).mean()
 
 
+def _kw(kw, i):
+    """The keyword inputs of sample ``i``: ``kw`` itself, or ``kw(i)`` when they depend on
+    the sample (:func:`train_layer`'s ``calls``)."""
+    return kw(i) if callable(kw) else kw
+
+
 def _parallel_step(w, wd, batch, xs, ys, workers, dtype=torch.float32):
     """One data-parallel step: worker ``k`` (device, layer copy, kwargs) takes every
     ``len(workers)``-th sequence of ``batch``, runs its forward and backward on its own
@@ -508,7 +522,7 @@ def _parallel_step(w, wd, batch, xs, ys, workers, dtype=torch.float32):
         with torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext():
             for i in batch[k::n]:
                 x = stager.to_device(xs[i], dev, dtype=dtype)
-                out = _out(functional_call(lay, wk, (x,), kw))
+                out = _out(functional_call(lay, wk, (x,), _kw(kw, i)))
                 tgt = stager.to_device(ys[i], dev).float()
                 loss = _nmse(out.float(), tgt) / len(batch)
                 loss.backward()
@@ -530,6 +544,45 @@ def _parallel_step(w, wd, batch, xs, ys, workers, dtype=torch.float32):
     return sum(t for _, t in res), grads
 
 
+class _GroupBatches:
+    """Batches of complete sample groups (:func:`train_layer`'s ``groups``).
+
+    A looped model's layer is called once per pass; its passes of one window must reach one
+    optimizer step together so their nMSE is summed (a mean over the batch is the sum up to
+    the constant 1 / batch, which AdamW's update does not depend on). Groups are drawn in a
+    shuffled order, whole; a batch is at least ``batch`` samples and may be larger when the
+    batch does not divide the group size."""
+
+    def __init__(
+        self,
+        groups: list[int],
+        batch: int,
+        generator: torch.Generator,
+        allowed: list[int] | None = None,
+    ):
+        self.by: dict[int, list[int]] = {}
+        self.key: dict[int, int] = {}
+        allowed = set(range(len(groups))) if allowed is None else set(allowed)
+        for i, g in enumerate(groups):
+            if i not in allowed:
+                continue
+            self.by.setdefault(g, []).append(i)
+            self.key[i] = g
+        self.ids = list(self.by)
+        self.batch, self.g, self.order = batch, generator, []
+
+    def next(self) -> list[int]:
+        while len(self.order) < self.batch:
+            for j in torch.randperm(len(self.ids), generator=self.g).tolist():
+                self.order += self.by[self.ids[j]]
+        batch = []
+        while len(batch) < self.batch:
+            k = len(self.by[self.key[self.order[0]]])
+            batch += self.order[:k]
+            self.order = self.order[k:]
+        return batch
+
+
 def train_layer(
     layer: nn.Module,
     fq: dict[str, FakeQuantLinear],
@@ -546,6 +599,8 @@ def train_layer(
     steps: int | None = None,
     head: tuple | None = None,
     replicas: list[torch.device] | None = None,
+    calls=None,
+    groups: list[int] | None = None,
 ) -> dict:
     """Train the fake-quantised Linears ``fq`` (submodule name -> module) of ``layer``
     so that ``layer(xs[i]) ~ ys[i]``. Returns loss/time info; ``fq`` is left at the
@@ -556,7 +611,13 @@ def train_layer(
 
     With ``qc.train_norms`` the layer's norm weights train too (``info["norms"]`` holds
     the kept values, empty when the PTQ fallback wins); ``head`` = (final norm, LM head)
-    adds ``qc.kl_weight`` x the logit KL on ``qc.kl_tokens`` positions to the loss."""
+    adds ``qc.kl_weight`` x the logit KL on ``qc.kl_tokens`` positions to the loss.
+
+    ``calls`` (a looped model, :mod:`hi2.qad_looped`): an object whose ``kwargs(i, dev,
+    dtype)`` returns the keyword inputs of sample ``i`` (the mask and position tensors of
+    its layer call, its block states and messages) instead of the one ``kwargs`` for all.
+    ``groups``: one integer per sample; samples of one group reach an optimizer step
+    together (a looped layer's passes of one window), whole groups only."""
     from torch.func import functional_call
 
     from .layerwise import to_device
@@ -602,8 +663,12 @@ def train_layer(
         p.requires_grad_(False)
     for m in fq.values():
         module_to_device(m, dev)
-    kw = to_device(kwargs, dev)
-    reps = [(d, r, to_device(kwargs, d)) for d, r in reps]
+    if calls is None:
+        kw = to_device(kwargs, dev)
+        reps = [(d, r, to_device(kwargs, d)) for d, r in reps]
+    else:
+        kw = partial(calls.kwargs, dev=dev, dtype=dt)
+        reps = [(d, r, partial(calls.kwargs, dev=d, dtype=dt)) for d, r in reps]
     stager = PinnedWindow()
     norm_params = {}
     if qc.train_norms:
@@ -637,7 +702,9 @@ def train_layer(
 
     def run(wd, i):
         return _out(
-            functional_call(layer, wd, (stager.to_device(xs[i], dev, dtype=dt),), kw)
+            functional_call(
+                layer, wd, (stager.to_device(xs[i], dev, dtype=dt),), _kw(kw, i)
+            )
         )
 
     @torch.no_grad()
@@ -674,13 +741,15 @@ def train_layer(
         a, b = m.param_groups()
         lat += a
         prm += b
-    groups = [{"params": lat, "lr": qc.lr_w}, {"params": prm, "lr": qc.lr_p}]
+    param_groups = [{"params": lat, "lr": qc.lr_w}, {"params": prm, "lr": qc.lr_p}]
     if norm_params:
-        groups.append({"params": list(norm_params.values()), "lr": qc.lr_norm})
+        param_groups.append({"params": list(norm_params.values()), "lr": qc.lr_norm})
     try:  # the fused implementation halves the optimizer step on a GPU
-        opt = torch.optim.AdamW(groups, weight_decay=0.0, fused=dev.type == "cuda")
+        opt = torch.optim.AdamW(
+            param_groups, weight_decay=0.0, fused=dev.type == "cuda"
+        )
     except (RuntimeError, ValueError):
-        opt = torch.optim.AdamW(groups, weight_decay=0.0)
+        opt = torch.optim.AdamW(param_groups, weight_decay=0.0)
     n_steps = qc.steps if steps is None else steps  # this layer's allotment
     warm = max(1, int(qc.warmup * n_steps))
 
@@ -691,6 +760,13 @@ def train_layer(
 
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_scale)
     g = torch.Generator().manual_seed(qc.seed)
+    if groups is not None and len(groups) != len(xs):
+        raise ValueError(
+            f"groups has {len(groups)} entries for {len(xs)} samples"
+        )
+    gb = (
+        _GroupBatches(groups, qc.batch, g, train_idx) if groups is not None else None
+    )
     order: list[int] = []
     every = qc.eval_every or max(1, n_steps // max(1, qc.evals))
     trace = [(0, None, loss0)]
@@ -698,12 +774,15 @@ def train_layer(
     spent, stopped = 0, False
     for step in range(n_steps):
         spent = step + 1
-        if len(order) < qc.batch:
-            order += [
-                train_idx[j]
-                for j in torch.randperm(len(train_idx), generator=g).tolist()
-            ]
-        batch, order = order[: qc.batch], order[qc.batch :]
+        if gb is not None:
+            batch = gb.next()
+        else:
+            if len(order) < qc.batch:
+                order += [
+                    train_idx[j]
+                    for j in torch.randperm(len(train_idx), generator=g).tolist()
+                ]
+            batch, order = order[: qc.batch], order[qc.batch :]
         w = weights()
         # the detached copies are the leaves the backward writes into: the rounding of the
         # math dtype is a straight-through (the gradient of the rounded weight goes to the
@@ -720,7 +799,13 @@ def train_layer(
             tot, grads = _parallel_step(
                 w, wd, batch, xs, ys, [(dev, layer, kw)] + reps, dtype=dt
             )
-        torch.autograd.backward(list(w.values()), grads)
+        if not reps:
+            names = [k for k in w if wd[k].grad is not None]
+            torch.autograd.backward(
+                [w[k] for k in names], [wd[k].grad for k in names]
+            )
+        else:
+            torch.autograd.backward(list(w.values()), grads)
         opt.step()
         sched.step()
         opt.zero_grad(set_to_none=True)
@@ -804,6 +889,7 @@ LEGACY_DEFAULTS = {
     "kl_weight": 1.0,
     "kl_tokens": 256,
     "dtype": "float32",
+    "expert_groups": 0,
 }
 
 
@@ -818,6 +904,7 @@ def qad_meta(qc: QadConfig) -> dict:
         "kl_layers",
         "kl_weight",
         "kl_tokens",
+        "expert_groups",
     }
     return {k: v for k, v in asdict(qc).items() if k not in new or v != getattr(d, k)}
 
@@ -974,6 +1061,56 @@ def final_norm(model: nn.Module, layers_path: str) -> nn.Module:
     raise SystemExit(f"cannot find the final norm next to {layers_path}")
 
 
+def init_layer(layer, linears, tables, picks, view, cfg, ex, wstager, log):
+    """The PTQ encoding of a layer's Linears, all of them in one batched
+    :func:`hi2.calibrate.encode_many` call, from the statistics and Hessians ``view``
+    (:class:`hi2.cache.StatsView`) holds: ``({name: HI2Tensor}, {name: the GPTQ-compensated
+    weights})``. ``linears`` maps module names to checkpoint tensor names."""
+    from .calibrate import EncodeRequest, encode_many
+    from .stats import ColumnStats
+
+    reqs, loaded = [], {}
+    for name, ckpt in linears.items():
+        w = wstager.to_host(layer.get_submodule(name).weight.detach().float())
+        sid = view.sigma_id(ckpt)
+        if sid is not None and sid not in loaded:  # one load per shared input
+            loaded[sid] = view.sigma(ckpt)
+        sigma = loaded.get(sid) if sid is not None else None
+        st = view.stats_state(ckpt)
+        stats = ColumnStats.from_state(st, "cpu") if st is not None else None
+        if cfg.rounding == "gptq" and sigma is None:
+            log(f"warning: {ckpt} has no Hessian; nearest-rounding initialisation")
+        reqs.append(
+            EncodeRequest(w, stats, tables[ckpt], picks[ckpt], sigma, sid, comp_out={})
+        )
+    encoded = encode_many(reqs, cfg, ex) if reqs else []
+    comps = {name: r.comp_out["comp"] for name, r in zip(linears, reqs)}
+    return dict(zip(linears, encoded)), comps
+
+
+def fake_quants(layer, names, inits, comps, qc, wstager):
+    """The :class:`FakeQuantLinear` of every Linear in ``names`` from the layer's
+    unquantized weights and its PTQ encodings, and, when ``qc.init`` is not ``ptq``, the
+    PTQ ones to score as the fallback (kept if training loses): ``(fq, fallback or None)``."""
+
+    def weight(name):
+        return wstager.to_host(layer.get_submodule(name).weight.detach().float())
+
+    fq = {
+        name: FakeQuantLinear(
+            weight(name), inits[name], comps[name], qc.init, qc.latent_units
+        )
+        for name in names
+    }
+    fb = None
+    if qc.init != "ptq":
+        fb = {
+            name: FakeQuantLinear(weight(name), inits[name], comps[name], "ptq")
+            for name in names
+        }
+    return fq, fb
+
+
 def qad_layerwise(
     model: nn.Module,
     ids: torch.Tensor,
@@ -998,10 +1135,8 @@ def qad_layerwise(
     :class:`hi2.cache.StatsView` (the persistent cache or the workdir) and encodes all
     Linears of a layer in one batched :func:`hi2.calibrate.encode_many` call."""
     from .cache import StatsView
-    from .calibrate import EncodeRequest, encode_many
     from .checkpoint import is_eligible
     from .layerwise import capture_inputs, find_layers
-    from .stats import ColumnStats
 
     path, layers = find_layers(model)
     prefix = path + "."
@@ -1087,56 +1222,11 @@ def qad_layerwise(
                 budget.record(info)
         else:
             tl = time.time()
-            reqs, loaded = [], {}
-            for name, ckpt in linears.items():
-                w = wstager.to_host(layer.get_submodule(name).weight.detach().float())
-                sid = view.sigma_id(ckpt)
-                if sid is not None and sid not in loaded:  # one load per shared input
-                    loaded[sid] = view.sigma(ckpt)
-                sigma = loaded.get(sid) if sid is not None else None
-                st = view.stats_state(ckpt)
-                stats = ColumnStats.from_state(st, "cpu") if st is not None else None
-                if cfg.rounding == "gptq" and sigma is None:
-                    log(
-                        f"warning: {ckpt} has no Hessian; nearest-rounding initialisation"
-                    )
-                reqs.append(
-                    EncodeRequest(
-                        w, stats, tables[ckpt], picks[ckpt], sigma, sid, comp_out={}
-                    )
-                )
-            encoded = encode_many(reqs, cfg, ex) if reqs else []
-            inits = dict(zip(linears, encoded))
-            comps = {name: r.comp_out["comp"] for name, r in zip(linears, reqs)}
-            del reqs, loaded
+            inits, comps = init_layer(
+                layer, linears, tables, picks, view, cfg, ex, wstager, log
+            )
             if li in train_set and linears:
-                fq = {
-                    name: FakeQuantLinear(
-                        wstager.to_host(
-                            layer.get_submodule(name).weight.detach().float()
-                        ),
-                        inits[name],
-                        comps[name],
-                        qc.init,
-                        qc.latent_units,
-                    )
-                    for name in linears
-                }
-                fb = None
-                if (
-                    qc.init != "ptq"
-                ):  # also score the PTQ encoding; kept if training loses
-                    fb = {
-                        name: FakeQuantLinear(
-                            wstager.to_host(
-                                layer.get_submodule(name).weight.detach().float()
-                            ),
-                            inits[name],
-                            comps[name],
-                            "ptq",
-                        )
-                        for name in linears
-                    }
+                fq, fb = fake_quants(layer, list(linears), inits, comps, qc, wstager)
                 info = train_layer(
                     layer,
                     fq,

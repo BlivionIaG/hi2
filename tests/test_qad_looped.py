@@ -1,0 +1,366 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
+"""Layer-wise QAD on a looped model (``hi2.qad_looped``), CPU only.
+
+The fork's tiny Inkling-2 checkpoint (``make_tiny_checkpoint.py``: six layers, layers 2-3
+run twice) is the model; a second fixture is twelve layers in blocks of three, layers 3-8
+looped three times, so the third pass takes its messages from the second. Set
+``INKLING2_TOOLS`` to the fork's ``tools/rdna/inkling2`` directory; the sibling worktree
+is found by itself. The teacher states, the pass messages, the group split and a full
+``hi2 quantize`` are exercised; the tiny random model's KL is not a quality signal.
+"""
+
+import importlib.util
+import json
+import os
+import sys
+from pathlib import Path
+
+import pytest
+import torch
+from torch import nn
+
+pytest.importorskip("safetensors")
+pytest.importorskip("transformers.models.inkling2_loop.modeling_inkling2_loop")
+
+from hi2.calibrate import Config  # noqa: E402
+from hi2.executor import Executor  # noqa: E402
+from hi2.looped import _Program, run_program  # noqa: E402
+from hi2.pipeline import RunConfig, _load_model, run  # noqa: E402
+from hi2.qad import _GroupBatches, make_config  # noqa: E402
+from hi2.qad_looped import (  # noqa: E402
+    _Samples,
+    _capture,
+    _group_names,
+    _layout,
+    _needed,
+    _samples_for,
+    _state_count,
+)
+
+N_SEQ, T = 8, 12
+EXPERTS = r"\.mlp\.experts\."
+
+
+def _tools_dir() -> Path | None:
+    cands = (
+        [Path(os.environ["INKLING2_TOOLS"])] if os.environ.get("INKLING2_TOOLS") else []
+    )
+    cands.append(
+        Path(__file__).resolve().parents[2] / "vllm-inkling2-merge/tools/rdna/inkling2"
+    )
+    return next((c for c in cands if (c / "make_tiny_checkpoint.py").exists()), None)
+
+
+def _import(name: str, path: Path):
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def src(tmp_path_factory):
+    d = _tools_dir()
+    if d is None:
+        pytest.skip("the fork's tools/rdna/inkling2 is not available (INKLING2_TOOLS)")
+    make = _import("hi2_test_make_tiny", d / "make_tiny_checkpoint.py")
+    path = tmp_path_factory.mktemp("qad_looped_tiny")
+    make.write_checkpoint(path, make.TinySpec(num_hidden_layers=6), seed=11)
+    return path
+
+
+@pytest.fixture(scope="module")
+def ids():
+    return torch.randint(0, 50, (N_SEQ, T), generator=torch.Generator().manual_seed(5))
+
+
+def _rc(src, tmp_path, **kw):
+    return RunConfig(
+        src=src,
+        dst=tmp_path / "out",
+        workdir=tmp_path / "work",
+        include=EXPERTS,
+        devices=["cpu"],
+        compute_dtype="float32",
+        target_bpw=3.5,
+        cfg=Config(effort="fast"),
+        **kw,
+    )
+
+
+@pytest.fixture(scope="module")
+def model(src, tmp_path_factory):
+    return _load_model(
+        _rc(src, tmp_path_factory.mktemp("qad_looped_model")), lambda *_: None
+    )
+
+
+@pytest.fixture(scope="module")
+def prog(model, ids):
+    return _Program(model, ids, Executor("cpu"), lambda *_: None)
+
+
+@pytest.fixture(scope="module")
+def src3(tmp_path_factory):
+    d = _tools_dir()
+    if d is None:
+        pytest.skip("the fork's tools/rdna/inkling2 is not available (INKLING2_TOOLS)")
+    make = _import("hi2_test_make_tiny", d / "make_tiny_checkpoint.py")
+    path = tmp_path_factory.mktemp("qad_looped_tiny3")
+    spec = make.TinySpec(
+        num_hidden_layers=12,
+        n_layers_per_attn_res_block=3,
+        loop_start=3,
+        loop_end=9,
+        loop_num_passes=3,
+    )
+    make.write_checkpoint(path, spec, seed=13)
+    return path
+
+
+@pytest.fixture(scope="module")
+def prog3(src3, tmp_path_factory):
+    model = _load_model(
+        _rc(src3, tmp_path_factory.mktemp("qad_looped_model3")), lambda *_: None
+    )
+    ids3 = torch.randint(0, 50, (3, 8), generator=torch.Generator().manual_seed(7))
+    return _Program(model, ids3, Executor("cpu"), lambda *_: None)
+
+
+# ---------------------------------------------------------------- the teacher states
+
+
+def test_the_capture_keeps_one_state_per_unique_call(prog, tmp_path):
+    qc = make_config("fast", {"final_kl": 0})
+    teacher = _capture(
+        prog, list(range(6)), qc, tmp_path / "qad", "fp", lambda *_: None
+    )
+    layout = _layout(prog.calls, prog.layers, prog.text.config)
+    inputs, outputs = _needed(layout, prog.calls, list(range(6)))
+    assert len(teacher.slots) == _state_count(
+        prog.calls, inputs, outputs, prog.text.config.loop_layer_index_start
+    ) == 9
+    # the first call's input is the captured layer-0 input, bit for bit
+    for w in range(prog.n_seq):
+        assert teacher.slots[teacher.inputs[0]][w] is prog.hidden[w]
+    # an output the program continues with is the next call's input, not a second copy
+    for ci in range(len(prog.calls) - 1):
+        if prog.calls[ci + 1].layer == prog.calls[ci].layer + 1:
+            assert teacher.outputs[ci] == teacher.inputs[ci + 1]
+    # the selected layers' calls all have a target, and the pass start reuses the pre state
+    calls_of = layout.calls_of
+    for li in range(6):
+        for ci in calls_of[li]:
+            assert ci in teacher.outputs and ci in teacher.inputs
+    assert teacher.inputs[calls_of[2][1]] == teacher.inputs[calls_of[2][0]]
+    # final_kl 0: the pass stops early and does not write the final-KL head inputs
+    assert not (tmp_path / "qad" / "head_inputs.pt").exists()
+
+
+def test_too_many_teacher_states_fail_before_the_pass(prog, tmp_path, monkeypatch):
+    monkeypatch.setenv("HI2_QAD_STATES_GIB", "0")
+    qc = make_config("fast", {"final_kl": 0})
+    with pytest.raises(SystemExit, match="HI2_QAD_STATES_GIB"):
+        _capture(prog, list(range(6)), qc, tmp_path / "qad", "fp", lambda *_: None)
+
+
+def test_the_heads_are_saved_for_the_final_kl(prog, tmp_path):
+    qc = make_config("fast", {"final_kl": 2})
+    qdir = tmp_path / "qad"
+    _capture(prog, list(range(6)), qc, qdir, "fp", lambda *_: None)
+    rec = torch.load(qdir / "head_inputs.pt", weights_only=False)
+    assert rec["fingerprint"] == "fp"
+    hs = rec["head_inputs"]
+    assert hs.shape == (prog.n_seq, T, prog.hidden[0].shape[-1])
+    assert torch.isfinite(hs).all()
+
+
+# ---------------------------------------------------------------- the pass messages
+
+
+def test_the_later_passes_see_the_states_of_the_pass_before(prog3, tmp_path):
+    prog = prog3
+    cfg = prog.text.config
+    a = cfg.loop_layer_index_start
+    ref: dict[int, list] = {}
+    ref_bs: dict[int, list] = {}
+
+    def call(ci, c, h, bs, messages):
+        if messages is not None:
+            ref[ci] = [messages[i].detach().clone() for i in range(prog.n_seq)]
+            ref_bs[ci] = [s.detach().clone() for s in bs]
+        out, _ = prog.run(ci, h, bs, messages)
+        return out
+
+    run_program(prog.text, prog.hidden, call)
+    selected = list(range(a, cfg.loop_layer_index_end))
+    qc = make_config("fast", {"final_kl": 0})
+    teacher = _capture(prog, selected, qc, tmp_path / "qad", "fp", lambda *_: None)
+    layout = _layout(prog.calls, prog.layers, cfg)
+    li = selected[2]
+    samples, *_ = _samples_for(teacher, layout, li, qc, teacher.n_seq)
+    calls = _Samples(prog, teacher, layout, samples, [torch.device("cpu")])
+    seen = 0
+    for i, (w, ci) in enumerate(samples):
+        if not prog.calls[ci].messages:
+            continue
+        got = calls.kwargs(i, torch.device("cpu"), torch.float32)
+        want = ref[ci][w]
+        assert torch.allclose(got["messages"], want, atol=1e-6), (ci, w)
+        assert torch.allclose(
+            got["block_states"], ref_bs[ci][w], atol=0.0
+        ), (ci, w)
+        seen += 1
+    assert seen == 2 * prog.n_seq  # two passes with messages per window
+
+
+def test_a_loop_layer_has_one_sample_per_pass_and_whole_groups(prog, tmp_path):
+    qc = make_config("fast", {"final_kl": 0, "samples": 6, "val": 2})
+    teacher = _capture(prog, [2], qc, tmp_path / "qad", "fp", lambda *_: None)
+    layout = _layout(prog.calls, prog.layers, prog.text.config)
+    samples, xs, ys, train_idx, val_idx, groups = _samples_for(
+        teacher, layout, 2, qc, teacher.n_seq
+    )
+    assert len(samples) == 2 * teacher.n_seq
+    assert groups == [w for w in range(teacher.n_seq) for _ in range(2)]
+    assert set(train_idx) | set(val_idx) == set(range(len(samples)))
+    assert not set(train_idx) & set(val_idx)
+    gb = _GroupBatches(groups, qc.batch, torch.Generator().manual_seed(0), train_idx)
+    for _ in range(6):
+        batch = gb.next()
+        assert len(batch) >= qc.batch
+        for w in {groups[i] for i in batch}:
+            assert {i for i in batch if groups[i] == w} == {i for i in train_idx if groups[i] == w}
+
+
+# ---------------------------------------------------------------- the expert groups
+
+
+def _layer_with_experts(n: int = 8):
+    layer = nn.Module()
+    experts = nn.Module()
+    for e in range(n):
+        mod = nn.Module()
+        for proj in ("gate_proj", "up_proj", "down_proj"):
+            setattr(mod, proj, nn.Linear(4, 4, bias=False))
+        setattr(experts, str(e), mod)
+    mlp = nn.Module()
+    mlp.experts = experts
+    mlp.gate = nn.Linear(4, n, bias=False)
+    layer.mlp = mlp
+    return layer
+
+
+def test_the_experts_are_partitioned_over_the_groups():
+    layer = _layer_with_experts(8)
+    linears = {
+        f"mlp.experts.{e}.{p}": f"x.{e}.{p}"
+        for e in range(8)
+        for p in ("gate_proj", "up_proj", "down_proj")
+    }
+    linears["mlp.gate"] = "x.gate"
+    groups, n = _group_names(layer, linears, 3)
+    assert n == 3 and len(groups) == 3
+    flat = [n for g in groups for n in g]
+    assert sorted(flat) == sorted(linears) and len(flat) == len(set(flat))
+    assert "mlp.gate" in groups[0]
+    for e in range(8):
+        assert sum(f"mlp.experts.{e}.gate_proj" in g for g in groups) == 1
+
+
+def test_zero_groups_follow_the_weight_threshold(monkeypatch):
+    import hi2.qad_looped as QL
+
+    layer = _layer_with_experts(4)
+    linears = {
+        f"mlp.experts.{e}.{p}": f"x.{e}.{p}"
+        for e in range(4)
+        for p in ("gate_proj", "up_proj", "down_proj")
+    }
+    monkeypatch.setattr(QL, "GROUP_WEIGHTS", 48)
+    groups, n = _group_names(layer, linears, 0)
+    assert n == 4 and len(groups) == 4  # 4 experts x 3 x 16 weights / 48 = 4
+    monkeypatch.setattr(QL, "GROUP_WEIGHTS", 10**9)
+    groups, n = _group_names(layer, linears, 0)
+    assert n == 1 and len(groups) == 1
+
+
+def test_the_config_carries_the_group_count():
+    from hi2.qad import fingerprint, qad_fingerprint_fields
+
+    qc = make_config("fast", {"expert_groups": 2})
+    assert qc.expert_groups == 2
+    assert qad_fingerprint_fields(qc)["expert_groups"] == 2
+    assert fingerprint(qad_fingerprint_fields(qc))
+    with pytest.raises(SystemExit, match="expert_groups"):
+        make_config("fast", {"expert_groups": -1})
+
+
+# ---------------------------------------------------------------- the pipeline
+
+
+def test_a_looped_quantize_trains_the_single_pass_and_loop_layers(
+    src, ids, tmp_path, monkeypatch
+):
+    from hi2.checkpoint import validate_checkpoint
+
+    import hi2.qad_looped as QL
+
+    seen: dict[str, list[int] | None] = {}
+    orig = QL.train_layer
+
+    def spy(*a, **kw):
+        seen[a[10]] = kw.get("groups")
+        return orig(*a, **kw)
+
+    monkeypatch.setattr(QL, "train_layer", spy)
+
+    qc = make_config(
+        "fast",
+        {
+            "steps": 2,
+            "samples": 6,
+            "val": 2,
+            "batch": 2,
+            "layers": "0-2",
+            "expert_groups": 1,
+        },
+    )
+    rc = _rc(src, tmp_path, calib_ids=ids, calib_samples=N_SEQ, seq_len=T, qad=qc)
+    run(rc, log=lambda *_: None)
+    validate_checkpoint(rc.dst)
+    rep = json.loads((rc.workdir / "qad_report.json").read_text())
+    assert len(rep) == 6
+    for li, passes in ((0, 1), (1, 1), (2, 2)):
+        assert rep[li]["passes"] == passes and rep[li]["steps"] == 2
+        assert rep[li]["val_before"] > 0 and rep[li]["val_after"] > 0
+    # the loop span's passes of one window reach one step; a single-call layer has none
+    assert seen["L0"] is None and seen["L1"] is None
+    assert seen["L2"] == [w for w in range(N_SEQ) for _ in range(2)]
+    assert (rc.workdir / "qad" / "layer002.pt").exists()
+    assert not (rc.workdir / "qad" / "layer003.pt").exists()  # PTQ only, no artifact
+    assert not (rc.workdir / "qad" / "head_inputs.pt").exists()
+    qcfg = json.loads((rc.dst / "config.json").read_text())["quantization_config"]
+    assert qcfg["qad"]["expert_groups"] == 1
+
+
+def test_the_trained_layers_are_reused_on_a_rerun(src, ids, tmp_path):
+    import shutil
+
+    qc = make_config(
+        "fast",
+        {"steps": 1, "samples": 6, "val": 2, "batch": 2, "layers": "1"},
+    )
+    rc = _rc(src, tmp_path, calib_ids=ids, calib_samples=N_SEQ, seq_len=T, qad=qc)
+    run(rc, log=lambda *_: None)
+    first = (rc.workdir / "qad" / "layer001.pt").read_bytes()
+    shutil.rmtree(rc.dst)
+    logs: list[str] = []
+    run(rc, log=lambda *a: logs.append(" ".join(map(str, a))))
+    assert sum("reusing layer001.pt" in ln for ln in logs) == 1
+    assert any("teacher pass is skipped" in ln for ln in logs)
+    assert (rc.workdir / "qad" / "layer001.pt").read_bytes() == first

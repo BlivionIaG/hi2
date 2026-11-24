@@ -155,6 +155,7 @@ def _qad_overrides(a) -> dict:
         ("kl_layers", a.qad_kl_layers),
         ("train_norms", a.qad_train_norms),
         ("dtype", a.qad_dtype),
+        ("expert_groups", a.qad_expert_groups),
     ):
         if val is not None:
             over[key] = val
@@ -679,6 +680,12 @@ def build_parser() -> argparse.ArgumentParser:
         ("--qad-lr-params", float, "ladder-parameter learning rate"),
         ("--qad-batch", int, "training sequences per batch"),
         ("--qad-init", str, "latent initialization (QadConfig init)"),
+        (
+            "--qad-expert-groups",
+            int,
+            "groups a looped model's experts are trained in, one after the other "
+            "(0 = enough to keep a group under 300 M weights)",
+        ),
     ):
         g.add_argument(
             flag, type=typ, default=None, help=f"{description} (preset default)"

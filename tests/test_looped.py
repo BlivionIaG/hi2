@@ -426,7 +426,7 @@ def test_the_include_preset_is_the_routed_experts_of_a_looped_model(src, tmp_pat
     assert default_include(tmp_path / "nothing") is None
 
 
-def test_a_looped_model_refuses_what_needs_a_layers_own_input(src, tmp_path):
+def test_a_looped_model_refuses_what_is_not_implemented(src, tmp_path):
     from hi2.pipeline import _check_looped
     from hi2.qad import make_config
 
@@ -434,13 +434,23 @@ def test_a_looped_model_refuses_what_needs_a_layers_own_input(src, tmp_path):
     rc.cfg = Config(effort="fast", sequential=True)
     with pytest.raises(SystemExit, match="sequential"):
         _check_looped(rc, lambda *_: None)
-    rc = _rc(src, tmp_path, qad=make_config("fast", {"layers": "0-3"}))
-    with pytest.raises(SystemExit, match="layer-wise QAD"):
+    rc = _rc(src, tmp_path, qad=make_config("fast", {"kl_layers": 2}))
+    with pytest.raises(SystemExit, match="qad-kl-layers"):
         _check_looped(rc, lambda *_: None)
+    # `--qad` without --qad-layers keeps the final-KL-only default on a looped model
     rc = _rc(src, tmp_path, qad=make_config("fast"))
     notes: list[str] = []
     _check_looped(rc, notes.append)
-    assert rc.qad.layers == "none" and notes  # PTQ per layer, then the final KL
+    assert rc.qad.layers == "none" and any("no layer is trained" in n for n in notes)
+    # layer-wise QAD is implemented through the layer program (hi2.qad_looped)
+    rc = _rc(src, tmp_path, qad=make_config("fast", {"layers": "0-3"}))
+    notes.clear()
+    _check_looped(rc, notes.append)
+    assert rc.qad.layers == "0-3" and any("teacher-forced" in n for n in notes)
+    rc = _rc(src, tmp_path, qad=make_config("fast", {"layers": "none"}))
+    notes.clear()
+    _check_looped(rc, notes.append)
+    assert rc.qad.layers == "none" and any("no layer is trained" in n for n in notes)
 
 
 # ---------------------------------------------------------------- the final logit-KL phase

@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import regex as re
@@ -557,29 +557,50 @@ def _qad_encode(
         }
     )
     inc = re.compile(rc.include) if rc.include else None
-    out = qad_layerwise(
-        model,
-        ids,
-        tables,
-        picks,
-        rc.cfg,
-        qc,
-        ex,
-        rc.workdir,
-        inc,
-        re.compile(rc.exclude),
-        make_resolver(source_map(rc.src)),
-        fp,
-        rc.limit_layers,
-        log,
-        qdir=rc.workdir / f"qad{tag}",
-    )
+    from .looped import is_looped
+
+    if is_looped(model):
+        from .qad_looped import qad_looped
+
+        out = qad_looped(
+            model,
+            ids,
+            tables,
+            picks,
+            rc.cfg,
+            qc,
+            ex,
+            rc.workdir,
+            inc,
+            re.compile(rc.exclude),
+            make_resolver(source_map(rc.src)),
+            fp,
+            rc.limit_layers,
+            log,
+            qdir=rc.workdir / f"qad{tag}",
+        )
+    else:
+        out = qad_layerwise(
+            model,
+            ids,
+            tables,
+            picks,
+            rc.cfg,
+            qc,
+            ex,
+            rc.workdir,
+            inc,
+            re.compile(rc.exclude),
+            make_resolver(source_map(rc.src)),
+            fp,
+            rc.limit_layers,
+            log,
+            qdir=rc.workdir / f"qad{tag}",
+        )
     atomic_json(rc.workdir / f"qad_report{tag}.json", out.layers)
     tensors, dense = out.tensors, out.dense
     head = _saved_head_inputs(rc, tag, fp)
     if qc.final_kl > 0:
-        from .looped import is_looped
-
         if head is None and is_looped(model):
             head = _teacher_head_inputs(rc, ex, model, ids, log)
         if _final_kl_fits(rc, ex, model, tensors, head is not None, log, ids.shape[1]):
@@ -773,10 +794,8 @@ def _text_config(src: Path) -> dict:
 
 def _check_looped(rc: RunConfig, log) -> None:
     """A looped model (Inkling-2) goes through :mod:`hi2.looped`: statistics from the
-    layer program, PTQ per layer, then the final logit-KL phase. What needs one layer's
-    own input is refused before any work is done."""
-    from dataclasses import replace
-
+    layer program, layer-wise QAD per layer call (:mod:`hi2.qad_looped`), then the final
+    logit-KL phase. What is not implemented is refused before any work is done."""
     if rc.cfg.sequential:
         raise SystemExit(
             "--sequential is not supported for a looped model: it feeds every layer "
@@ -784,18 +803,30 @@ def _check_looped(rc: RunConfig, log) -> None:
             "times (the default rounding pools the Hessians of every call)"
         )
     if rc.qad is not None:
-        if rc.qad.layers not in (None, "", "all", "none"):
+        if rc.qad.kl_layers > 0:
             raise SystemExit(
-                f"--qad-layers {rc.qad.layers!r}: layer-wise QAD training is not "
-                "supported for a looped model; omit it (PTQ per layer, then the final "
-                "logit-KL phase)"
+                "--qad-kl-layers is not supported for a looped model: a layer's output "
+                "is not the LM head's input (block residuals and the loop span); omit "
+                "it, the final logit-KL phase covers the whole network"
             )
-        if rc.qad.layers != "none":
+        if rc.qad.layers is None:
+            # a final-KL-only run is the `--qad` default on a looped model: layer-wise
+            # QAD is opt-in (`--qad-layers 0-5`, or `all`), never the silent default
             log(
-                "looped model: the layers are not trained layer-wise (PTQ per layer, "
-                "then the final logit-KL phase)"
+                "looped model: no layer is trained layer-wise (PTQ per layer, then the "
+                "final logit-KL phase; --qad-layers selects layers for QAD)"
             )
-        rc.qad = replace(rc.qad, layers="none")
+            rc.qad = replace(rc.qad, layers="none")
+        elif rc.qad.layers == "none":
+            log(
+                "looped model: no layer is trained layer-wise (PTQ per layer, then the "
+                "final logit-KL phase)"
+            )
+        else:
+            log(
+                "looped model: layer-wise QAD teacher-forced from the layer program "
+                "(hi2.qad_looped); the loop span's passes train together"
+            )
 
 
 def check_inputs(rc: RunConfig, log=print) -> dict:

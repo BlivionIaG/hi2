@@ -1201,8 +1201,11 @@ The mixed set's KL per window, for the three encodes (`kl_per_window` in the eva
 ## Layer-wise QAD on a looped model
 
 `qad.qad_layerwise` trains layer L from the quantized prefix's output to the unquantized layer's output, one
-hidden tensor per layer. `pipeline._check_looped` refuses it for Inkling-2: a layer call is `layer(hidden,
-block_states[, messages], **kwargs)` and its 24 layers are 48 calls. Read from `qad.py`, `looped.py`, `layerwise.py`:
+hidden tensor per layer. It does not fit Inkling-2: a layer call is `layer(hidden, block_states[, messages],
+**kwargs)` and its 24 layers are 48 calls. `hi2.qad_looped` trains the calls **teacher-forced**: the layer
+program (`looped._Program.run`, the unquantized model) records each selected call's input, block states, messages
+and output, and `train_layer` runs the fake-quantized layer on exactly those inputs. The design constraints, read
+from `qad.py`, `looped.py`, `layerwise.py`:
 
 * **Layers 0-5 and 18-23 (one call each): yes.** The layer program (`looped._Program.run`) hands every call its
   input, block states and output over per-sequence host states, so the teacher's inputs and targets come from one
@@ -1232,9 +1235,43 @@ block_states[, messages], **kwargs)` and its 24 layers are 48 calls. Read from `
   initialisation (`encode_many` through `StatsView`, its statistics already pooled over the calls). **Not:**
   `capture_inputs`, `_propagate`, `_buffers` (one tensor per layer), the driver loop (layer i+1 reads layer i) and
   `train_layer`'s `functional_call(layer, wd, (x,), kw)`, which takes only a hidden tensor.
-* **Hard:** the 19 GiB state in 30 GiB, the span's storage, teacher-forced inputs in the span, the time. **Only unwritten:**
-  the call-function version of `train_layer`, the driver with its artifacts and resume, the tests on the tiny looped
-  checkpoint, lifting `_check_looped` for the layers done.
+* **Hard:** the 19 GiB state in 30 GiB, the span's storage, teacher-forced inputs in the span, the time.
+
+### Implemented, `hi2/qad_looped.py` (2026-11-24)
+
+`pipeline._check_looped` sends a looped model to `qad_looped` when `--qad-layers` is given explicitly (`all`, or a
+list); **omitted** keeps the final-KL-only default (PTQ per layer), so the three arms of the comparison are
+`--no-qad`, `--qad`, and `--qad --qad-layers 0-5`; the
+What is still refused is `--qad-kl-layers` (a decoder layer's output is not the LM head's input) and
+`--sequential`; `--qad-layers none` keeps its PTQ-per-layer meaning.
+
+* **Capture.** One pass of the unquantized program, per-sequence host tensors (`_Program` already splits them),
+  stops after the last call the selected layers need. A state is stored once: an output the program continues with
+  *is* the next call's input (the same tensor object), a later pass's start is the first pass's pre-loop state, and
+  the end of a pass plus the final output are the extra states. `_layout` recomputes the block-state append, the
+  pass reset and the `n_pre + 1` message slice without running the program; `_state_count` predicts the number of
+  slots and refuses a pass over `HI2_QAD_STATES_GIB` (default 128 GiB) before it starts. States stay in the model's
+  compute dtype (float16 on the V620): 2.32 GiB per state for 264 windows x 2048 tokens. Messages are never stored;
+  `_Samples` recomputes them from the previous pass's stored states with a CPU copy of `message_input`.
+* **Training.** A single-call layer has one sample per window; a loop layer one per (window, pass), all of one
+  window's samples in one `_GroupBatches` group so the passes reach an optimizer step together and the loss is the
+  sum of their nMSE up to the constant `1 / batch` (`train_layer`'s new `groups` hook). `_Samples` supplies the
+  recorded call kwargs, the block states and the messages; `functional_call` replaces the layer's weights, so the
+  rest of the model is not in the graph. The experts of a layer train group by group (`QadConfig.expert_groups`,
+  `--qad-expert-groups`; 0 = enough groups to keep one under 300 M weights; the other Linears train in group 0),
+  which keeps one group's latent/unit/gradient/Adam state around 6 GiB instead of 19 GiB.
+* **Artifacts.** `qad/layerNNN.pt` per *trained* layer (tensors, info, norms) with a fingerprint that includes the
+  pass count, `expert_groups` and the selected layers, so a re-run reuses exact artifacts and training an unselected
+  layer is never resumed as if it had trained; unselected layers are PTQ-encoded again (deterministic). The pass
+  that runs to the end saves `head_inputs.pt` only when `final_kl > 0`, for `hi2.finalkl`'s placement-free phase.
+* **Tests.** `tests/test_qad_looped.py` (CPU, the fork's tiny looped checkpoint): the exact unique-state count, the
+  dedupe identity, the memory guard, the head cache, the later passes' messages and block states against a reference
+  `run_program`, the group split, the pass groups, a full `hi2 quantize` (layers 0-2, loop layer 2 with two passes)
+  and its resume; 20 mutants of the module and its groundwork are killed (QL3-QL19, QG1/QG2/QG4).
+* **Not yet measured on the GPU:** one 3.5 bpw run over layers 0-5 (`--qad-layers 0-5 --qad-final-kl 0`) and its
+  held-out group KL is the next step; the time [INFERENCE] follows `estimate_seconds`: 3.6 s per 4 x 2048-token
+  step at 1.019 G expert weights, 300 steps x 6 layers -> about 2 h on one card, plus the capture and the final
+  encode. The final-KL phase separately measured 166-183 s per step with the layer program at 18.5 GiB/card.
 
 ## One bf16 class in INT8 (exploratory, eval only)
 
