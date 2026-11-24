@@ -861,9 +861,10 @@ The forward took 6.5 times the pilot's for 64 times the windows: 4.3 s per layer
 windows (204 s for 48 calls), 27.6 s at 256 (1,324 s), which a fixed part of about 4 s per call
 and 0.09 s per window fits [two-point fit, inference]. The two projections made from the pilot
 (a flat 13 s and a linear 3.6 h) were off by a factor of 100 and of 10. A further target reuses
-the statistics (the cache key holds the windows, not the target) and should cost the
-allocation, the encode, the restack and the validation, about 15 min [inference until the 3.0
-run]. Resources of the step, sampled every 30 s: process RSS up to 182 GiB (131 GiB in the
+the statistics and the tables (the cache keys hold the windows, the candidates and the
+rotation, not the target: "statistics hit", "tables hit", phase 1 took 6 s): the 3.0 encode
+took 966 s, allocation 75, encode 652, restack 11, validation 179, at 46 GiB of host memory
+and 5.2 GiB of VRAM per card [measured]. Resources of the 3.5 step, sampled every 30 s: process RSS up to 182 GiB (131 GiB in the
 layer log lines), MemAvailable at least 293 GiB, 15.0 GiB of VRAM per card, 66 C at the hottest
 card, 0 page faults, disk free 116 GiB at the end.
 
@@ -940,6 +941,61 @@ The step: `install_teacher` 25 s, teacher program 240 s, probe program 82 s, `in
 65,536 tokens (48 layer calls, four windows per forward) costs 240 s: 3.1 times the pilot's 75 s
 for 32 times the tokens. Peak host RSS 232 GiB, MemAvailable at least 259 GiB, VRAM 19.1 and 15.5
 GiB, 59 C.
+
+### The three targets compared (measured, 2026-11-24)
+
+Same calibration windows, same 32 held-out windows, same float32 teacher (the stock model
+decoded); the three encodes share the statistics and the tables, so the targets differ only in
+the allocation. The stock experts are 14.594 GiB (NVFP4 4.5 bits in layers 0-19, MXFP8 8.25 bits
+in layers 20-23); next to each text file lies the vision tower (0.593 GiB, bit for bit); the
+MTP file is not carried.
+
+| Target | Experts GiB | INT2 / INT4 / INT8 % of the weights | B16 / B32 / B64 % of the rows | Text file GiB | Step (s) |
+| --- | --- | --- | --- | --- | --- |
+| 3.0 | 8.539 | 67.8 / 32.2 / 0 | 2.0 / 20.2 / 77.9 | 11.649 | 966 |
+| 3.5 | 9.962 | 42.2 / 57.8 / 0 | 1.7 / 15.9 / 82.4 | 13.073 | 3,344 (fills the cache) |
+| 4.0 | 11.385 | 16.2 / 83.8 / 0 | 0.9 / 10.6 / 88.5 | 14.497 | 906 |
+
+| Target | KL(stock \|\| HI2), 32 windows | Median / worst window | Top-1 | Perplexity | NLL stock -> HI2 | Mean relative weight RMS |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3.0 | 0.1212 +- 0.0193 | 0.079 / 0.582 | 0.915 | x1.0243 | 1.7629 -> 1.7870 | 0.340 |
+| 3.5 | 0.0996 +- 0.0178 | 0.061 / 0.538 | 0.930 | x1.0095 | 1.7629 -> 1.7724 | 0.274 |
+| 4.0 | 0.0851 +- 0.0175 | 0.052 / 0.521 | 0.942 | x0.9992 | 1.7629 -> 1.7622 | 0.188 |
+
+KL of one layer group at a time on the first 8 windows (all layers together: 0.1284, 0.1027 and
+0.0896):
+
+| Target | Layers 0-5 | Layers 6-17 | Layers 18-19 | Layers 20-23 |
+| --- | --- | --- | --- | --- |
+| 3.0 | 0.0810 | 0.1056 | 0.0065 | 0.0115 |
+| 3.5 | 0.0717 | 0.0861 | 0.0042 | 0.0085 |
+| 4.0 | 0.0675 | 0.0743 | 0.0027 | 0.0031 |
+
+What the three runs show:
+
+* **The KL falls slowly with the bits.** From 3.0 to 4.0 bpw the mean KL falls by 30 %
+  (0.121 to 0.085), the mean relative weight error by 45 % and the allocator's own error ratio
+  (the activation-weighted cost of each layer's output, in the log of each allocation) by a
+  factor of 4.2 (1,899 to 447). The worst window hardly moves (0.58, 0.54, 0.52). The measure the
+  allocator minimises does not follow the end-to-end KL [measured]; routing flips and the three
+  passes of the loop layers are candidates for the difference [inference: nothing here separates
+  them].
+* **Layers 0-17 hold the KL at every target, and improve least with the bits.** Layers 0-5 and
+  6-17 cost 0.081 and 0.106 at 3.0 and 0.068 and 0.074 at 4.0 (down 17 % and 30 %); layers
+  18-19 and 20-23 cost 0.0065 and 0.0115 at 3.0 and 0.0027 and 0.0031 at 4.0 (down 58 % and
+  73 %).
+* **INT8 is a candidate and no row takes it** at 3.0, 3.5 or 4.0 bits (the candidates of the
+  lean preset with `--bits 2,4,8` are `(2,16) (2,32) (2,64) (4,32) (4,64) (8,32) (8,64)`):
+  the shares of INT2 and INT4 only move. Uniform INT4 in blocks of 64 costs about 4.27 bits, so a
+  budget of 4.0 needs about 14 % of the weights in INT2 at blocks of 64 (4.27 (1 - x) + 2.27 x =
+  4.0 [arithmetic from the format]; 16.2 % measured). INT8 would appear only at a much higher
+  budget [inference, no such run].
+* **At 4.0 bits the likelihood of the true tokens is that of the stock model** (NLL 1.7622
+  against 1.7629) while the distribution still differs by 0.085 nats and the top-1 choice in
+  5.8 % of the positions: KL and perplexity answer different questions.
+* This is PTQ with no distillation. A KL of 0.085-0.12 nats leaves the final-KL phase the
+  whole distance, and the 0.5 bit between 3.0 and 3.5 or between 3.5 and 4.0 buys 0.02 and
+  0.015 nats of it.
 
 ### Costs and risks
 
