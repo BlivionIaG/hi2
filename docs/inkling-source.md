@@ -130,7 +130,7 @@ CPU end-to-end run on the fork's tiny real model; the vision carry of the output
 | `inkling_quantize_dryrun.py` | `hi2 quantize` on the real directory as far as a CPU goes: `--dry-run` plan, a census of every tensor against the default `--exclude`, a data-free `run` on a sample of experts and attention linears, `_load_model` with `check_unfused` and a forward against the saved float32 logits, and `hi2` on a tiny real Inkling model (data-free `run`, the layer-wise calibration driver, the sensitivity probe). |
 | `inkling_carry_check.py` | `hi2.inkling_source.carry_vision` on the real directory into a scratch directory, read back tensor by tensor (name, dtype, shape, bit pattern) against the stock vision tower and its index entries. |
 | `inkling_footprint.py` | `hi2.finalkl.student_footprint` on the real configuration (meta model, stand-in HI2 tensors at a given code width and block size): the static bytes, saved layer inputs and loss chunk of the final-KL student per device. No weights, no device. |
-| `inkling_looped_smoke.py` | The layer program on the real model, for a GPU lease: `teacher_head_inputs` (48 layer calls), optionally `calibrate_looped` over the first layers, then `shard_layers` over the devices and the model's own forward against the program's head inputs; time and peak memory per stage and device. `--devices cpu` runs it on the fork's tiny model (measured: ok, the head inputs equal, 2 layers calibrated: 48 tables). Not run on the real model. |
+| `inkling_looped_smoke.py` | The layer program on the real model, for a GPU lease: `teacher_head_inputs` (48 layer calls), optionally `calibrate_looped` over the first layers, the model's own forward on the host over the first `--compare-tokens` positions against the program's head inputs, and with `--student-steps N` a stand-in student (random HI2 tensors of 3.0 code bits for all 9,216 routed-expert Linears) trained for N final-KL steps, with the formula of `student_footprint`, the pipeline's fit line, the time of a step and the memory per device (`--student-full-grads`: a gradient for every trained value, the worst case; `--skip-compare`: the student alone). Time and peak memory per stage and device. `--devices cpu` runs it on the fork's tiny model (measured: ok). Measured on the real model on two V620: [GPU smoke](#gpu-smoke-on-two-v620-measured). |
 
 ## Measured on the stock checkpoint (2026-11-23)
 
@@ -544,19 +544,24 @@ ladder values and the norms. What changed for this model:
   bytes (packed codes, the trained ladder values at 16 bytes each with their gradient and Adam
   moments, buffers, dense parameters), the layer inputs one sequence's backward keeps
   (`looped.saved_input_bytes`), a transient allowance (3 GiB) and the loss chunk on the last device;
-  the student must fit within 92 % of the smallest device. On the tiny model the static part equals
-  the parameters and buffers of the converted student plus 12 bytes per trained value (the ladder
-  linears byte for byte, the whole within the vision tower's norms, 2e-3) and the saved inputs equal
-  the sizes read from the layers' own inputs (`tests/test_looped.py`, measured). The transient
-  allowance and the backward's working set are **not measured** [inference until a GPU run logs its
-  peak].
+  the student must fit within 80 % of the smallest device (92 % until the GPU smoke: the allocator's
+  reserve and the context take about 5 GiB more than the formula, see below). On the tiny model the
+  static part equals the parameters and buffers of the converted student plus 12 bytes per trained
+  value (the ladder linears byte for byte, the whole within the vision tower's norms, 2e-3) and the
+  saved inputs equal the sizes read from the layers' own inputs (`tests/test_looped.py`, measured).
+  On the real model the static part is exact to 0.7 % and the peak within 3 % of the formula
+  (measured, [GPU smoke](#gpu-smoke-on-two-v620-measured)).
 * On the real configuration (`experiments/inkling_footprint.py`; meta model, stand-in tensors with
   3.0 code bits per weight in blocks of 32, about 3.5 bits per weight, float32, two devices of
   29.98 GiB): static 20.0 and 18.8 GiB (38.8 GiB: the packed codes are only 8.5 GiB of it, the
   trained ladder values with their gradients and Adam moments about 22.8 GiB, the dense parameters
   7.2 GiB [arithmetic on the numbers above]), saved inputs 1.9 and 2.8 GiB at 2048 tokens (0.5 and
-  0.7 at 512), transient 3.0, loss chunk 0.57: about **25.2 GiB on the busiest device, inside the
-  27.6 GiB of the 92 % limit**. The student is therefore not the 13.6 GiB of packed weights and
+  0.7 at 512), transient 3.0, loss chunk 0.57: about **25.2 GiB on the busiest device, over the
+  24.0 GiB of the 80 % limit**, so a float32 student is skipped (it was inside the 27.6 GiB of the
+  92 % limit until the GPU smoke showed the card holding about 5 GiB more than the formula: about
+  30 GiB for this one [inference: the formula plus the measured 5 GiB]). In float16, the smoke's
+  dtype (dense parameters 3.6 GiB), the same student is 22.3 and 22.9 GiB and runs. The student is
+  therefore not the 13.6 GiB of packed weights and
   dense parameters: its trained state is about twice that. Blocks of 16 everywhere would need
   36.6 GiB and be skipped (the ladder values are two per block at 16 bytes each, so the size
   depends on the block mix the allocator chose; the check reads the actual tensors); blocks of 64
@@ -566,6 +571,72 @@ ladder values and the norms. What changed for this model:
 (`final_kl=2`) runs the layer program, PTQ per layer, the teacher's head inputs and two final-KL
 steps and writes a checkpoint that `validate_checkpoint` accepts
 (`tests/test_looped.py::test_a_cpu_final_kl_of_two_steps_completes_on_the_looped_model`).
+
+### GPU smoke on two V620 (measured)
+
+`experiments/inkling_looped_smoke.py` on the real model, two Radeon Pro V620 of 29.98 GiB (HIP 0
+and 1 together = PCI d1 and d4), under a guard that held the boot lock, read no quiet marker, and
+counted the kernel's page faults on both cards: five runs of 4.8 to 9.7 minutes (34.5 minutes in
+all), 0 page faults before and after each, at most 62 C. Two random sequences of 2048 tokens,
+float16 unless stated.
+
+| stage | float16 | float32 (2 x 128 tokens) |
+| --- | --- | --- |
+| load: time, host RSS | 130.0-134.5 s, 70.0 GiB | 129.2 s, 120.5 GiB |
+| layer program, 48 calls: time, peak per card, host RSS after | 54.1-55.3 s, 3.59 GiB, 101.7-103.5 GiB | 67.4 s, 3.99 GiB, 184.2 GiB |
+| the model's own forward on the host, 2 x 128 tokens | 38.9-39.3 s | 18.0 s |
+| the program again on the same 128 tokens | 36.6-37.1 s, 2.01 GiB | 63.0 s, 3.99 GiB |
+| `calibrate_looped`, the first 2 layers (4096 tokens) | 86.2 s (tables 50 s, then 11 s), 5.69 / 5.66 GiB | |
+| the 9,216 stand-in tensors | 44.1 s | |
+
+* **The program is the model's forward.** Float32, the first 128 positions of both sequences: the
+  largest difference of the head inputs is 1.6e-4 of a largest value of 94.5 (relative 1.7e-6,
+  median position 3.4e-7, 99th percentile 1.3e-6), and the program run twice is identical (0.0).
+  Float16: 5.6 of 96.4 (relative 5.8e-2, median position 4.5e-3, 99th percentile 3.4e-2), and the
+  program on 2048 tokens differs from the program on its first 128 by 3.0e-2. The float16 difference
+  is round-off through 48 layer calls, not the program [inference from the float32 zero; the
+  stage-2 float16 against float32 numbers, KL 3.2e-3 and a largest logit difference of 11.5 on 512
+  tokens, are the same size]. A float16 student therefore has a noise floor of that order in its
+  own KL, and the teacher's head inputs are better computed in float32 [inference] (3.99 GiB per
+  card; the host then holds the float32 model: 120.5 GiB, 184.2 GiB after the program).
+* **The whole float16 model does not fit the two cards sharded** (run 1: `OutOfMemoryError` at
+  23.9 GiB allocated and 5.6 GiB reserved but unallocated on the first card, in `shard_layers`;
+  the allocator rounds the 5 MiB expert tensors up inside its segments [inference]), so the
+  comparison runs the model's forward on the host. The final-KL phase never places the unquantized
+  model.
+* **The student** (random HI2 tensors of 3.0 code bits in blocks of 32 for all 9,216 expert Linears:
+  24,461,180,928 weights, 1,529.0 M trained values; 3.5 bits per weight with the ladders; the values
+  are noise, the bytes and the speed are those of a real student). The fit line printed by the
+  pipeline: "the student needs about 22.9 GiB on the busiest of 2 device(s) of 30.0 GiB (static
+  ['17.9', '17.3'], saved layer inputs ['1.4', '2.0'], transient 3.0 GiB per device)".
+
+  | per card (cuda:0 / cuda:1), GiB | formula | measured, stand-in's routing | measured, every value with a gradient |
+  | --- | --- | --- | --- |
+  | static (allocated after a step) | 17.93 / 17.34 | 15.44 / 12.89 | 18.01 / 17.46 |
+  | peak allocated | 22.32 / 22.88 | 18.38 / 16.82 | 22.93 / 22.16 |
+  | peak reserved by the allocator | | 23.53 / 20.07 | 27.13 / 26.49 |
+  | in use on the card (driver) | | 24.1 / 20.7 | 27.8 / 27.1 |
+
+  The formula's static part is exact (0.4 % and 0.7 % over) once every trained value has a
+  gradient; the random stand-in's routing reached only 58.2 % of them (890,454,528 of 1,529,005,568
+  at the first step), and an unrouted expert has no gradient and no Adam state, so that run is
+  not the worst case (`--student-full-grads` gives every value a zero gradient to reach it: the
+  same losses to the last digit). The peak allocated is within +2.7 % and -3.1 % of the formula
+  (it is larger on cuda:0 than the formula's 22.32, by 0.6 GiB), but the allocator reserves 4.2 and
+  4.3 GiB more (1.7 and 1.9 GiB of it split-off free bytes inside segments in use) and the card
+  held 27.8 GiB of 29.98: the 92 % limit of the formula's number admitted students that would not
+  run, hence 80 %. A float32 dense student (25.2 GiB by the formula) would not fit [inference].
+* **A step** (one window of 2048 tokens, batch 1, the layers under checkpointing): 86.2 and 86.6 s
+  between two optimizer steps; the first step is done 152 to 154 s after the phase began (the
+  placement of the student and the first held-out pass take about 66 s of it) and the last
+  held-out pass and the end about 27 s: 265-268 s for two steps. The stand-in's held-out KL is
+  10.9556 before and 10.9547 after, finite, as it should be for noise. The host held 126.7-128.8 GiB
+  during the phase.
+* **Host memory.** The resident size grows by 31.7-33.5 GiB (float16) and 63.7 GiB (float32) during
+  the layer program, about 0.6 of the model's size each time, with nothing in the program that
+  keeps weights [unexplained: the freed host copies of the layers' weights not returned to the
+  system is the first suspect; `calibrate_looped` calls `malloc_trim` per layer,
+  `teacher_head_inputs` does not].
 
 ## What a loadable HI2 Inkling directory needs
 
@@ -626,10 +697,13 @@ the tokenizer files. Not written: `hf_quant_config.json` and `mtp.safetensors`.
   (`tests/test_moe.py`: the first forward copied verbatim against the current one in float32,
   bfloat16 and float16). The gate script now exits 0, largest logit difference 8.3e-7 against
   the fused model; the router applies `route_scale` 8.0 itself.
-* **Layer program, final KL and preset (fixed on this branch, not run on a GPU or on the real
-  model).** Calibrated PTQ runs on Inkling through [the layer program](#the-layer-program-hi2loopedpy);
+* **Layer program, final KL and preset (fixed on this branch; run on the real model on two V620
+  with a stand-in student, not with a calibrated PTQ).** Calibrated PTQ runs on Inkling through
+  [the layer program](#the-layer-program-hi2loopedpy) (two layers calibrated on the real model:
+  [GPU smoke](#gpu-smoke-on-two-v620-measured));
   [the final-KL phase](#final-kl-on-inkling) has the soft cap, the placement, packed codes,
-  per-expert checkpointing and its own fit check; `--include '\.mlp\.experts\.'` is the default. Still
+  per-expert checkpointing and its own fit check (80 % of a card by the formula; two steps of the
+  whole real-sized student ran there); `--include '\.mlp\.experts\.'` is the default. Still
   unsupported on this model, and refused up front: `--sequential` and layer-wise QAD training.
 * **The default `--exclude` does not keep Inkling's small linears dense** (the census above); the
   preset's include avoids it, an explicit `--include` that selects attention must add its own

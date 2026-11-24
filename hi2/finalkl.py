@@ -191,21 +191,25 @@ def _head_input(model: nn.Module, ids: torch.Tensor) -> torch.Tensor:
 class _Logits(nn.Module):
     """The head's input to the logits the model's loss sees: the output embedding, then
     the model's own logit soft-cap (Inkling-2: ``logit_softcap``, ``tanh(x / c) * c`` on
-    the float32 logits) when it has one. The children are the model's, not copies."""
+    the float32 logits) when it has one. The children are the model's, not copies. The
+    hidden states of the loss are float32 (the teacher's head inputs are saved in it);
+    a half-precision head takes them in its own dtype."""
 
     def __init__(self, head: nn.Module, cap: nn.Module | None):
         super().__init__()
         self.head, self.cap = head, cap
 
     def forward(self, h):
-        out = self.head(h)
+        dtype = getattr(getattr(self.head, "weight", None), "dtype", h.dtype)
+        out = self.head(h.to(dtype))
         return out if self.cap is None else self.cap(out.float())
 
 
 def _logits_fn(model: nn.Module) -> nn.Module:
     head = model.get_output_embeddings()
     cap = getattr(model, "logit_softcap", None)
-    # only a module is the model's own soft-cap op (another family may keep a number)
+    # only a module is the model's own soft-cap op (another family may keep a number);
+    # a model without one keeps its head as it is
     return _Logits(head, cap) if isinstance(cap, nn.Module) else head
 
 

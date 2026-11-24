@@ -472,6 +472,31 @@ def test_the_logit_softcap_is_part_of_the_kl_loss(model):
     assert abs(got - plain) > 1e-3 * plain  # the uncapped loss is a different number
 
 
+def test_a_half_precision_head_takes_the_float32_loss_inputs(model):
+    """The loss hands the head float32 hidden states (the teacher's head inputs are kept in
+    float32): a float16 head takes them in its own dtype (the GPU smoke died with ``expected
+    mat1 and mat2 to have the same dtype`` before), the gradient reaches the float32 input."""
+    import math
+
+    from hi2.finalkl import _kl_loss, _logits_fn
+
+    cap = model.logit_softcap.softcap
+    head = nn.Linear(16, 40).half()
+    plain = nn.Module()
+    plain.get_output_embeddings = lambda: head
+    plain.logit_softcap = model.logit_softcap
+    lm = _logits_fn(plain)
+    g = torch.Generator().manual_seed(4)
+    hs, ht = torch.randn(5, 16, generator=g), torch.randn(5, 16, generator=g)
+    with torch.no_grad():
+        assert torch.equal(lm(hs), torch.tanh(head(hs.half()).float() / cap) * cap)
+        assert math.isfinite(_kl_loss(lm, hs, ht, grad=False))
+    hs.requires_grad_(True)
+    _kl_loss(lm, hs, ht)
+    assert hs.grad is not None and hs.grad.dtype == torch.float32
+    assert torch.isfinite(hs.grad).all() and hs.grad.abs().max() > 0
+
+
 def test_a_model_without_a_soft_cap_keeps_its_head(model):
     from hi2.finalkl import _logits_fn
 
@@ -748,3 +773,118 @@ def test_the_footprint_is_what_the_student_holds(src, ids, tmp_path, monkeypatch
     text = model.model.language_model
     db = model.lm_head.weight.element_size()
     assert saved_input_bytes(text, T, db) == seen["calls"]
+
+
+def test_the_looped_fit_leaves_room_for_the_allocators_reserve(src, model, monkeypatch):
+    """The GPU smoke (two V620 of 29.98 GiB, every value with a gradient): a student the
+    formula puts at 22.9 GiB reserved 27.1 GiB and the card showed 27.8 GiB used, so the
+    check admits a formula need up to 80 % of the card, not the 92 % it had: a float32
+    dense student (25.2 GiB by the formula) is skipped, the float16 one (22.9) runs."""
+    from types import SimpleNamespace
+
+    import hi2.finalkl as fk
+    from hi2.pipeline import _looped_fits
+
+    card = int(29.98 * 2**30)
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_properties",
+        lambda d: SimpleNamespace(total_memory=card),
+    )
+    ex = SimpleNamespace(devices=[torch.device("cuda:0"), torch.device("cuda:1")])
+    rc = SimpleNamespace(src=src, qad=None)
+    notes = [0, 0]
+
+    def fits(need_gib):
+        foot = {
+            "devices": [need_gib * 2**30, 1],
+            "static": notes,
+            "activations": notes,
+            "transient": 0,
+        }
+        monkeypatch.setattr(fk, "student_footprint", lambda *a, **k: foot)
+        return _looped_fits(rc, ex, model, {}, 2048, lambda *_: None)
+
+    assert fits(22.9) and not fits(25.2)
+    assert fits(0.79 * 29.98) and not fits(0.81 * 29.98)
+
+
+# ------------------------------------------------ the GPU smoke script (experiments/)
+
+
+def _smoke():
+    path = (
+        Path(__file__).resolve().parents[1] / "experiments" / "inkling_looped_smoke.py"
+    )
+    return _import("hi2_test_inkling_looped_smoke", path)
+
+
+def test_the_smoke_standin_is_a_valid_ladder_tensor():
+    """The stand-in the GPU smoke trains in place of an expert has the bytes the formula
+    counts for a real tensor and a decode that is finite."""
+    from hi2.finalkl import LadderLinear, tensor_student_bytes
+
+    t = _smoke().standin(128, 256, (2, 4), 32, torch.Generator().manual_seed(0))
+    assert t.shape == (128, 256)
+    assert 32 * t.codes.numel() == 3 * 128 * 256  # 2 and 4 bits alternate: 3.0 bits
+    ll = LadderLinear(t)
+    w = ll.weight()
+    assert w.shape == (128, 256) and torch.isfinite(w).all() and w.abs().max() < 1.0
+    held = sum(p.numel() * p.element_size() for p in ll.parameters()) + sum(
+        b.numel() * b.element_size() for b in ll.buffers()
+    )
+    assert held == tensor_student_bytes(t, train_bytes=False)
+
+
+def _smoke_argv(src, tmp_path, *extra):
+    argv = ["smoke", "--src", str(src), "--transformers", str(tmp_path)]
+    argv += ["--devices", "cpu", "cpu", "--compute-dtype", "float32"]
+    argv += ["--seqs", "2", "--seq-len", "24", "--student-steps", "2"]
+    argv += ["--workdir", str(tmp_path / "work"), "--out", str(tmp_path / "smoke.json")]
+    return argv + list(extra)
+
+
+def test_the_smoke_script_runs_the_student_stage_on_the_tiny_model(
+    src, tmp_path, monkeypatch
+):
+    """``--student-steps`` on the tiny model (CPU): the stand-in student, the formula and
+    two final-KL steps with the time of one; the program on the compared length equals
+    the model's own forward; the monkeypatches of the stage are undone."""
+    from hi2.finalkl import LadderLinear
+
+    smoke = _smoke()
+    monkeypatch.setattr(
+        sys, "argv", _smoke_argv(src, tmp_path, "--compare-tokens", "12")
+    )
+    export, step = LadderLinear.export, torch.optim.AdamW.step
+    zero = torch.optim.AdamW.zero_grad
+    assert smoke.main() == 0
+    res = json.loads((tmp_path / "smoke.json").read_text())
+    assert res["ok"] and res["student_ok"]
+    assert res["compare"]["positions"] == 12 and res["compare"]["relative"] < 1e-4
+    assert res["compare_prefix_relative"] < 1e-4  # the program does not see the length
+    detail = res["student_detail"]
+    assert detail["standins"]["tensors"] == 6 * 8 * 3
+    assert detail["standins"]["code_bits_per_weight"] == 3.0
+    assert len(detail["formula"]["need_gib"]) == 2
+    assert len(detail["final_kl"]["step_seconds"]) == 1  # the gap between two steps
+    assert LadderLinear.export is export and torch.optim.AdamW.step is step
+    assert torch.optim.AdamW.zero_grad is zero
+
+
+def test_the_smoke_student_stage_alone_gives_every_value_a_gradient(
+    src, tmp_path, monkeypatch
+):
+    """``--skip-compare`` runs the student stage alone; ``--student-full-grads`` gives every
+    trained value a gradient (the memory worst case a random stand-in does not reach): all
+    of them from the second step on, the first step has the ones the routing reached."""
+    smoke = _smoke()
+    extra = ("--skip-compare", "--student-full-grads")
+    monkeypatch.setattr(sys, "argv", _smoke_argv(src, tmp_path, *extra))
+    assert smoke.main() == 0
+    res = json.loads((tmp_path / "smoke.json").read_text())
+    assert "compare" not in res and res["ok"] and res["student_ok"]
+    grads = res["student_detail"]["final_kl"]["gradient_values"]
+    assert len(grads) == 2 and grads[0]["total"] > 0
+    assert grads[0]["with_gradient"] <= grads[0]["total"]
+    assert grads[1]["with_gradient"] == grads[1]["total"] == grads[0]["total"]

@@ -642,7 +642,12 @@ def _teacher_head_inputs(rc, ex, model, ids, log) -> torch.Tensor:
     return out
 
 
-FINAL_KL_FIT = 0.92  # of a device's memory the final-KL student may take
+# Of a device's memory the final-KL student may take, by the formula of
+# ``finalkl.student_footprint``. Measured on the real Inkling model (two V620 of 29.98 GiB,
+# every value with a gradient): a student the formula puts at 22.9 GiB had a peak of 22.9
+# allocated, 27.1 reserved (the allocator's reserve, 1.7-1.9 GiB of it free bytes split off
+# inside segments in use) and 27.8 GiB used on the card (the context): 5 GiB over the formula.
+FINAL_KL_FIT = 0.80
 
 
 def _looped_fits(rc, ex, model, tensors, seq_len, log) -> bool:
