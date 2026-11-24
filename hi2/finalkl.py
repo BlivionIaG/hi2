@@ -213,6 +213,33 @@ def _logits_fn(model: nn.Module) -> nn.Module:
     return _Logits(head, cap) if isinstance(cap, nn.Module) else head
 
 
+@torch.no_grad()
+def flipped_bytes(params, kinds, initial) -> dict:
+    """The ladder bytes that round to another value than at the start of the phase.
+
+    ``params`` are the trained (continuous) values, ``kinds`` says ``"lo"`` or ``"step"`` for
+    each and ``initial`` holds their values at the start. A value counts as the byte it
+    rounds to inside 0..255, which is what the encoder writes (a value beyond the range is
+    that end of it)."""
+    cnt = {"lo": 0, "step": 0}
+    per_dev: dict = {}
+    for p, kind, was in zip(params, kinds, initial):
+        n = (torch.round(p.detach().clamp(0, 255)) != was.to(p.device)).sum()
+        key = (p.device, kind)
+        per_dev[key] = n if key not in per_dev else per_dev[key] + n
+    for (_, kind), n in per_dev.items():
+        cnt[kind] += int(n)
+    values = sum(p.numel() for p in params)
+    count = cnt["lo"] + cnt["step"]
+    return {
+        "count": count,
+        "lo": cnt["lo"],
+        "step": cnt["step"],
+        "values": values,
+        "share": count / values if values else 0.0,
+    }
+
+
 def _kl_loss(lm: nn.Module, hs: torch.Tensor, ht: torch.Tensor, pos=None, grad=True):
     """Mean over positions of KL(teacher || student); logits in chunks of LOSS_CHUNK,
     each chunk under activation checkpointing so only its hidden states are kept."""
@@ -425,26 +452,8 @@ def final_kl(
     best, best_state, best_step = v0, snapshot(), 0
     init_bytes = best_state[: len(byte_p)]  # the ladder values the phase starts from
 
-    @torch.no_grad()
     def flipped() -> dict:
-        """The ladder bytes that round to another value than at the start of the phase."""
-        cnt = {"lo": 0, "step": 0}
-        per_dev: dict = {}
-        for p, kind, was in zip(byte_p, byte_kind, init_bytes):
-            n = (torch.round(p.detach().clamp(0, 255)) != was.to(p.device)).sum()
-            key = (p.device, kind)
-            per_dev[key] = n if key not in per_dev else per_dev[key] + n
-        for (_, kind), n in per_dev.items():
-            cnt[kind] += int(n)
-        values = sum(p.numel() for p in byte_p)
-        count = cnt["lo"] + cnt["step"]
-        return {
-            "count": count,
-            "lo": cnt["lo"],
-            "step": cnt["step"],
-            "values": values,
-            "share": count / values if values else 0.0,
-        }
+        return flipped_bytes(byte_p, byte_kind, init_bytes)
 
     log(
         f"final KL: {len(mods)} quantized Linears, {len(norms)} norms, "

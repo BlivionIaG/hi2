@@ -314,7 +314,7 @@ step_finalkl() {
             C+=("$x")
         fi
     done
-    step "finalkl-$1" devrun "finalkl-$1" "$REPO/experiments/inkling_final_kl.py" student \
+    step "finalkl-$1-lr$FKL_LR" devrun "finalkl-$1-lr$FKL_LR" "$REPO/experiments/inkling_final_kl.py" student \
         --init-from "$RUNS/bpw$1" --heads "$heads" --heldout-ids "$CAL/heldout_mixed_ids.npy" \
         --heldout-teacher "$held" --heldout-windows "$EVAL_WINDOWS" --val-offset "$FKL_VAL_OFFSET" \
         -- "${C[@]}"

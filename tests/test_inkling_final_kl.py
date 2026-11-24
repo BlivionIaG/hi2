@@ -375,3 +375,80 @@ def test_a_final_kl_of_zero_steps_is_not_this_drivers_job(fk, tiny, ids, world):
 def test_the_hi2_command_goes_after_the_separator(fk):
     with pytest.raises(SystemExit, match="after `--`"):
         fk.cmd_student(argparse.Namespace(), [])
+
+
+def test_a_value_counts_as_the_byte_it_rounds_to_inside_the_range():
+    from hi2.finalkl import flipped_bytes
+
+    initial = [torch.tensor([10.0, 20.0, 255.0, 0.0]), torch.tensor([5.0, 7.0])]
+    lo, step = (torch.nn.Parameter(t.clone()) for t in initial)
+    kinds = ["lo", "step"]
+    none = {"count": 0, "lo": 0, "step": 0, "values": 6, "share": 0.0}
+    assert flipped_bytes([lo, step], kinds, initial) == none
+    with torch.no_grad():  # moved, but not to another byte; beyond the range is its end
+        lo.copy_(torch.tensor([10.4, 19.6, 300.0, -3.0]))
+        step.copy_(torch.tensor([5.4, 7.0]))
+    assert flipped_bytes([lo, step], kinds, initial) == none
+    with torch.no_grad():  # four lo bytes and one step byte round to another value
+        lo.copy_(torch.tensor([10.6, 19.4, 254.2, 0.6]))
+        step.copy_(torch.tensor([5.0, 8.6]))
+    assert flipped_bytes([lo, step], kinds, initial) == {
+        "count": 5,
+        "lo": 4,
+        "step": 1,
+        "values": 6,
+        "share": 5 / 6,
+    }
+    assert flipped_bytes([], [], [])["share"] == 0.0
+
+
+def test_the_training_windows_sit_at_the_rows_split_indices_gives_them(
+    fk, ids, world, tmp_path
+):
+    """Four training and two held-out windows: the held-out rows are 2 and 5, so a training
+    window put at the first four rows would meet another window's teacher."""
+    args = argparse.Namespace(
+        **{**vars(world["args"]), "out": tmp_path / "heads4.pt", "train_windows": 4}
+    )
+    assert fk.cmd_teacher(args) == 0
+    ns = argparse.Namespace(**{**vars(world["ns"]), "heads": args.out})
+    qc = make_config("fast", {**PHASE, "samples": 4, "val": 2})
+    train_idx, val_idx = fk.window_layout(4, 2)
+    assert train_idx == [0, 1, 3, 4] and val_idx == [2, 5]
+    got_ids, got_heads = fk.phase_inputs(ns, world["rc"], qc)
+    teacher = torch.load(args.out, weights_only=True)["heads"]
+    cached = torch.load(ns.heldout_teacher, weights_only=True)["heads"]
+    held = np.load(ns.heldout_ids)
+    assert torch.equal(got_ids[train_idx], ids[:4])
+    assert torch.equal(got_heads[train_idx], teacher)
+    assert torch.equal(got_ids[val_idx], torch.from_numpy(held[:2].astype(np.int64)))
+    assert torch.equal(got_heads[val_idx], cached[:2])
+
+
+def test_the_resume_copy_belongs_to_its_output_its_windows_and_its_teacher_file(
+    fk, ids, world, tmp_path
+):
+    base = fk.resume_key(world["ptq"].dst, ids, "heads.pt")
+    assert fk.resume_key(world["ptq"].dst, ids.clone(), "heads.pt") == base
+    assert fk.resume_key(world["ptq"].dst, ids, "other_heads.pt") != base
+    assert fk.resume_key(world["ptq"].dst, ids.flip(0), "heads.pt") != base
+    other = tmp_path / "other_output"
+    other.mkdir()
+    (other / "model-00001-of-00001.safetensors").write_bytes(b"x" * 7)
+    assert fk.resume_key(other, ids, "heads.pt") != base
+    (other / "model-00001-of-00001.safetensors").write_bytes(b"x" * 8)
+    assert fk.resume_key(other, ids, "heads.pt") != fk.resume_key(
+        world["ptq"].dst, ids, "heads.pt"
+    )
+
+
+def test_a_student_that_does_not_fit_the_devices_stops_before_the_phase(
+    fk, world, monkeypatch
+):
+    def reached(*_a, **_k):
+        raise AssertionError("the phase must not start")
+
+    monkeypatch.setattr(P, "_final_kl_fits", lambda *a, **k: False)
+    monkeypatch.setattr(P, "_final_kl", reached)
+    with pytest.raises(SystemExit, match="does not fit the devices"):
+        fk.qad_from_output(world["ns"], world["rc"], None, {}, {}, {}, lambda *_: None)

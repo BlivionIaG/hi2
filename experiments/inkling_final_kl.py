@@ -172,15 +172,29 @@ def phase_inputs(a, rc, qc):
     return ids, heads
 
 
+def resume_key(init_from, ids: torch.Tensor, heads_name: str) -> str:
+    """What the phase's resume copy depends on: the finished output it starts from (its shards
+    and their sizes), the windows of the phase and the teacher file of its training windows."""
+    import hashlib
+
+    from hi2.qad import fingerprint
+
+    shards = sorted(Path(init_from).glob("model*.safetensors"))
+    return fingerprint(
+        {
+            "init": [(p.name, p.stat().st_size) for p in shards],
+            "ids": hashlib.sha1(ids.contiguous().numpy().tobytes()).hexdigest(),
+            "heads": heads_name,
+        }
+    )
+
+
 def qad_from_output(
     a, rc, ex, tables, picks, sens, log, target_bpw=None, ratio=None, tag=""
 ):
     """The layer-wise phase of ``pipeline._qad_encode``, replaced: the tensors of the finished
     output, then the pipeline's own fit check and final-KL phase. Returns ``(tensors, dense)``."""
-    import hashlib
-
     import hi2.pipeline as P
-    from hi2.qad import fingerprint
 
     qc = rc.qad
     if qc.final_kl <= 0:
@@ -194,14 +208,7 @@ def qad_from_output(
         raise SystemExit(
             "the final-KL student does not fit the devices (the line above): nothing was written"
         )
-    shards = sorted(Path(a.init_from).glob("model*.safetensors"))
-    fp = fingerprint(
-        {
-            "init": [(p.name, p.stat().st_size) for p in shards],
-            "ids": hashlib.sha1(ids.contiguous().numpy().tobytes()).hexdigest(),
-            "heads": a.heads.name,
-        }
-    )
+    fp = resume_key(a.init_from, ids, a.heads.name)
     return P._final_kl(rc, ex, model, ids, tensors, {}, fp, log, tag, heads)
 
 

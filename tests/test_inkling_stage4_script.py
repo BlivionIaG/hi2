@@ -436,7 +436,8 @@ def test_the_final_kl_phase_is_the_encode_command_with_the_options_of_the_phase(
     code, out, lines = box.drive("finalkl", "3.5")
     assert code == 0, out
     (gpu,) = _gpu(lines)
-    assert gpu.startswith("GPU finalkl-3.5 ") and "inkling_final_kl.py student" in gpu
+    assert gpu.startswith("GPU finalkl-3.5-lr0.03 ")
+    assert "inkling_final_kl.py student" in gpu
     mine, _, theirs = gpu.partition(" -- ")
     assert _flag(mine, "--init-from") == str(box.out / "runs" / "bpw3.5")
     assert _flag(mine, "--heads").endswith("/teacher/fkl_train_w48_float32.pt")
@@ -558,7 +559,7 @@ def test_a_tag_after_the_bits_names_a_variant_of_the_encode(box):
     code, out, lines = box.drive("finalkl", "3.5-p0.5")
     assert code == 0, out
     gpu = _gpu(lines)[-1]
-    assert gpu.startswith("GPU finalkl-3.5-p0.5 ")
+    assert gpu.startswith("GPU finalkl-3.5-p0.5-lr0.03 ")
     assert _flag(gpu, "--target-bpw") == "3.5"
     assert _flag(gpu, "--init-from") == str(box.out / "runs" / "bpw3.5-p0.5")
     assert str(box.out / "runs" / "bpw3.5-p0.5-fkl40lr0.03") in gpu
