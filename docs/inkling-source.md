@@ -132,6 +132,7 @@ CPU end-to-end run on the fork's tiny real model; the vision carry of the output
 | `inkling_footprint.py` | `hi2.finalkl.student_footprint` on the real configuration (meta model, stand-in HI2 tensors at a given code width and block size): the static bytes, saved layer inputs and loss chunk of the final-KL student per device. No weights, no device. |
 | `inkling_looped_smoke.py` | The layer program on the real model, for a GPU lease: `teacher_head_inputs` (48 layer calls), optionally `calibrate_looped` over the first layers, the model's own forward on the host over the first `--compare-tokens` positions against the program's head inputs, and with `--student-steps N` a stand-in student (random HI2 tensors of 3.0 code bits for all 9,216 routed-expert Linears) trained for N final-KL steps, with the formula of `student_footprint`, the pipeline's fit line, the time of a step and the memory per device (`--student-full-grads`: a gradient for every trained value, the worst case; `--skip-compare`: the student alone). Time and peak memory per stage and device. `--devices cpu` runs it on the fork's tiny model (measured: ok). Measured on the real model on two V620: [GPU smoke](#gpu-smoke-on-two-v620-measured). |
 | `inkling_build_calib.py`, `inkling_kl_eval.py`, `inkling_tiny_setup.py`, `inkling_stage4.sh` | The calibration and held-out set with its manifest, the KL against the stock model, the toy model of the CPU dry run and the driver of the stage-4 run: [Stage 4](#stage-4-calibration-set-pilot-three-encodes-and-their-kl-against-the-stock-model). |
+| `inkling_alloc_report.py` | The allocation of a real run, from its `hi2_report.json`: share of INT2/INT4/INT8 by weights and of the blocks by rows, bits per weight and implied size by layer group, projection and layer, against the stock NVFP4 (4.5 bits) and MXFP8 (8.25 bits) experts. `tests/test_inkling_alloc_report.py`. |
 
 ## Measured on the stock checkpoint (2026-11-23)
 
@@ -825,6 +826,8 @@ KL 0.088 +- 0.056 nats, top-1 0.939, perplexity x1.0009. That is a sample of 2,0
 student fitted on 8,192 tokens, where every expert Linear was below the token floor and took
 the layer average ("128/128 experts below the token floor"): it checks the chain, it is not a
 result.
+
+`experiments/inkling_alloc_report.py RUN` prints the allocation of a finished run by layer group, projection and layer (the pilot's: 3.498 bpw, 9.96 GiB of experts against 14.59 GiB in the stock model, INT2 41.8 % and INT4 58.2 % of the weights, blocks 1.3 / 13.6 / 85.1 % of the rows at 16 / 32 / 64).
 
 The pilot found two defects, both fixed in this tree:
 
