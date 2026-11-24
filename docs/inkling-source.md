@@ -923,6 +923,18 @@ difference 0). What they show, all measured on the same 8 windows:
 * The mean is carried by few windows: median 0.061 against a mean of 0.0996 and a worst window
   of 0.538.
 
+The two out-of-distribution sets (17 windows of 2,048 tokens each, `--groups none`, `eval-3.5-wiki`
+and `eval-3.5-pydocs`, 595 and 593 s per step, all gates ok):
+
+| Set | KL(stock \|\| HI2) | Median / worst window | Top-1 | NLL stock -> HI2 | Perplexity |
+| --- | --- | --- | --- | --- | --- |
+| wiki | 0.0468 +- 0.0021 | 0.045 / 0.069 | 0.913 | 1.8376 -> 1.8702 | x1.0331 |
+| pydocs | 0.0305 +- 0.0028 | 0.027 / 0.054 | 0.946 | 1.1095 -> 1.1332 | x1.0240 |
+
+The KL is lower than on the mixed set (0.0996) but the cost in the negative log-likelihood of the
+true tokens is larger (x1.033 and x1.024 against x1.0095): the KL and the perplexity ratio do
+not rank the sets alike, so neither alone says how a target will behave on other text.
+
 The step: `install_teacher` 25 s, teacher program 240 s, probe program 82 s, `install_student`
 59 s, student program 240 s, metrics 12 s, four group passes, restore 82 s. A float32 pass over
 65,536 tokens (48 layer calls, four windows per forward) costs 240 s: 3.1 times the pilot's 75 s
