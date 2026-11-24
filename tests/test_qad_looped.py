@@ -292,6 +292,27 @@ def test_zero_groups_follow_the_weight_threshold(monkeypatch):
     assert n == 1 and len(groups) == 1
 
 
+def test_128_experts_split_into_four_groups(monkeypatch):
+    import hi2.qad_looped as QL
+
+    layer = _layer_with_experts(128)
+    linears = {
+        f"mlp.experts.{e}.{p}": f"x.{e}.{p}"
+        for e in range(128)
+        for p in ("gate_proj", "up_proj", "down_proj")
+    }
+    # the real layer is 1.019 G weights over 128 experts; this tiny stand-in is 6,144,
+    # so 1,536 is the same 4-group split without allocating the real weights
+    monkeypatch.setattr(QL, "GROUP_WEIGHTS", 1536)
+    groups, n = _group_names(layer, linears, 0)
+    assert n == 4 and [len(g) for g in groups] == [96, 96, 96, 96]
+    experts = [
+        {int(n.split(".")[2]) for n in g if ".experts." in n} for g in groups
+    ]
+    assert sorted(i for g in experts for i in g) == list(range(128))
+    assert all(len(g) == 32 for g in experts)
+
+
 def test_the_config_carries_the_group_count():
     from hi2.qad import fingerprint, qad_fingerprint_fields
 
