@@ -42,6 +42,7 @@ they do not replace current help or guarantee installation compatibility.
 | [surfaces.md](surfaces.md) | 27B decision guide and completed 2026-10-29/31 measurements |
 | [lowbit.md](lowbit.md) | 8-bit integer (INT8) quantization and limited-parameter final-KL studies |
 | [design-notes.md](design-notes.md) | Rotation and comparisons with GGUF/EXL3 |
+| [inkling-task-eval.md](inkling-task-eval.md) | Paired task-level evaluation of served checkpoints: tool calls, executable code, multilingual, long context, math; determinism floor and minimum detectable difference |
 | [experiments/README.md](../experiments/README.md) | Scripts and provenance for reported numbers |
 
 ## Historical maintainer material

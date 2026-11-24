@@ -1,0 +1,208 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
+"""Plan, resumable runner, paired comparison, CLI and the full canned dry-run."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from tools.inkling_eval import cli, compare, mock_server, runner, tasks
+from tools.inkling_eval.client import Client
+
+
+def test_plan_is_deterministic_and_covers_all_five_categories():
+    first = tasks.build_plan(max_model_len=32768)
+    second = tasks.build_plan(max_model_len=32768)
+    assert first["meta"]["plan_sha256"] == second["meta"]["plan_sha256"]
+    assert [item["id"] for item in first["items"]] == [item["id"] for item in second["items"]]
+    counts = {name: entry["items"] for name, entry in first["meta"]["counts"].items()}
+    assert counts == {"agentic": 60, "code": 40, "multilingual": 70, "long_context": 27, "math": 48}
+    contexts = {item["meta"]["length"] for item in first["items"] if item["category"] == "long_context"}
+    assert contexts == {8192, 16384, 32768}
+    assert max(item["approx_prompt_tokens"] for item in first["items"]) < 32768
+
+
+def test_mdd_is_defined_only_when_the_item_count_can_support_it():
+    from tools.inkling_eval import stats
+
+    assert stats.mdd(6, 0.10) is None
+    assert stats.mdd(100, 0.10) is not None
+    assert stats.mdd(400, 0.02) is not None
+    assert stats.mdd(0, 0.10) is None
+
+
+def test_short_context_skips_the_lengths_it_cannot_serve():
+    plan = tasks.build_plan(max_model_len=9000)
+    lengths = {item["meta"]["length"] for item in plan["items"] if item["category"] == "long_context"}
+    assert lengths == {8192}
+    skipped = {entry["length"] for entry in plan["meta"]["skipped_contexts"]}
+    assert skipped == {16384, 32768}
+
+
+def _write_run(path: Path, label: str, oks: dict[str, bool], *, seed: int = 0):
+    records = []
+    for item_id, ok in oks.items():
+        records.append(
+            {
+                "item_id": item_id,
+                "category": "math",
+                "subcategory": "gsm8k",
+                "status": "complete",
+                "score": {"ok": ok, "detail": {}},
+            }
+        )
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    meta = {
+        "schema": 1,
+        "label": label,
+        "url": "http://127.0.0.1:1",
+        "plan_sha256": "plan",
+        "seed": seed,
+        "reasoning_effort": 0.0,
+        "template": "template",
+        "haystack_sha256": None,
+        "decoding": {"temperature": 0, "top_p": 1, "n": 1, "seed": seed},
+        "plan_counts": {"math": {"items": len(oks)}},
+    }
+    runner.meta_path(path).write_text(json.dumps(meta))
+
+
+def test_paired_comparison_and_floor(tmp_path):
+    ref = tmp_path / "ref.jsonl"
+    cand = tmp_path / "cand.jsonl"
+    floor = tmp_path / "floor.jsonl"
+    oks = {f"math-{index:02d}": ok for index, ok in enumerate([1, 1, 1, 0, 0, 0])}
+    _write_run(ref, "stock", {key: bool(value) for key, value in oks.items()})
+    _write_run(cand, "hi2", {f"math-{i:02d}": bool(v) for i, v in enumerate([1, 1, 0, 1, 0, 0])})
+    _write_run(floor, "stock-2", {f"math-{i:02d}": bool(v) for i, v in enumerate([0, 1, 1, 0, 0, 0])})
+    report = compare.compare(ref, cand, floor_path=floor)
+    assert report["status"] == "complete"
+    math = report["categories"]["math"]
+    assert math["n"] == 6
+    assert math["ref_ok"] == 3 and math["cand_ok"] == 3
+    assert math["delta"] == 0.0
+    assert math["flips_ref_right"] == 1 and math["flips_cand_right"] == 1
+    assert math["mcnemar_p"] == 1.0
+    assert math["ci_low"] <= 0 <= math["ci_high"]
+    # Six items cannot detect even a 50-point difference; report that, do not invent one.
+    assert math["mdd"] is None and math["mdd_assumed_0.10"] is None
+    assert report["floor"]["max_abs_delta"] == pytest.approx(1 / 6, abs=1e-4)
+    assert report["floor"]["total_flips"] == 1
+    text = compare.markdown(report)
+    assert "determinism floor" in text and "| math | 6 |" in text
+
+
+def test_comparison_flags_meta_mismatch_and_incomplete(tmp_path):
+    ref = tmp_path / "ref.jsonl"
+    cand = tmp_path / "cand.jsonl"
+    oks = {f"math-{index:02d}": True for index in range(4)}
+    _write_run(ref, "stock", oks)
+    _write_run(cand, "hi2", oks, seed=1)
+    report = compare.compare(ref, cand)
+    assert report["status"] == "mismatched"
+    assert report["comparable"] is False
+    assert report["checks"]["seed"]["same"] is False
+    _write_run(cand, "hi2", oks)
+    kept = [line for line in cand.read_text().splitlines() if "math-03" not in line]
+    cand.write_text("\n".join(kept) + "\n")
+    report = compare.compare(ref, cand)
+    assert report["status"] == "incomplete"
+    assert report["cand"]["complete"] == 3 and report["cand"]["planned"] == 4
+
+
+def _limited_plan(limit=1):
+    return tasks.build_plan(
+        categories=list(tasks.CATEGORIES),
+        limit=limit,
+        max_model_len=32768,
+    )
+
+
+def _serve(plan):
+    answers = {mock_server.prompt_key(item["prompt"]): item["gold"] for item in plan["items"]}
+    server, thread, url = mock_server.serve(answers)
+    return server, thread, url
+
+
+def test_runner_resumes_and_redoes_a_changed_prompt(tmp_path):
+    plan = _limited_plan()
+    server, thread, url = _serve(plan)
+    try:
+        out = tmp_path / "run.jsonl"
+        client = Client(url, "canned", timeout=30, retries=0)
+        first = runner.run_plan(plan, client, out, label="canned", workers=2, progress_every=100)
+        assert first["requested"] == len(plan["items"]) == first["complete"]
+        assert first["errors"] == 0 and first["missing"] == 0
+        second = runner.run_plan(plan, client, out, label="canned", workers=2, progress_every=100)
+        assert second["requested"] == 0 and second["skipped_complete"] == len(plan["items"])
+        lines = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
+        target = lines[0]["item_id"]
+        rewritten = []
+        for line in lines:
+            if line["item_id"] == target:
+                line = dict(line, prompt_sha256="0" * 64)
+            rewritten.append(json.dumps(line))
+        out.write_text("\n".join(rewritten) + "\n")
+        third = runner.run_plan(plan, client, out, label="canned", workers=2, progress_every=100)
+        assert third["requested"] == 1
+        with pytest.raises(runner.RunMismatch):
+            runner.run_plan(plan, client, out, label="other", workers=1, progress_every=100)
+        unknown = client.complete("a prompt the canned model never saw", 8)
+        assert unknown["text"] == mock_server.UNKNOWN_ANSWER
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_cli_plan_and_limit(tmp_path, capsys):
+    assert cli.main(["plan", "--limit", "1"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert sum(entry["items"] for entry in payload["meta"]["counts"].values()) == payload["items"] == 5
+
+
+def test_cli_dry_run_covers_every_category(tmp_path, capsys):
+    out_dir = tmp_path / "dry"
+    assert cli.main(["dry-run", "--out-dir", str(out_dir)]) == 0
+    output = capsys.readouterr().out
+    assert "dry-run OK" in output
+    for name in tasks.CATEGORIES:
+        assert f'"{name}"' in output
+    records = runner.load_records(out_dir / "dry-run.jsonl")
+    assert len(records) == 245
+    assert all((record.get("score") or {}).get("ok") for record in records.values())
+    assert cli.main(["compare", "--ref", str(out_dir / "dry-run.jsonl"), "--cand", str(out_dir / "dry-run.jsonl"), "--out", str(tmp_path / "cmp.json")]) == 0
+
+
+def test_cli_compare_reports_incomplete(tmp_path):
+    ref = tmp_path / "ref.jsonl"
+    cand = tmp_path / "cand.jsonl"
+    oks = {f"math-{index:02d}": True for index in range(3)}
+    _write_run(ref, "stock", oks)
+    _write_run(cand, "hi2", oks)
+    cand.write_text("\n".join(json.dumps(json.loads(line)) for line in cand.read_text().splitlines() if "math-00" not in line) + "\n")
+    assert cli.main(["compare", "--ref", str(ref), "--cand", str(cand), "--out", str(tmp_path / "cmp.json")]) == 1
+    assert json.loads((tmp_path / "cmp.json").read_text())["status"] == "incomplete"
+
+
+def test_missing_run_file_is_an_error_not_an_empty_run(tmp_path, capsys):
+    missing = tmp_path / "missing.jsonl"
+    with pytest.raises(FileNotFoundError):
+        compare.compare(missing, missing)
+    assert (
+        cli.main(
+            [
+                "compare",
+                "--ref",
+                str(missing),
+                "--cand",
+                str(missing),
+                "--out",
+                str(tmp_path / "cmp.json"),
+            ]
+        )
+        == 2
+    )
+    assert "run file not found" in capsys.readouterr().err
+    assert not (tmp_path / "cmp.json").exists()
