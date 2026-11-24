@@ -131,6 +131,7 @@ CPU end-to-end run on the fork's tiny real model; the vision carry of the output
 | `inkling_carry_check.py` | `hi2.inkling_source.carry_vision` on the real directory into a scratch directory, read back tensor by tensor (name, dtype, shape, bit pattern) against the stock vision tower and its index entries. |
 | `inkling_footprint.py` | `hi2.finalkl.student_footprint` on the real configuration (meta model, stand-in HI2 tensors at a given code width and block size): the static bytes, saved layer inputs and loss chunk of the final-KL student per device. No weights, no device. |
 | `inkling_looped_smoke.py` | The layer program on the real model, for a GPU lease: `teacher_head_inputs` (48 layer calls), optionally `calibrate_looped` over the first layers, the model's own forward on the host over the first `--compare-tokens` positions against the program's head inputs, and with `--student-steps N` a stand-in student (random HI2 tensors of 3.0 code bits for all 9,216 routed-expert Linears) trained for N final-KL steps, with the formula of `student_footprint`, the pipeline's fit line, the time of a step and the memory per device (`--student-full-grads`: a gradient for every trained value, the worst case; `--skip-compare`: the student alone). Time and peak memory per stage and device. `--devices cpu` runs it on the fork's tiny model (measured: ok). Measured on the real model on two V620: [GPU smoke](#gpu-smoke-on-two-v620-measured). |
+| `inkling_build_calib.py`, `inkling_kl_eval.py`, `inkling_tiny_setup.py`, `inkling_stage4.sh` | The calibration and held-out set with its manifest, the KL against the stock model, the toy model of the CPU dry run and the driver of the stage-4 run: [Stage 4](#stage-4-calibration-set-pilot-three-encodes-and-their-kl-against-the-stock-model). |
 
 ## Measured on the stock checkpoint (2026-11-23)
 
@@ -681,6 +682,148 @@ the tokenizer files. Not written: `hf_quant_config.json` and `mtp.safetensors`.
   when deploying [inference: from the loaders, not run].
 * **Attention** stays bf16 (the fork's dense quantized-linear packers, `linear_pack.py`, are parked
   in `vllm-inkling2-qlinear`); quantizing it with HI2 needs a runtime path that does not exist.
+
+## Stage 4: calibration set, pilot, three encodes and their KL against the stock model
+
+Prepared and dry-run on the CPU of the build box on 2026-11-24. **Nothing in this section has
+run on a GPU** (no lease was taken): the figures are measured where they say so, and
+`[inference]` marks the rest.
+
+### The calibration set
+
+`experiments/inkling_build_calib.py` (`stage`, `build`, `verify`) renders the cached
+datasets with the chat template and the tokenizer of the stock directory (the specials parse
+inside the text: 2.04 % of the tokens), mixes them with `hi2.calib.build_mix` (a document is
+never split; the split is by the sha256 of the exact text, 20 % held out), cuts windows of 2048
+tokens and writes `manifest.json` with the sources, licences, seeds, counts and the sha256 of
+every file. Measured:
+
+| Source | Licence | Staged | Weight | Calibration tokens (documents) | Held-out tokens (documents) |
+| --- | --- | --- | --- | --- | --- |
+| ToolACE (`Team-ACE/ToolACE`; 552 of 600 records get a native `tool_declare` turn) | apache-2.0 | 600 | 0.30 | 162,751 (191) | 59,275 (66) |
+| OpenAssistant-Guanaco (`timdettmers/openassistant-guanaco`, train) | apache-2.0 | 800 | 0.20 | 108,513 (271) | 39,429 (103) |
+| WizardLM evol-instruct 70k | mit | 800 | 0.20 | 108,210 (249) | 39,713 (95) |
+| GSM8K (`openai/gsm8k` main, train; the solution is the thinking turn) | mit | 500 | 0.05 | 27,113 (143) | 9,840 (55) |
+| project docs (vLLM documentation and notes; 921 of 2042 near-duplicate blocks dropped) | apache-2.0 + project | 1,121 | 0.25 | 135,382 (174) | 49,621 (70) |
+
+**542,995 calibration tokens = 265 windows of 2048** (the encodes read the first 256, 524,288
+tokens, `--calib-samples 256`; 128 windows, 262,144 tokens, is the floor of the contract);
+**held-out `mixed`: 198,266 tokens = 96 windows** from 389 documents that are in no calibration
+window, with the same source shares (0.2996 / 0.1993 / 0.2007 / 0.0497 / 0.2508); two
+out-of-distribution held-out sets with no overlap at all: `wiki` (17 windows, 35,320 tokens) and
+`pydocs` (17 windows, 36,606 tokens). `calib.txt` sha256 `acd2f960…`, `heldout_mixed.txt`
+`a543c14e…`, windows (`*_ids.npy`, int32 `[n, 2048]`) `4077eae6…` (calibration), `07360700…`
+(mixed), `2e1aa3e1…` (wiki), `e5695509…` (pydocs); the full list is in the manifest. 14 MB.
+
+Hard gates, recorded in the manifest and re-checked by `verify` (every file's sha256, the
+windows, the tokenizer and template files): calibration at least 262,144 tokens; at least 32
+held-out windows; every source in both splits; no staged document in both splits; no held-out
+window shares more than 0.5 of its 32-token shingles with the calibration (measured: mean
+0.060, p99 0.163, max 0.172 for `mixed`; the residue is the structure the chat records share:
+the tool-use instruction, the template tokens); specials between 0.2 and 20 % of the tokens;
+every id inside the vocabulary; `hi2.pipeline.load_calibration_ids` returns the stored
+windows (the first 256). Soft: 524,288 tokens, 64 held-out windows (both met).
+`verify --production` also refuses a set built with scaled-down limits (`--dry-run-scale`, for
+the toy model).
+
+Limits: ToolACE assistant calls stay the dataset's text (`[Name(a=1)]`), not native
+`tool_call` turns (the tool lists are native); the only thinking turns are GSM8K's; nothing is
+generated by the model itself; the calibration is English-heavy chat, tool use, instructions,
+arithmetic and technical text.
+
+### KL against the stock model
+
+`experiments/inkling_kl_eval.py --src STOCK --dst HI2_OUTPUT --ids heldout_mixed_ids.npy`
+scores `KL(stock || HI2)` per window. The teacher is the stock model with its experts decoded
+by `InklingSource` (exact), the student the same model with every expert Linear overwritten by
+`hi2.format.dequantize` of the HI2 tensor, in place and one layer at a time; both run through
+`looped.teacher_head_inputs` (the layer program, one layer per device call) and the same head
+and soft cap. It reports KL, top-1 agreement, expected acceptance, the perplexity ratio and the
+standard error over windows, and (`--groups auto`: layers 0-5, 6-17 and 18-19, 20-23 on the
+real model: before, inside and after the loop, and the MXFP8 layers) the KL of a student that
+is quantized in one group only, plus the relative weight error of every layer. Gates: the
+output is an HI2 directory holding all 9,216 expert tensors and no other quantized tensor, the
+windows are the manifest's, the teacher and the student are finite, the metric is exactly 0 on
+identical inputs, the groups restore the stock weights (the probe window gives the same head
+inputs after them: exactly on the CPU, 5e-3 of the maximum on a GPU), the student differs from
+the teacher, no KL is negative, `--max-kl` holds. `tests/test_inkling_kl_eval.py` (CPU, the
+tiny model) checks the metric against the textbook formula and a hand-worked case,
+the installed weights against `load_dequantized`, the attribution of damage to groups, the
+teacher cache and its invalidation, and each gate on an input made to fail it.
+
+### The driver
+
+`experiments/inkling_stage4.sh` runs the steps; `DRY=1` prints the commands, the GPU wrapper
+comes from `$STAGE4_ENV` (`experiments/inkling_stage4.env.example`; the driver never takes a GPU
+or a lease), one log and one state file
+per step, one GPU step at a time, a disk gate in front of every write (`MIN_FREE_GB`, 60) and
+the calibration gate (`verify --production`, `SAMPLES` within the windows the build compared
+with the pipeline's reader, at least 262,144 tokens for an encode) in front of every GPU step.
+Every command it builds is parsed by the real parser of the tool in
+`tests/test_inkling_stage4_script.py`.
+
+| Step | Where | What | Disk written |
+| --- | --- | --- | --- |
+| `calib` | CPU | stage, build, verify the set under `stage4/calib` | 14 MB |
+| `plan T` | CPU | `hi2 quantize --dry-run --json` at T bpw: 6 s each on the real directory [measured]; 542,995 tokens available, 524,288 needed | |
+| `pilot` | GPU | the whole chain at 3.5 bpw with 4 windows (8,192 tokens) into `runs/pilot`, own cache, then a KL on 4 windows of 512 tokens | cache ~39 GiB + output ~15 GiB [the 2026-11-23 measurement], removed by `clean-pilot` |
+| `quantize T` | GPU | calibration (the first call fills `stage4/cache`, the next ones reuse it), allocation, encode, validation | the first: cache + output; then ~15 GiB each |
+| `eval T [SET]` | GPU | the KL above in float32 (`EVAL_DTYPE`; the encode keeps float16) on 32 windows (`mixed`, with the group breakdown on 8) or the OOD set | ~1 GiB with the teacher cache |
+
+The encode command (`hi2 quantize SRC DST --calib calib.txt --calib-samples 256 --seq-len 2048
+--include '\.mlp\.experts\.' --bits 2,4,8 --candidates lean --target-bpw T --no-qad
+--sensitivity none --devices cuda:0,cuda:1 --compute-dtype float16 --workdir work/bpwT
+--cache-dir cache`) keeps the defaults for the rest: GPTQ rounding, two refinement sweeps,
+rotation on, smoothing 0.5, effort normal, `--expert-min-tokens 2.0` (an expert Linear with
+fewer calibration tokens than twice its input width, 4,608 for gate and up, 2,304 for down,
+falls back; 524,288 tokens at 8 of 128 experts per token give 32,768 per expert per layer on
+average [arithmetic, the routing is not measured]). `--sensitivity none` because the probe loads
+the whole model on the devices.
+
+Dry run on the tiny checkpoint (CPU, 2026-11-24, the same scripts with `TINY=1`:
+`inkling_tiny_setup.py` makes the toy model and a toy BPE tokenizer trained on the staged
+texts, the set is built with `--dry-run-scale 64 8 4 8`): `tiny` 14 s, `check` 3 s, `plan` 4 s,
+`pilot` 56 s, `quantize 3.5` 52 s, `eval 3.5` 13 s, all exit 0 (the toy KL is 6.1 and
+meaningless: a random model). The gates that must fail, run on the same directory: a
+non-production manifest under `PRODUCTION=1` (exit 1), 9 windows when 8 were compared (1), a
+tampered `calib.txt` (1; restored: 0), an output that does not exist (1), a second GPU step
+while the lock is held (1), a disk gate that cannot be met (1).
+`HI2_INKLING_STAGE4_E2E=1 pytest tests/test_inkling_stage4_script.py -k whole_chain` repeats
+the chain in 83 s.
+
+The evaluation also ran on the real stock directory on the CPU (2026-11-24, 12 threads,
+float32, `--partial`; the student is the stage-2 sample output: experts 0 and 64 of layers 0 and
+20, 12 of 9,216 tensors, its 8 quantized attention tensors ignored by the documented gate):
+exit 0 in 267 s, `install_teacher` 69.0 s (all 24 layers decoded to float32), one 128-token
+teacher pass 29.9 s (48 layer calls), student pass 29.7 s, KL 4.97e-5, top-1 0.992, perplexity
+x1.0001, relative RMS of the installed layer-0 weights 0.121, every gate ok. That checks the
+names, shapes and decode of the real model inside the script; the numbers are those of 12
+tensors, not of a quantization. A 65k-token pass is not a CPU job.
+
+### Costs and risks
+
+* **GPU needs [inference].** A lease of slot a2 (HIP 0,1, both cards free, 28 GiB each as in
+  the smoke), held through the pilot and the first encode; the fit limit is 22.2 / 22.9 / 23.6
+  GiB of 24.0 for the final-KL student at 3.0 / 3.5 / 4.0, but a `--no-qad` encode does not
+  train a student (the numbers matter for a later QAD stage). The program pass costs 52-55 s per
+  4,096 tokens [measured, 2026-11-23]: 524,288 tokens are 128 such passes, about 2 h before the
+  statistics and the tables are added; the encode of 24.5 G weights with GPTQ and two
+  refinement sweeps has not been timed at this size (the stage-2 estimate of 12.9 M weights/s,
+  32 min per target, was for the data-free path, device not recorded), which is what the pilot
+  is for.
+* **Host memory** 100-130 GiB resident in the program and student phases [measured].
+* **Disk** 170 GiB free at 96 % [measured]: the pilot writes ~54 GiB and is removed before the
+  real run; then the cache (39.3 GiB) and three outputs (~15 GiB each) leave ~85 GiB, above
+  the 60 GiB spare. The gate refuses a step that would break it.
+* **KL cost [inference].** The evaluation runs in float32 (`EVAL_DTYPE`; the encode keeps
+  float16): float16 rounding alone is a KL of 3.2e-3 against float32 on the same weights
+  [measured, stage 2, 512 tokens], which would be a large part of the signal at 4 bpw. The
+  program is transfer-bound (52-55 s per forward of two windows in float16 [measured]; float32
+  doubles the bytes): a 32-window pass is about 8 forwards of ~100 s, 13 min; the first student
+  adds the cached teacher pass and the group breakdown (4 groups x 8 windows), about 35 min, the
+  later ones about 20 min (arithmetic, not run on the GPU).
+* The held-out set is chat, tool use, instructions, arithmetic and docs: it says nothing about
+  long context, code or other languages; the OOD sets are small (17 windows each).
 
 ## Known gaps before a quantization run
 
