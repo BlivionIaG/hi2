@@ -1224,7 +1224,8 @@ from `qad.py`, `looped.py`, `layerwise.py`:
 * **VRAM** is the layer's trained state, not the activations: `FakeQuantLinear` keeps a float32 latent, its `unit`, the
   gradient and two Adam moments, 20 B x 1.019 G weights (128 experts x 7.96 M) = 19 GiB, plus 2-4 GiB of decoded weights.
   The torch decode graph (several float32 copies) does not fit 30 GiB; the fused `qad_kernel` might ([INFERENCE], never
-  run on 128 experts); else expert groups (32 live, 96 frozen at their PTQ decode).
+  run on 128 experts); else expert groups (the implementation uses 4 groups of 32 experts; the others stay at their
+  current decode).
 * **Time.** `estimate_seconds` gives 3.5 s per step of 4 x 2048 tokens at this layer size ([INFERENCE]: scaled from dense
   layers, never run on an MoE one): 300 steps are about 20 min per single-pass layer on one card; a loop layer decodes once
   per step and runs three calls per sequence, at most 3x. Measured bound: a final-KL step costs 3.4 s per layer call and
@@ -1233,17 +1234,16 @@ from `qad.py`, `looped.py`, `layerwise.py`:
 * **Reusable:** `FakeQuantLinear` with `qad_kernel` and `export`; the AdamW, cosine, keep-best and held-out body of
   `train_layer`; `StepBudget`, `split_indices`, `fingerprint`, the artifact `layerNNN.pt` and `QadResult`; the PTQ
   initialisation (`encode_many` through `StatsView`, its statistics already pooled over the calls). **Not:**
-  `capture_inputs`, `_propagate`, `_buffers` (one tensor per layer), the driver loop (layer i+1 reads layer i) and
-  `train_layer`'s `functional_call(layer, wd, (x,), kw)`, which takes only a hidden tensor.
+  `capture_inputs`, `_propagate`, `_buffers` (one tensor per layer), the driver loop (layer i+1 reads layer i); and
+  `train_layer`'s `functional_call(layer, wd, (x,), kw)` needed the `calls=`/`groups=` hooks the implementation adds.
 * **Hard:** the 19 GiB state in 30 GiB, the span's storage, teacher-forced inputs in the span, the time.
 
 ### Implemented, `hi2/qad_looped.py` (2026-11-24)
 
 `pipeline._check_looped` sends a looped model to `qad_looped` when `--qad-layers` is given explicitly (`all`, or a
 list); **omitted** keeps the final-KL-only default (PTQ per layer), so the three arms of the comparison are
-`--no-qad`, `--qad`, and `--qad --qad-layers 0-5`; the
-What is still refused is `--qad-kl-layers` (a decoder layer's output is not the LM head's input) and
-`--sequential`; `--qad-layers none` keeps its PTQ-per-layer meaning.
+`--no-qad`, `--qad`, and `--qad --qad-layers 0-5`. What is still refused is `--qad-kl-layers` (a decoder layer's
+output is not the LM head's input) and `--sequential`; `--qad-layers none` keeps its PTQ-per-layer meaning.
 
 * **Capture.** One pass of the unquantized program, per-sequence host tensors (`_Program` already splits them),
   stops after the last call the selected layers need. A state is stored once: an output the program continues with
