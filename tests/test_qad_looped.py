@@ -303,6 +303,32 @@ def test_the_config_carries_the_group_count():
         make_config("fast", {"expert_groups": -1})
 
 
+# ---------------------------------------------------------------- the CLI
+
+
+def test_the_cli_carries_the_looped_qad_options():
+    from hi2.__main__ import build_parser, _qad_overrides
+
+    a = build_parser().parse_args(
+        [
+            "quantize",
+            "src",
+            "dst",
+            "--qad",
+            "--qad-layers",
+            "0-5",
+            "--qad-final-kl",
+            "0",
+            "--qad-expert-groups",
+            "4",
+        ]
+    )
+    assert a.qad_layers == "0-5" and a.qad_final_kl == 0
+    over = _qad_overrides(a)
+    assert over["layers"] == "0-5" and over["final_kl"] == 0
+    assert over["expert_groups"] == 4
+
+
 # ---------------------------------------------------------------- the pipeline
 
 
