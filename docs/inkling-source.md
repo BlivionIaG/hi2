@@ -1227,10 +1227,11 @@ from `qad.py`, `looped.py`, `layerwise.py`:
   run on 128 experts); else expert groups (the implementation uses 4 groups of 32 experts; the others stay at their
   current decode).
 * **Time.** `estimate_seconds` gives 3.5 s per step of 4 x 2048 tokens at this layer size ([INFERENCE]: scaled from dense
-  layers, never run on an MoE one): 300 steps are about 20 min per single-pass layer on one card; a loop layer decodes once
-  per step and runs three calls per sequence, at most 3x. Measured bound: a final-KL step costs 3.4 s per layer call and
-  window with the recompute (163 s for 48 calls). Whole run: 12 x 20 min + 12 x up to 60 min plus the two program passes,
-  about 8-16 h depending on how much the second card helps ([INFERENCE], not measured on an MoE layer).
+  layers, never run on an MoE one): 300 steps are about 20 min per single-pass layer on one card. A loop layer's batch is
+  4 **samples** (window, pass), so it spans at most two windows and four calls, the same tensor work as a single-call layer's
+  four windows: a step costs about the same, and 300 steps see ~400 windows instead of 1,200. Measured bound: a final-KL
+  step costs 3.4 s per layer call and window with the recompute (163 s for 48 calls). Whole run: 24 x ~20 min plus the two
+  program passes, about 8-9 h on one card ([INFERENCE], not measured on an MoE layer until the pilot).
 * **Reusable:** `FakeQuantLinear` with `qad_kernel` and `export`; the AdamW, cosine, keep-best and held-out body of
   `train_layer`; `StepBudget`, `split_indices`, `fingerprint`, the artifact `layerNNN.pt` and `QadResult`; the PTQ
   initialisation (`encode_many` through `StatsView`, its statistics already pooled over the calls). **Not:**
