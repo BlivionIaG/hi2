@@ -809,7 +809,7 @@ def _check_looped(rc: RunConfig, log) -> None:
                 "is not the LM head's input (block residuals and the loop span); omit "
                 "it, the final logit-KL phase covers the whole network"
             )
-        if rc.qad.layers is None:
+        if rc.qad.layers is None or rc.qad.layers == "":
             # a final-KL-only run is the `--qad` default on a looped model: layer-wise
             # QAD is opt-in (`--qad-layers 0-5`, or `all`), never the silent default
             log(

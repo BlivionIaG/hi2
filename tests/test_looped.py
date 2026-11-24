@@ -438,10 +438,11 @@ def test_a_looped_model_refuses_what_is_not_implemented(src, tmp_path):
     with pytest.raises(SystemExit, match="qad-kl-layers"):
         _check_looped(rc, lambda *_: None)
     # `--qad` without --qad-layers keeps the final-KL-only default on a looped model
-    rc = _rc(src, tmp_path, qad=make_config("fast"))
-    notes: list[str] = []
-    _check_looped(rc, notes.append)
-    assert rc.qad.layers == "none" and any("no layer is trained" in n for n in notes)
+    for spec in (None, ""):
+        rc = _rc(src, tmp_path, qad=make_config("fast", {"layers": spec}))
+        notes: list[str] = []
+        _check_looped(rc, notes.append)
+        assert rc.qad.layers == "none" and any("no layer is trained" in n for n in notes)
     # layer-wise QAD is implemented through the layer program (hi2.qad_looped)
     rc = _rc(src, tmp_path, qad=make_config("fast", {"layers": "0-3"}))
     notes.clear()
