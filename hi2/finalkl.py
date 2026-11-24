@@ -342,8 +342,12 @@ def final_kl(
     for p in model.parameters():
         p.requires_grad_(False)
     groups = []
+    byte_p: list = []
+    byte_kind: list = []  # "lo" / "step" for each of byte_p, for the flipped-byte count
     if qc.final_bytes:
-        byte_p = [p for m in mods.values() for p in (*m.lo_u, *m.step_u)]
+        for m in mods.values():
+            byte_p += [*m.lo_u, *m.step_u]
+            byte_kind += ["lo"] * len(m.lo_u) + ["step"] * len(m.step_u)
         for p in byte_p:
             p.requires_grad_(True)
         groups.append({"params": byte_p, "lr": qc.final_lr_p})
@@ -385,20 +389,63 @@ def final_kl(
         return torch.randperm(n_tok, generator=gen)[:k_tok].sort().values.to(last)
 
     @torch.no_grad()
-    def val_kl() -> float:
-        tot = 0.0
-        for i in val_idx:
-            hs = _head_input(model, ids[i : i + 1].to(dev)).float()
-            tot += _kl_loss(lm, hs, teach[i].to(last), None, grad=False)
-        return tot / max(len(val_idx), 1)
+    def val_kl() -> tuple[float, list[float]]:
+        """The held-out KL: the mean over ``val_idx`` and the value of every window."""
+        each = [
+            _kl_loss(
+                lm,
+                _head_input(model, ids[i : i + 1].to(dev)).float(),
+                teach[i].to(last),
+                None,
+                grad=False,
+            )
+            for i in val_idx
+        ]
+        return sum(each) / max(len(val_idx), 1), each
 
     acc = getattr(torch, "accelerator", None)
     on_gpu = dev.type != "cpu" and acc is not None
+    peak = [0.0] * len(devs)
+
+    def note_peaks() -> list[float]:
+        """Peak allocated GiB of every device since the last call (the counters restart)."""
+        if not on_gpu:
+            return []
+        now = [torch.cuda.max_memory_allocated(d) / 2**30 for d in devs]
+        for d in devs:
+            torch.cuda.reset_peak_memory_stats(d)
+        for i, gib in enumerate(now):
+            peak[i] = max(peak[i], gib)
+        return now
+
     if on_gpu:
         for d in devs:
             torch.cuda.reset_peak_memory_stats(d)
-    v0 = val_kl()
-    best, best_state = v0, snapshot()
+    v0, v0_each = val_kl()
+    best, best_state, best_step = v0, snapshot(), 0
+    init_bytes = best_state[: len(byte_p)]  # the ladder values the phase starts from
+
+    @torch.no_grad()
+    def flipped() -> dict:
+        """The ladder bytes that round to another value than at the start of the phase."""
+        cnt = {"lo": 0, "step": 0}
+        per_dev: dict = {}
+        for p, kind, was in zip(byte_p, byte_kind, init_bytes):
+            n = (torch.round(p.detach().clamp(0, 255)) != was.to(p.device)).sum()
+            key = (p.device, kind)
+            per_dev[key] = n if key not in per_dev else per_dev[key] + n
+        for (_, kind), n in per_dev.items():
+            cnt[kind] += int(n)
+        values = sum(p.numel() for p in byte_p)
+        count = cnt["lo"] + cnt["step"]
+        return {
+            "count": count,
+            "lo": cnt["lo"],
+            "step": cnt["step"],
+            "values": values,
+            "share": count / values if values else 0.0,
+        }
+
     log(
         f"final KL: {len(mods)} quantized Linears, {len(norms)} norms, "
         f"{sum(p.numel() for p in trainable) / 1e6:.1f}M trainable values, {steps} steps x "
@@ -408,8 +455,11 @@ def final_kl(
     order: list[int] = []
     g = torch.Generator().manual_seed(qc.seed)
     trace = [(0, None, v0)]
+    evals = [{"step": 0, "held_out": v0, "windows": v0_each, "flipped": flipped()}]
+    steps_log: list[dict] = []
     with _checkpointed(layers):
         for step in range(steps):
+            t_step = time.time()
             if len(order) < qc.final_batch:
                 order += [
                     train_idx[j]
@@ -430,13 +480,33 @@ def final_kl(
             opt.zero_grad(set_to_none=True)
             for m in mods.values():
                 m.project()
+            step_s = time.time() - t_step
+            now = note_peaks()
+            steps_log.append(
+                {
+                    "step": step + 1,
+                    "train": tot,
+                    "seconds": round(step_s, 1),
+                    "peak_gib": [round(x, 2) for x in now],
+                }
+            )
+            log(
+                f"  final KL step {step + 1}/{steps} train {tot:.4f}, {step_s:.1f} s"
+                + (f", peak {'/'.join(f'{x:.1f}' for x in now)} GiB" if now else "")
+            )
             if (step + 1) % every == 0 or step + 1 == steps:
-                vl = val_kl()
+                vl, each = val_kl()
+                note_peaks()  # the held-out pass counts in the run's peak
+                fl = flipped()
                 trace.append((step + 1, tot, vl))
+                evals.append(
+                    {"step": step + 1, "held_out": vl, "windows": each, "flipped": fl}
+                )
                 if vl < best:
-                    best, best_state = vl, snapshot()
+                    best, best_state, best_step = vl, snapshot(), step + 1
                 log(
                     f"  final KL step {step + 1}/{steps} train {tot:.4f} held-out {vl:.4f} "
+                    f"flipped {fl['count']:,} of {fl['values']:,} bytes ({100 * fl['share']:.4f} %) "
                     f"({(time.time() - t0) / 60:.1f} min)"
                 )
                 if event := getattr(log, "event", None):
@@ -457,21 +527,27 @@ def final_kl(
         for ckpt, p in norms.items():
             if ckpt in touched:
                 out_d[ckpt] = p.detach().to(torch.float16).cpu()
+    note_peaks()
+    kept = flipped()  # the bytes of the kept state against the start
     info = {
         "val_before": v0,
         "val_after": best,
         "kept": "init" if best == v0 else "best",
+        "best_step": best_step,
         "steps": steps,
         "seconds": time.time() - t0,
         "teacher_seconds": t_teacher,
-        "gpu_peak_gib": max(torch.cuda.max_memory_allocated(d) for d in devs) / 2**30
-        if on_gpu
-        else None,
+        "gpu_peak_gib": max(peak) if on_gpu else None,
+        "gpu_peak_gib_per_device": [round(x, 2) for x in peak] if on_gpu else None,
+        "flipped": kept,
         "trace": trace,
+        "evals": evals,
+        "steps_log": steps_log,
     }
     log(
         f"final KL: held-out KL {v0:.4f} -> {best:.4f} ({100 * (best / max(v0, 1e-30) - 1):+.1f}%), "
-        f"{info['seconds'] / 60:.1f} min"
+        f"kept {info['kept']} (step {best_step}), flipped {kept['count']:,} of {kept['values']:,} "
+        f"bytes ({100 * kept['share']:.4f} %), {info['seconds'] / 60:.1f} min"
     )
     return out_t, out_d, info
 

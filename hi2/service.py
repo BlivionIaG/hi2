@@ -157,7 +157,7 @@ def resolve_config(rc, log=lambda message: None, *, check_ownership=True):
             raise ValueError(f"{key} must be an integer")
     for key in ("cache_devices", "sigma_fp16_above", "int8_force"):
         _positive(key, getattr(rc, key), zero=True)
-    for key in ("sens_floor", "expert_share_floor"):
+    for key in ("sens_floor", "expert_share_floor", "expert_load_power"):
         _positive(key, getattr(rc, key), zero=True)
     for key in ("smooth", "damp", "expert_min_tokens", "refine_passes"):
         _positive(key, getattr(rc.cfg, key), zero=True)

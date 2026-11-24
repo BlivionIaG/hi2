@@ -81,7 +81,7 @@ domain is the largest measured lever in the whole tool (`format-spec.md` 8.7).
 | probe batching | `--sens-batch` | fewer forwards, logits round differently | 1 (exact) |
 | INT8 rows | `--bits 2,4,8` | the allocator gives INT8 0.01-0.03 % of the weights, every metric unchanged | not run |
 | forced INT8 | `--int8-force N` | worse at every N on the 0.8B | not run |
-| expert knobs | `--expert-min-tokens`, `--expert-share-floor` | MoE only | N/A (dense) |
+| expert knobs | `--expert-min-tokens`, `--expert-share-floor`, `--expert-load-power` | MoE only | N/A (dense) |
 
 ### Encoder
 

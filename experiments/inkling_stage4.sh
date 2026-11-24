@@ -14,7 +14,14 @@
 #                     allocation and encode at T bpw -> $RUNS/bpwT
 #   eval T [SET]      (GPU) KL against the stock model on the held-out SET (mixed: with the
 #                     per-layer-group breakdown, wiki, pydocs; fine: the mixed windows and their
-#                     teacher pass, broken down by FINE_GROUPS) -> $EVALS/bpwT_SET.json
+#                     teacher pass, broken down by FINE_GROUPS; routing: the mixed windows with
+#                     the routing log, no breakdown) -> $EVALS/bpwT_SET.json
+#   teacher-heads     (GPU) the stock model's float32 head inputs on the FKL_TRAIN training windows
+#                     of the final-KL phase -> $TEACHER/fkl_train_wN_float32.pt
+#   finalkl T         (GPU) the final logit-KL phase from the finished output at T: FKL_STEPS steps
+#                     of FKL_BATCH windows, held-out windows FKL_VAL_OFFSET.. of the mixed set
+#                     (their teacher is the evaluation's) -> $RUNS/bpwT-fklSTEPSlrLR
+#                     (a target may carry a tag after its bits: 3.5-p0.5 is $RUNS/bpw3.5-p0.5)
 #   status            the state of the steps, the results, the disk
 #   clean-pilot       remove the pilot's work, cache, output and teacher pass
 #   tiny              (CPU, TINY=1) the toy model and its calibration set for the dry run
@@ -27,6 +34,7 @@
 # may redefine any function) to run a guard instead. `cpu_run python-args...` likewise.
 # Settings (defaults in the code): W OUT SRC CAL CACHE WORK RUNS EVALS TEACHER STATE LOGS
 # DEVICES DTYPE EVAL_DTYPE SAMPLES SEQ PILOT_SAMPLES EVAL_WINDOWS BREAKDOWN_WINDOWS FINE_GROUPS MIN_FREE_GB
+# EVAL_GROUPS FKL_STEPS FKL_TRAIN FKL_VAL FKL_VAL_OFFSET FKL_BATCH FKL_LR FKL_EVALS
 # PRODUCTION EXTRA_QUANTIZE MAX_KL TRANSFORMERS STAGE4_ENV DRY TINY.
 set -u
 
@@ -57,6 +65,12 @@ else
 fi
 PILOT_SAMPLES=${PILOT_SAMPLES:-4}
 FINE_GROUPS=${FINE_GROUPS:-0-2,3-5,6-8,9-11,12-14,15-17,18-20,21-23} # `eval T fine`: groups of three layers
+EVAL_GROUPS=${EVAL_GROUPS:-auto} # `eval T mixed`: the per-layer-group breakdown (none: the scores only)
+# `finalkl`: steps, training windows, held-out windows (from FKL_VAL_OFFSET), windows per step, the
+# ladder bytes' learning rate (8-bit levels per step; 0.03 is the preset's final_lr_p, the best of the
+# one sweep that exists, 4B at 3.0 bpw; nothing was measured on Inkling: pass FKL_LR to compare), held-out evaluations
+FKL_STEPS=${FKL_STEPS:-40} FKL_TRAIN=${FKL_TRAIN:-48} FKL_VAL=${FKL_VAL:-8} FKL_VAL_OFFSET=${FKL_VAL_OFFSET:-24}
+FKL_BATCH=${FKL_BATCH:-1} FKL_LR=${FKL_LR:-0.03} FKL_EVALS=${FKL_EVALS:-4}
 CAL=${CAL:-$OUT/calib}
 CACHE=${CACHE:-$OUT/cache}
 WORK=${WORK:-$OUT/work}
@@ -195,12 +209,16 @@ eval_cmd() { # eval_cmd DST SET WINDOWS LEN GROUPS OUTNAME TEACHERNAME -> E
     [[ -z $MAX_KL ]] || E+=(--max-kl "$MAX_KL")
     [[ -z $TRANSFORMERS ]] || E+=(--transformers "$TRANSFORMERS")
 }
-target() { [[ ${1:-} =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "a target in bits per weight is needed (3.0, 3.5, 4.0)"; }
+target() { # T: bits per weight, then optionally a tag for a variant of the encode (3.5-p0.5)
+    [[ ${1:-} =~ ^[0-9]+(\.[0-9]+)?(-[A-Za-z0-9.]+)?$ ]] ||
+        die "a target in bits per weight is needed (3.0, 3.5, 4.0; a tag may follow: 3.5-p0.5)"
+}
 
 step_config() {
     local v
     for v in REPO W OUT SRC CAL CACHE WORK RUNS EVALS TEACHER STATE LOGS DEVICES DTYPE EVAL_DTYPE SEQ SAMPLES \
-        PILOT_SAMPLES PILOT_EVAL_WINDOWS PILOT_EVAL_LEN EVAL_WINDOWS BREAKDOWN_WINDOWS FINE_GROUPS \
+        PILOT_SAMPLES PILOT_EVAL_WINDOWS PILOT_EVAL_LEN EVAL_WINDOWS BREAKDOWN_WINDOWS FINE_GROUPS EVAL_GROUPS \
+        FKL_STEPS FKL_TRAIN FKL_VAL FKL_VAL_OFFSET FKL_BATCH FKL_LR FKL_EVALS \
         MIN_FREE_GB GIB_CACHE GIB_OUT PRODUCTION EXTRA_QUANTIZE MAX_KL TINY DRY; do
         printf '%-20s %s\n' "$v" "${!v}"
     done
@@ -222,7 +240,7 @@ step_calib() {
 }
 step_plan() {
     target "${1:-}"
-    quantize_cmd "$RUNS/bpw$1" "$WORK/bpw$1" "$CACHE" "$1" "$SAMPLES"
+    quantize_cmd "$RUNS/bpw$1" "$WORK/bpw$1" "$CACHE" "${1%%-*}" "$SAMPLES"
     if ((DRY)); then
         run cpu_run "${Q[@]}" --dry-run --json --devices cpu
         return 0
@@ -248,22 +266,58 @@ step_quantize() {
     have=$(used_gib "$CACHE")
     ((have > GIB_CACHE)) && have=$GIB_CACHE
     need_gib $((GIB_CACHE - have + GIB_OUT)) "quantize $1 (statistics cache still to fill + output)"
-    quantize_cmd "$RUNS/bpw$1" "$WORK/bpw$1" "$CACHE" "$1" "$SAMPLES"
+    quantize_cmd "$RUNS/bpw$1" "$WORK/bpw$1" "$CACHE" "${1%%-*}" "$SAMPLES"
     step "quantize-$1" devrun "quantize-$1" "${Q[@]}"
 }
 step_eval() {
     target "${1:-}"
     local set=${2:-mixed} ids=${2:-mixed} groups=none
     case $set in
-        mixed) groups=auto ;;
+        mixed) groups=$EVAL_GROUPS ;;
         fine) ids=mixed groups=$FINE_GROUPS ;; # the held-out mixed windows, a finer breakdown
+        routing) ids=mixed ;; # the held-out mixed windows, the scores and the routing log
     esac
     [[ -d $RUNS/bpw$1 ]] || stop "no output at $RUNS/bpw$1: run quantize $1 first"
     check_calibration "$SAMPLES"
     need_gib 2 "the evaluation"
     eval_cmd "$RUNS/bpw$1" "$ids" "$EVAL_WINDOWS" 0 "$groups" "bpw${1}_$set" \
         "${ids}_w${EVAL_WINDOWS}_${EVAL_DTYPE}"
+    [[ $set != routing ]] || E+=(--routing-log)
     step "eval-$1-$set" devrun "eval-$1-$set" "${E[@]}"
+}
+step_teacher_heads() {
+    check_calibration "$SAMPLES"
+    need_gib 2 "the teacher's head inputs of the final-KL windows"
+    step teacher-heads devrun teacher-heads "$REPO/experiments/inkling_final_kl.py" teacher --src "$SRC" \
+        --calib "$CAL/calib.txt" --out "$TEACHER/fkl_train_w${FKL_TRAIN}_float32.pt" \
+        --train-windows "$FKL_TRAIN" --seq-len "$SEQ" --devices ${DEVICES//,/ }
+}
+step_finalkl() {
+    target "${1:-}"
+    local heads=$TEACHER/fkl_train_w${FKL_TRAIN}_float32.pt held=$TEACHER/mixed_w${EVAL_WINDOWS}_${EVAL_DTYPE}.pt
+    local name=bpw$1-fkl${FKL_STEPS}lr$FKL_LR cfg=$OUT/fkl_qad_${FKL_STEPS}_lr$FKL_LR.json C=() x
+    [[ -d $RUNS/bpw$1 ]] || stop "no output at $RUNS/bpw$1: run quantize $1 first"
+    [[ -f $heads ]] || stop "$heads is missing: run teacher-heads first"
+    [[ -f $held ]] || stop "$held is missing: the teacher of the held-out windows (run eval $1 mixed first)"
+    check_calibration "$SAMPLES"
+    need_gib $((GIB_OUT * 2)) "the final-KL output (and the copy the phase keeps to resume from)"
+    if ((!DRY)); then
+        mkdir -p "$OUT"
+        printf '{"final_batch": %s, "final_lr_p": %s, "val": %s, "final_evals": %s, "seed": 0}\n' \
+            "$FKL_BATCH" "$FKL_LR" "$FKL_VAL" "$FKL_EVALS" > "$cfg"
+    fi
+    quantize_cmd "$RUNS/$name" "$WORK/$name" "$CACHE" "${1%%-*}" "$SAMPLES"
+    for x in "${Q[@]:2}"; do # Q starts with `-m hi2`: the driver script is the entry point
+        if [[ $x == --no-qad ]]; then
+            C+=(--qad --qad-samples "$FKL_TRAIN" --qad-final-kl "$FKL_STEPS" --qad-config "$cfg")
+        else
+            C+=("$x")
+        fi
+    done
+    step "finalkl-$1" devrun "finalkl-$1" "$REPO/experiments/inkling_final_kl.py" student \
+        --init-from "$RUNS/bpw$1" --heads "$heads" --heldout-ids "$CAL/heldout_mixed_ids.npy" \
+        --heldout-teacher "$held" --heldout-windows "$EVAL_WINDOWS" --val-offset "$FKL_VAL_OFFSET" \
+        -- "${C[@]}"
 }
 step_status() {
     df -Ph "$(dirname "$OUT")" | tail -1
@@ -320,6 +374,8 @@ case $cmd in
     pilot) locked gpu step_pilot ;;
     quantize) locked gpu step_quantize "$@" ;;
     eval) locked gpu step_eval "$@" ;;
+    teacher-heads) locked gpu step_teacher_heads ;;
+    finalkl) locked gpu step_finalkl "$@" ;;
     status) step_status ;;
     clean-pilot) step_clean_pilot ;;
     tiny) locked calib step_tiny ;;

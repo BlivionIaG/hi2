@@ -202,6 +202,25 @@ def test_the_fine_set_breaks_the_mixed_windows_down_and_shares_their_teacher(box
     assert code == 0 and _flag(_gpu(lines)[-1], "--groups") == "0-11,12-23"
 
 
+def test_the_routing_set_scores_the_mixed_windows_and_logs_the_routing(box):
+    (box.out / "runs" / "bpw3.5-p0.5").mkdir(parents=True)
+    code, out, lines = box.drive("eval", "3.5-p0.5", "routing")
+    assert code == 0, out
+    (ev,) = _gpu(lines)
+    assert ev.startswith("GPU eval-3.5-p0.5-routing ") and "--routing-log" in ev
+    # the mixed windows and the mixed teacher pass, the scores only (no breakdown)
+    assert _flag(ev, "--ids").endswith("/calib/heldout_mixed_ids.npy")
+    assert _flag(ev, "--ids-sha256") == SHA["mixed"] and _flag(ev, "--windows") == "32"
+    assert _flag(ev, "--teacher-cache").endswith("/teacher/mixed_w32_float32.pt")
+    assert _flag(ev, "--groups") == "none" and "--breakdown-windows" not in ev
+    assert _flag(ev, "--out").endswith("/eval/bpw3.5-p0.5_routing.json")
+    assert _flag(ev, "--dst").endswith("/runs/bpw3.5-p0.5")
+    # no other set takes the log
+    for s in ("mixed", "wiki", "pydocs", "fine"):
+        code, out, lines = box.drive("eval", "3.5-p0.5", s)
+        assert code == 0 and "--routing-log" not in _gpu(lines)[-1], s
+
+
 def test_eval_needs_an_output_to_score(box):
     code, out, lines = box.drive("eval", "3.5")
     assert code == 1 and "no output at" in out and _gpu(lines) == []
@@ -358,7 +377,9 @@ def test_every_command_the_driver_builds_parses_with_the_real_parsers(box):
         (box.out / "runs" / f"bpw{t}").mkdir(parents=True)
     steps = [("pilot",), ("plan", "3.5")]
     steps += [("quantize", t) for t in ("3.0", "3.5", "4.0")]
-    steps += [("eval", "3.5", s) for s in ("mixed", "wiki", "pydocs", "fine")]
+    steps += [
+        ("eval", "3.5", s) for s in ("mixed", "wiki", "pydocs", "fine", "routing")
+    ]
     for args in steps:
         code, out, lines = box.drive(*args, MAX_KL="1.0")
         assert code == 0, (args, out)
@@ -380,8 +401,207 @@ def test_every_command_the_driver_builds_parses_with_the_real_parsers(box):
             a = calib.parser().parse_args(words[2:])
             assert a.command == "verify" and a.production
             seen["verify"] += 1
-    # pilot: 1 encode + 1 KL; plan: 1 dry-run plan; 3 encodes; 4 KLs; a verify before each
-    assert seen == {"quantize": 5, "eval": 5, "verify": 8}
+    # pilot: 1 encode + 1 KL; plan: 1 dry-run plan; 3 encodes; 5 KLs; a verify before each
+    assert seen == {"quantize": 5, "eval": 6, "verify": 9}
+
+
+# ------------------------------------------------------- the final-KL phase and the variants
+
+
+def _fkl_inputs(box, tag="3.5"):
+    """What `finalkl` needs on disk: the output it starts from, the teacher's head inputs of the
+    training windows and the held-out windows' teacher (empty files: the recorder reads none)."""
+    (box.out / "runs" / f"bpw{tag}").mkdir(parents=True, exist_ok=True)
+    (box.out / "teacher").mkdir(parents=True, exist_ok=True)
+    (box.out / "teacher" / "fkl_train_w48_float32.pt").write_bytes(b"")
+    (box.out / "teacher" / "mixed_w32_float32.pt").write_bytes(b"")
+
+
+def test_the_teacher_heads_are_the_float32_program_on_the_training_windows(box):
+    code, out, lines = box.drive("teacher-heads")
+    assert code == 0, out
+    (gpu,) = _gpu(lines)
+    assert gpu.startswith("GPU teacher-heads ") and "inkling_final_kl.py teacher" in gpu
+    assert _flag(gpu, "--train-windows") == "48" and _flag(gpu, "--seq-len") == "2048"
+    assert _flag(gpu, "--calib") == str(box.out / "calib" / "calib.txt")
+    assert _flag(gpu, "--out").endswith("/teacher/fkl_train_w48_float32.pt")
+    assert _flag(gpu, "--src") == str(box.tmp / "model") and "cuda:0 cuda:1" in gpu
+    code, out, lines = box.drive("teacher-heads", FKL_TRAIN=64)
+    assert code == 0 and _flag(_gpu(lines)[-1], "--train-windows") == "64"
+    assert _flag(_gpu(lines)[-1], "--out").endswith("/teacher/fkl_train_w64_float32.pt")
+
+
+def test_the_final_kl_phase_is_the_encode_command_with_the_options_of_the_phase(box):
+    _fkl_inputs(box)
+    code, out, lines = box.drive("finalkl", "3.5")
+    assert code == 0, out
+    (gpu,) = _gpu(lines)
+    assert gpu.startswith("GPU finalkl-3.5 ") and "inkling_final_kl.py student" in gpu
+    mine, _, theirs = gpu.partition(" -- ")
+    assert _flag(mine, "--init-from") == str(box.out / "runs" / "bpw3.5")
+    assert _flag(mine, "--heads").endswith("/teacher/fkl_train_w48_float32.pt")
+    assert _flag(mine, "--heldout-ids").endswith("/calib/heldout_mixed_ids.npy")
+    assert _flag(mine, "--heldout-teacher").endswith("/teacher/mixed_w32_float32.pt")
+    assert (
+        _flag(mine, "--heldout-windows") == "32" and _flag(mine, "--val-offset") == "24"
+    )
+    words = shlex.split(theirs)
+    assert words[:2] == ["quantize", str(box.tmp / "model")]
+    # the output and the workdir are the phase's own; the statistics are the encode's
+    assert words[2] == str(box.out / "runs" / "bpw3.5-fkl40lr0.03")
+    assert _flag(theirs, "--workdir") == str(box.out / "work" / "bpw3.5-fkl40lr0.03")
+    assert _flag(theirs, "--cache-dir") == str(box.out / "cache")
+    assert "--no-qad" not in words and "--qad" in words
+    assert (
+        _flag(theirs, "--qad-final-kl") == "40"
+        and _flag(theirs, "--qad-samples") == "48"
+    )
+    for want in ("--target-bpw 3.5", "--calib-samples 256", "--sensitivity none"):
+        assert want in theirs, want
+    assert "--candidates lean" in theirs and "--compute-dtype float16" in theirs
+    cfg = json.loads(Path(_flag(theirs, "--qad-config")).read_text())
+    assert cfg == {
+        "final_batch": 1,
+        "final_lr_p": 0.03,
+        "val": 8,
+        "final_evals": 4,
+        "seed": 0,
+    }
+
+
+def test_the_phase_is_a_setting_not_a_constant(box):
+    _fkl_inputs(box)
+    _, _, lines = box.drive(
+        "finalkl", "3.5",
+        FKL_STEPS=100, FKL_BATCH=2, FKL_LR=0.05, FKL_VAL=4, FKL_EVALS=10, FKL_VAL_OFFSET=28,
+    )  # fmt: skip
+    mine, _, theirs = _gpu(lines)[-1].partition(" -- ")
+    assert (
+        _flag(theirs, "--qad-final-kl") == "100" and _flag(mine, "--val-offset") == "28"
+    )
+    assert shlex.split(theirs)[2].endswith("/runs/bpw3.5-fkl100lr0.05")
+    cfg = json.loads(Path(_flag(theirs, "--qad-config")).read_text())
+    assert cfg == {
+        "final_batch": 2,
+        "final_lr_p": 0.05,
+        "val": 4,
+        "final_evals": 10,
+        "seed": 0,
+    }
+
+
+def test_the_default_learning_rate_of_the_phase_is_the_presets(box):
+    """``FKL_LR`` is the preset's ``final_lr_p`` unless a run asks for another one: the single sweep
+    that exists (4B at 3.0 bpw) found it best, and nothing was measured on Inkling."""
+    qad = pytest.importorskip("hi2.qad")
+    _fkl_inputs(box)
+    _, _, lines = box.drive("finalkl", "3.5")
+    _, _, theirs = _gpu(lines)[-1].partition(" -- ")
+    cfg = json.loads(Path(_flag(theirs, "--qad-config")).read_text())
+    assert cfg["final_lr_p"] == qad.QadConfig().final_lr_p
+
+
+@pytest.mark.parametrize(
+    ("missing", "message"),
+    [
+        ("runs/bpw3.5", "no output at"),
+        ("teacher/fkl_train_w48_float32.pt", "run teacher-heads first"),
+        ("teacher/mixed_w32_float32.pt", "the teacher of the held-out windows"),
+    ],
+)
+def test_the_final_kl_phase_stops_before_the_gpu_without_its_inputs(
+    box, missing, message
+):
+    _fkl_inputs(box)
+    path = box.out / missing
+    if path.is_dir():
+        path.rmdir()
+    else:
+        path.unlink()
+    code, out, lines = box.drive("finalkl", "3.5")
+    assert code == 1 and message in out and _gpu(lines) == []
+
+
+def test_the_final_kl_phase_budgets_the_output_and_its_resume_copy(box):
+    _fkl_inputs(box)
+    code, out, lines = box.drive("finalkl", "3.5", GIB_OUT=7)
+    assert code == 0 and "writes about 14 GiB" in out
+    code, out, lines = box.drive("finalkl", "3.5", GIB_OUT=7, MIN_FREE_GB=10**9)
+    assert code == 1 and "needs" in out
+
+
+def test_a_tag_after_the_bits_names_a_variant_of_the_encode(box):
+    code, out, lines = box.drive(
+        "quantize", "3.5-p0.5", EXTRA_QUANTIZE="--expert-load-power 0.5"
+    )
+    assert code == 0, out
+    (gpu,) = _gpu(lines)
+    assert gpu.startswith("GPU quantize-3.5-p0.5 ")
+    assert _flag(gpu, "--target-bpw") == "3.5"  # the bits, not the tag
+    assert _flag(gpu, "--expert-load-power") == "0.5"
+    assert shlex.split(gpu)[6] == str(box.out / "runs" / "bpw3.5-p0.5")
+    assert _flag(gpu, "--workdir") == str(box.out / "work" / "bpw3.5-p0.5")
+    assert _flag(gpu, "--cache-dir") == str(
+        box.out / "cache"
+    )  # the statistics are shared
+    code, out, lines = box.drive("plan", "3.5-p0.5")
+    assert code == 0 and (box.out / "logs" / "plan_3.5-p0.5.json").exists()
+    (cpu,) = [ln for ln in lines if "--dry-run" in ln]
+    assert _flag(cpu, "--target-bpw") == "3.5"
+    (box.out / "runs" / "bpw3.5-p0.5").mkdir(parents=True)
+    code, out, lines = box.drive("eval", "3.5-p0.5", "wiki")
+    (ev,) = _gpu(lines)[-1:]
+    assert code == 0 and _flag(ev, "--dst").endswith("/runs/bpw3.5-p0.5")
+    assert _flag(ev, "--out").endswith("/eval/bpw3.5-p0.5_wiki.json")
+    # the final-KL phase of a variant starts from the variant and names its output after it
+    _fkl_inputs(box, "3.5-p0.5")
+    code, out, lines = box.drive("finalkl", "3.5-p0.5")
+    assert code == 0, out
+    gpu = _gpu(lines)[-1]
+    assert gpu.startswith("GPU finalkl-3.5-p0.5 ")
+    assert _flag(gpu, "--target-bpw") == "3.5"
+    assert _flag(gpu, "--init-from") == str(box.out / "runs" / "bpw3.5-p0.5")
+    assert str(box.out / "runs" / "bpw3.5-p0.5-fkl40lr0.03") in gpu
+    for bad in ("3.5-", "3.5-p 0.5", "-p0.5", "3.5/p0.5", "3.5--x"):
+        code, out, _ = box.drive("quantize", bad)
+        assert code == 1 and "target in bits per weight" in out, bad
+
+
+def test_the_mixed_breakdown_can_be_left_out(box):
+    (box.out / "runs" / "bpw3.5").mkdir(parents=True)
+    code, out, lines = box.drive("eval", "3.5", "mixed", EVAL_GROUPS="none")
+    (ev,) = _gpu(lines)
+    assert (
+        code == 0
+        and _flag(ev, "--groups") == "none"
+        and "--breakdown-windows" not in ev
+    )
+    code, out, lines = box.drive("eval", "3.5", "mixed")  # the default is unchanged
+    assert _flag(_gpu(lines)[-1], "--groups") == "auto"
+
+
+def test_the_commands_of_the_final_kl_phase_parse_with_the_real_parsers(box):
+    from hi2.__main__ import build_parser
+
+    fkl = _load("hi2_s4_fkl_parser", "experiments/inkling_final_kl.py")
+    _fkl_inputs(box)
+    _, _, lines = box.drive("teacher-heads")
+    _, _, lines = box.drive("finalkl", "3.5")
+    teacher = next(ln for ln in lines if " teacher " in ln)
+    a = fkl.parser().parse_args(teacher.split()[3:])
+    assert (
+        a.cmd == "teacher"
+        and a.train_windows == 48
+        and a.devices == ["cuda:0", "cuda:1"]
+    )
+    student = next(ln for ln in lines if " student " in ln)
+    mine, _, theirs = student.partition(" -- ")
+    a = fkl.parser().parse_args(mine.split()[3:])
+    assert a.cmd == "student" and a.val_offset == 24 and a.heldout_windows == 32
+    h = build_parser().parse_args(theirs.split())
+    assert h.cmd == "quantize" and h.qad is True and h.qad_final_kl == 40
+    assert h.qad_samples == 48 and str(h.qad_config).endswith("fkl_qad_40_lr0.03.json")
+    assert h.sensitivity == "none" and h.cache_dir and h.workdir and h.target_bpw == 3.5
 
 
 # ---------------------------------------------------- the dry run of the chain, tiny model

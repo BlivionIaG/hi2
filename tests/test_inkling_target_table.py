@@ -416,3 +416,145 @@ def test_command_line_prints_writes_and_refuses(tree, tmp_path, capsys):
     assert data["targets"]["3.5"]["layers"]["3"]["bpw"] == pytest.approx(3.6)
     assert data["targets"]["3.5"]["evals"]["fine"]["groups"]["0"] == pytest.approx(0.4)
     assert m.main(["--runs", str(tmp_path / "none"), "--evals", str(evals)]) == 1
+
+
+# ------------------------------------------- the windows, the routing and the tagged targets
+
+
+def _eval_windows(kls, routing=None, sem=0.01):
+    ev = _eval(sum(kls) / len(kls), sem=sem)
+    ev["student"]["kl_per_window"] = list(kls)
+    if routing is not None:
+        ev["routing"] = routing
+    return ev
+
+
+def _routing_block(experts, assignments, bits, per_window):
+    rest = 1.0 - assignments
+    return {
+        "experts": {"int2": experts, "int4": 1.0 - experts, "int8": 0.0},
+        "assignments": {"int2": assignments, "int4": rest, "int8": 0.0},
+        "mean_bits": bits,
+        "per_window": {"int2": per_window},
+    }
+
+
+@pytest.fixture
+def sweep(tmp_path):
+    """Three encodes of one size (3.5, then 3.5 with the load flattened by powers 0.5 and 0) and the
+    mixed evaluations of 32 windows, the first as ``routing`` only."""
+    runs, evals = tmp_path / "runs", tmp_path / "eval"
+    evals.mkdir()
+    for t, bpw in (("3.5", 3.3), ("3.5-p0.5", 3.4), ("3.5-p0.0", 3.5)):
+        d = runs / f"bpw{t}"
+        d.mkdir(parents=True)
+        (d / "hi2_report.json").write_text(
+            json.dumps(_report([bpw] * 4, [0.5] * 4, [0.03] * 4))
+        )
+        with open(d / "model-00001-of-00001.safetensors", "wb") as f:
+            f.truncate(GIB)
+    base = [0.05 + 0.001 * w for w in range(32)]
+    base[17] = 0.5
+    base[30] = 0.3
+    flat = [x * 0.9 for x in base]
+    flat[17] = 0.4
+    flat[30] = 0.35
+    route = {
+        "groups": {
+            "0-5": _routing_block(
+                0.30, 0.20, 3.1, [0.2 + 0.001 * w for w in range(32)]
+            ),
+            "6-17": _routing_block(0.40, 0.25, 3.3, [0.3] * 32),
+        },
+        "all_layers": _routing_block(0.35, 0.22, 3.2, [0.25] * 32),
+    }
+    (evals / "bpw3.5_routing.json").write_text(json.dumps(_eval_windows(base, route)))
+    (evals / "bpw3.5-p0.5_mixed.json").write_text(json.dumps(_eval_windows(flat)))
+    (evals / "bpw3.5-p0.0_routing.json").write_text(
+        json.dumps(_eval_windows(flat, route))
+    )
+    return runs, evals, base, flat
+
+
+def test_a_paired_difference_is_worked_by_hand():
+    m = _import()
+    d = m.paired([0.1, 0.2, 0.3], [0.2, 0.2, 0.2])  # differences -0.1, 0, 0.1
+    assert d["mean"] == pytest.approx(0.0, abs=1e-12)
+    assert d["sem"] == pytest.approx((0.02 / 2 / 3) ** 0.5)
+    assert d["better"] == 1 and d["windows"] == 3
+    assert m.paired([0.5], [0.4])["sem"] is None  # one window has no spread
+
+
+def test_the_routing_evaluation_stands_for_the_mixed_one_and_tags_name_targets(sweep):
+    m = _import()
+    runs, evals, base, flat = sweep
+    data = m.collect(runs, evals, ["3.5", "3.5-p0.5", "3.5-p0.0"], None)
+    table = m.render(data)
+    rows: dict[str, str] = {}
+    for ln in table.splitlines():
+        if ln.startswith("| 3.5"):
+            rows.setdefault(
+                ln.split("|")[1].strip(), ln
+            )  # the first: the targets table
+    mean = f"{sum(base) / 32:.4f}"
+    assert mean in rows["3.5"] and f"{sum(flat) / 32:.4f}" in rows["3.5-p0.5"]
+    assert f"{sum(flat) / 32:.4f}" in rows["3.5-p0.0"]  # a routing eval too
+    assert "3.300" in rows["3.5"] and "3.500" in rows["3.5-p0.0"]  # their own reports
+
+
+def test_the_windows_table_lists_the_windows_the_clean_mean_and_the_paired_difference(
+    sweep,
+):
+    m = _import()
+    runs, evals, base, flat = sweep
+    data = m.collect(runs, evals, ["3.5", "3.5-p0.5", "3.5-p0.0"], None)
+    lines = m.render(data, windows=(17, 30), clean=24).splitlines()
+    start = lines.index("#### Windows of the mixed set (KL per window)")
+    head, _, *rows = lines[start + 2 : start + 7]
+    assert "window 17" in head and "window 30" in head and "windows 0-23 mean" in head
+    first, second = rows[0], rows[1]
+    cells = [c.strip() for c in first.split("|")[1:-1]]
+    assert cells[0] == "3.5" and cells[2] == "0.5000" and cells[3] == "0.3000"
+    assert cells[4] == f"{sum(base[:24]) / 24:.4f}" and cells[5:] == ["-", "-"]
+    cells = [c.strip() for c in second.split("|")[1:-1]]
+    assert cells[0] == "3.5-p0.5" and cells[2] == "0.4000" and cells[3] == "0.3500"
+    want = m.paired(flat, base)
+    assert cells[5].startswith(f"{want['mean']:+.4f} +- ")
+    assert cells[6] == f"{want['better']} of 32"
+
+
+def test_the_routing_table_gives_the_class_shares_by_group_and_the_windows(sweep):
+    m = _import()
+    runs, evals, *_ = sweep
+    data = m.collect(runs, evals, ["3.5", "3.5-p0.5", "3.5-p0.0"], None)
+    text = m.render(data, windows=(17,))
+    assert "#### Routing of the student" in text
+    rows = [ln for ln in text.splitlines() if ln.startswith("| 3.5") and " 0-5 " in ln]
+    assert len(rows) == 2  # 3.5 and 3.5-p0.0; 3.5-p0.5 has no routing log
+    cells = [c.strip() for c in rows[0].split("|")[1:-1]]
+    assert cells == ["3.5", "0-5", "30.0", "20.0", "80.0", "0.0", "3.100", "21.7"]
+    assert not any(ln.startswith("| 3.5-p0.5 | 0-5") for ln in text.splitlines())
+    whole = [ln for ln in text.splitlines() if ln.startswith("| 3.5 | all")]
+    assert whole and "35.0" in whole[0] and "22.0" in whole[0]
+
+
+def test_nothing_is_added_without_windows_or_routing(tree):
+    m = _import()
+    runs, evals = tree
+    text = m.render(m.collect(runs, evals, ["3.0", "3.5"], None))
+    assert "#### Windows" not in text and "#### Routing" not in text
+
+
+def test_the_command_line_takes_windows_and_the_clean_count(sweep, capsys, tmp_path):
+    m = _import()
+    runs, evals, *_ = sweep
+    out = tmp_path / "t.json"
+    argv = ["--runs", str(runs), "--evals", str(evals), "--windows", "17", "30"]
+    argv += ["--clean", "24", "--targets", "3.5", "3.5-p0.5", "3.5-p0.0"]
+    assert m.main([*argv, "--json", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert (
+        "window 17" in text and "windows 0-23 mean" in text and "#### Routing" in text
+    )
+    saved = json.loads(out.read_text())
+    assert saved["targets"]["3.5"]["evals"]["routing"]["routing"]["groups"]["0-5"]

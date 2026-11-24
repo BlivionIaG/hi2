@@ -771,6 +771,13 @@ Every command it builds is parsed by the real parser of the tool in
 | `pilot` | GPU | the whole chain at 3.5 bpw with 4 windows (8,192 tokens) into `runs/pilot`, own cache, then a KL on 4 windows of 512 tokens | cache ~39 GiB + output ~15 GiB [the 2026-11-23 measurement], removed by `clean-pilot` |
 | `quantize T` | GPU | calibration (the first call fills `stage4/cache`, the next ones reuse it), allocation, encode, validation | the first: cache + output; then ~15 GiB each |
 | `eval T [SET]` | GPU | the KL above in float32 (`EVAL_DTYPE`; the encode keeps float16) on 32 windows (`mixed`, with the group breakdown on 8) or the OOD set; `fine`: the same windows and the same teacher pass as `mixed`, broken down by `FINE_GROUPS` (default eight groups of three layers, `0-2,3-5,...,21-23`) into `eval/bpwT_fine.json`, about 8 x 110 s of group passes [inference from the 3.5 run: four groups took 110-160 s each] | ~1 GiB with the teacher cache |
+| `eval T routing` | GPU | the `mixed` windows and teacher pass with `--routing-log` and no breakdown (`eval/bpwT_routing.json`, `bpwT_routing_routing.npz`): the score plus where the router sends the tokens, see [stage 5](#stage-5-a-final-kl-pilot-on-the-35-bpw-encode-and-the-load-flattened-allocation) | ~1 GiB |
+| `teacher-heads` | GPU | the stock model's float32 head inputs of `FKL_TRAIN` (48) windows of the calibration text, for the final-KL phase (`teacher/fkl_train_w48_float32.pt`, 0.84 GiB) | 0.84 GiB |
+| `finalkl T` | GPU | `FKL_STEPS` (40) final logit-KL steps of `FKL_BATCH` (1) windows at `FKL_LR` (0.07) from the finished output at T, held-out windows `FKL_VAL_OFFSET` (24) onwards of the mixed set -> `runs/bpwT-fkl40` | output ~14 GiB + the phase's resume copy ~14 GiB |
+
+A target may carry a tag after its bits (`3.5-p0.5`): the bits are the part before the dash, the output and the work
+directory are `bpw3.5-p0.5`, and `EXTRA_QUANTIZE` adds arguments to the encode command (the load-power sweep passes
+`--expert-load-power 0.5`).
 
 The encode command (`hi2 quantize SRC DST --calib calib.txt --calib-samples 256 --seq-len 2048
 --include '\.mlp\.experts\.' --bits 2,4,8 --candidates lean --target-bpw T --no-qad

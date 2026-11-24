@@ -7,8 +7,9 @@ the layers that got the fewest bits are the ones that lose the most.
         [--targets 3.0 3.5 4.0] [--stock ~/hfcache/inkling2-mini] [--json OUT.json]
 
 ``--runs/bpwT/`` holds the output of ``hi2 quantize`` (``hi2_report.json``, ``model*.safetensors``),
-``--evals/bpwT_SET.json`` the output of ``inkling_kl_eval.py`` for ``SET`` in mixed, wiki, pydocs and
-fine (what is missing prints as ``-``). Three tables:
+``--evals/bpwT_SET.json`` the output of ``inkling_kl_eval.py`` for ``SET`` in mixed, wiki, pydocs, fine
+and routing (the mixed windows with ``--routing-log``; it stands for ``mixed`` where there is none; what is
+missing prints as ``-``). A target may carry a tag after its bits (``3.5-p0.5``: ``bpw3.5-p0.5``). Tables:
 
 1. **Targets**: the experts' size, the whole directory's, the allocation's bits and shares, and the KL,
    top-1 agreement and perplexity ratio of every evaluated set.
@@ -17,6 +18,10 @@ fine (what is missing prints as ``-``). Three tables:
    share of INT2 rows, the allocator's own predicted relative error of its experts and the weight error the
    evaluation measured, with a rank correlation of each against the KL. Bits and KL that disagree, or a
    predicted error that does not follow the KL, show up there.
+4. **Windows** (``--windows 17 30 --clean 24``): the KL of single windows of the mixed set, the mean of the
+   first ``--clean`` windows, and the paired difference of every target to the first one.
+5. **Routing** (evaluations made with ``--routing-log``): the share of the experts and of the token-expert
+   assignments that are INT2-class, per group of layers, and on the chosen windows.
 """
 
 import argparse
@@ -180,7 +185,7 @@ def collect(runs: Path, evals: Path, targets: list[str], stock: Path | None) -> 
             entry["layers"] = layer_stats(report)
             entry["load"] = expert_load(report)
             entry["total_gib"] = _dir_gib(run, "model*.safetensors")
-        for s in (*SETS, "fine"):
+        for s in (*SETS, "fine", "routing"):
             ev = _load(evals / f"bpw{t}_{s}.json")
             if ev is not None:
                 entry["evals"][s] = ev
@@ -192,7 +197,31 @@ def _f(x, spec=".4f") -> str:
     return "-" if x is None else format(x, spec)
 
 
-def render(data: dict) -> str:
+def _mixed(entry: dict) -> dict | None:
+    """The evaluation on the mixed held-out windows: ``eval T mixed``, or else ``eval T routing`` (the
+    same windows and the same student pass, with the routing log)."""
+    return entry["evals"].get("mixed") or entry["evals"].get("routing")
+
+
+def _routing(entry: dict) -> dict | None:
+    for s in ("routing", "mixed"):
+        r = (entry["evals"].get(s) or {}).get("routing")
+        if r:
+            return r
+    return None
+
+
+def paired(a: list[float], b: list[float]) -> dict:
+    """``a - b`` over the windows both scored: mean, standard error of the mean and the windows where
+    ``a`` is lower (better)."""
+    d = [x - y for x, y in zip(a, b)]
+    n = len(d)
+    mean = sum(d) / n
+    sem = math.sqrt(sum((x - mean) ** 2 for x in d) / (n - 1) / n) if n > 1 else None
+    return {"mean": mean, "sem": sem, "better": sum(x < 0 for x in d), "windows": n}
+
+
+def render(data: dict, windows=(), clean: int = 0) -> str:
     targets = list(data["targets"])
     L: list[str] = []
     head = (
@@ -222,7 +251,7 @@ def render(data: dict) -> str:
         else:
             cells += ["-"] * 5
         for s in SETS:
-            ev = e["evals"].get(s)
+            ev = _mixed(e) if s == "mixed" else e["evals"].get(s)
             st = ev and ev.get("student")
             cells.append(
                 "-"
@@ -373,7 +402,77 @@ def render(data: dict) -> str:
             + ": the same value in every group"
             " would mean that the error alone sets the KL.",
         ]
+    L += _windows_section(data, windows, clean)
+    L += _routing_section(data, windows)
     return "\n".join(L) + "\n"
+
+
+def _windows_section(data: dict, windows, clean: int) -> list[str]:
+    """The KL of chosen windows of the mixed set and of its first ``clean`` windows, the paired
+    difference of every target to the first one."""
+    targets = [t for t in data["targets"] if _mixed(data["targets"][t])]
+    if not targets or not (windows or clean):
+        return []
+    per = {t: _mixed(data["targets"][t])["student"]["kl_per_window"] for t in targets}
+    base = targets[0]
+    head = "| target | KL +- sem | " + " | ".join(f"window {w}" for w in windows)
+    if clean:
+        head += f" | windows 0-{clean - 1} mean"
+    head += f" | mean of (target - {base}) +- paired sem | windows better than {base} |"
+    L = ["", "#### Windows of the mixed set (KL per window)", "", head]
+    L.append("| " + " | ".join(["---"] * (head.count("|") - 1)) + " |")
+    for t in targets:
+        kls = per[t]
+        st = _mixed(data["targets"][t])["student"]
+        cells = [t, f"{st['kl_mean']:.4f} +- {_f(st.get('kl_sem'))}"]
+        cells += [_f(kls[w] if w < len(kls) else None, ".4f") for w in windows]
+        if clean:
+            cells.append(_f(sum(kls[:clean]) / len(kls[:clean]), ".4f"))
+        if t == base:
+            cells += ["-", "-"]
+        else:
+            d = paired(kls, per[base])
+            cells += [
+                f"{d['mean']:+.4f} +- {_f(d['sem'])}",
+                f"{d['better']} of {d['windows']}",
+            ]
+        L.append("| " + " | ".join(cells) + " |")
+    return L
+
+
+def _routing_section(data: dict, windows) -> list[str]:
+    """Where the router sends the tokens of the student: per group of layers the share of the experts
+    and of the token-expert assignments that are INT2-class (mean code width < 3 bits), the bits per
+    assignment, and the INT2 share of the assignments of chosen windows."""
+    rows = {t: _routing(e) for t, e in data["targets"].items()}
+    rows = {t: r for t, r in rows.items() if r}
+    if not rows:
+        return []
+    head = "| target | layers | experts INT2 % | assignments INT2 % | INT4 % | INT8 % | bits per assignment |"
+    head += "".join(f" window {w}: INT2 % |" for w in windows)
+    L = [
+        "",
+        "#### Routing of the student (share of the token-expert assignments by the width class of the expert)",
+        "",
+    ]
+    L += [head, "| " + " | ".join(["---"] * (head.count("|") - 1)) + " |"]
+    for t, r in rows.items():
+        blocks = {**r["groups"], "all": r["all_layers"]}
+        for name, g in blocks.items():
+            a = g["assignments"]
+            cells = [
+                t,
+                name,
+                f"{100 * g['experts']['int2']:.1f}",
+                f"{100 * a['int2']:.1f}",
+                f"{100 * a['int4']:.1f}",
+                f"{100 * a['int8']:.1f}",
+                f"{g['mean_bits']:.3f}",
+            ]
+            pw = g["per_window"]["int2"]
+            cells += [_f(None if w >= len(pw) else 100 * pw[w], ".1f") for w in windows]
+            L.append("| " + " | ".join(cells) + " |")
+    return L
 
 
 def main(argv=None) -> int:
@@ -390,6 +489,19 @@ def main(argv=None) -> int:
     )
     ap.add_argument(
         "--json", type=Path, default=None, help="also write the collected numbers"
+    )
+    ap.add_argument(
+        "--windows",
+        type=int,
+        nargs="*",
+        default=[],
+        help="windows of the mixed set to list",
+    )
+    ap.add_argument(
+        "--clean",
+        type=int,
+        default=0,
+        help="mean KL of the first N windows of the mixed set",
     )
     a = ap.parse_args(argv)
     data = collect(a.runs, a.evals, a.targets, a.stock)
@@ -414,6 +526,7 @@ def main(argv=None) -> int:
                     "evals": {
                         s: {
                             "student": ev.get("student"),
+                            "routing": ev.get("routing"),
                             "groups": {
                                 k: g.get("kl_mean")
                                 for k, g in (ev.get("groups") or {}).items()
@@ -426,7 +539,7 @@ def main(argv=None) -> int:
             },
         }
         a.json.write_text(json.dumps(slim, indent=1) + "\n")
-    print(render(data))
+    print(render(data, a.windows, a.clean))
     return 0
 
 

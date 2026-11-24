@@ -611,6 +611,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="lower bound of an expert's routed-token share in its allocation weight",
     )
     probe.add_argument(
+        "--expert-load-power",
+        type=float,
+        default=1.0,
+        help="exponent of an expert's routed-token share in its allocation weight: 1 = "
+        "proportional to the load, 0 = every expert of a layer and projection weighs the "
+        "same, in between flattens the allocation across experts",
+    )
+    probe.add_argument(
         "--cache-devices",
         type=int,
         default=0,
@@ -1112,6 +1120,7 @@ def dispatch_command(a) -> dict:
             sens_batch=a.sens_batch,
             sens_dtype=a.sens_dtype,
             expert_share_floor=a.expert_share_floor,
+            expert_load_power=a.expert_load_power,
             moe_layout=a.moe_layout,
             int8_force=a.int8_force,
             cfg=Config(

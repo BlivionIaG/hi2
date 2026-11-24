@@ -62,7 +62,7 @@ kinds of entries, each `<root>/<kind>/<digest>/` with its full key in `key.json`
 | --- | --- | --- |
 | `stats` | `sigma/<leader>.pt`: per-input `Sigma = E[x x^T]` (fp32 upper triangle when exactly symmetric); `colstats/<leader>.pt`: 16x16 moments; `layers.json`: shared inputs/token counts; `expert_tokens.json` for MoE | Full model-directory fingerprint (`sha256-content-v1`, relative filenames plus config/index/shard bytes), auxiliary model inputs (canonical paths and full SHA256 digests), calibration token-ID hash, compute dtype/device kind/count, include/exclude/layer limit, expert token floor and `STATS_VERSION` |
 | `tables` | the phase-1 tables | the stats digest, the candidates, `--rotation`, `--smooth`, `--effort`, `TABLES_VERSION` |
-| `probe` | `sensitivity.json` | the tables digest, a hash of the probe token ids (`--sens-seqs`, `--sens-len`), `--sens-floor`, `--sens-dtype`, `--sens-batch`, `--expert-share-floor`, the reference candidate, `--effort`, device count, `PROBE_VERSION` |
+| `probe` | `sensitivity.json` | the tables digest, a hash of the probe token ids (`--sens-seqs`, `--sens-len`), `--sens-floor`, `--sens-dtype`, `--sens-batch`, `--expert-share-floor`, `--expert-load-power` (only when not 1), the reference candidate, `--effort`, device count, `PROBE_VERSION` |
 
 Sigma is taken in the original basis from the unquantized model, so it depends only on
 the model, the calibration tokens and how they are run, never on the target bpw, the

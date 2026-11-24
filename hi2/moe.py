@@ -246,14 +246,21 @@ def coverage(counts: dict[str, int], fallback) -> dict:
 # ---------------------------------------------------------------- allocation
 
 
-def expert_weights(tables: dict, share_floor: float = 0.05) -> dict[str, float]:
+def expert_weights(
+    tables: dict, share_floor: float = 0.05, power: float = 1.0
+) -> dict[str, float]:
     """Allocation multiplier per tensor: 1 for dense tensors, ``share_e / E`` for the
     E experts of one layer and projection, with ``share_e = n_e / mean(n)`` (routed
     tokens relative to a uniform router, floored at ``share_floor``).
 
     All experts of a group together weigh as much as one dense projection (each token
     sees a router-weighted average of its experts' errors), and inside the group an
-    expert counts in proportion to the tokens it serves."""
+    expert counts in proportion to the tokens it serves.
+
+    ``power`` p flattens (p < 1) or sharpens (p > 1) that dependence on the load: an
+    expert counts as ``share_e ** p`` and the group still weighs 1 (``share_e ** p``
+    over the sum of the group's). p = 0 weighs every expert alike whatever it serves,
+    p = 1 (the default) is the weight above to the bit."""
     groups: dict[str, list[str]] = {}
     for name in tables:
         if expert_parts(name) is not None:
@@ -262,9 +269,13 @@ def expert_weights(tables: dict, share_floor: float = 0.05) -> dict[str, float]:
     for names in groups.values():
         ns = [tables[n].n_tokens for n in names]
         mean = sum(ns) / len(ns)
-        for n, c in zip(names, ns):
-            share = c / mean if mean > 0 else 1.0
-            out[n] = max(share, share_floor) / len(names)
+        shares = [max(c / mean if mean > 0 else 1.0, share_floor) for c in ns]
+        total: float = len(names)
+        if power != 1.0:
+            shares = [s**power for s in shares]
+            total = sum(shares)
+        for n, s in zip(names, shares):
+            out[n] = s / total
     return out
 
 

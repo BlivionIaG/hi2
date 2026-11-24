@@ -176,6 +176,7 @@ def probe_key(tkey: dict, rc, probe_ids: torch.Tensor, ref_candidate) -> dict:
         "floor": rc.sens_floor,
         "dtype": rc.sens_dtype,
         "share_floor": rc.expert_share_floor,
+        **({"load_power": rc.expert_load_power} if rc.expert_load_power != 1.0 else {}),
         "ref_candidate": list(ref_candidate),
         "effort": rc.cfg.effort,
         "devices": rc.cache_devices or len(rc.devices),

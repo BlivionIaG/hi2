@@ -71,6 +71,9 @@ class RunConfig:
     # MoE: lower bound of an expert's routed-token share (relative to uniform routing)
     # in its allocation weight
     expert_share_floor: float = 0.05
+    # MoE: exponent of that share in the weight (1 = proportional to the load, 0 = every
+    # expert of a layer and projection weighs the same, hi2.moe.expert_weights)
+    expert_load_power: float = 1.0
     # persistent cache of statistics, tables and probe results (hi2.cache); None keeps
     # everything in the workdir as before
     cache_dir: Path | None = None
@@ -1037,6 +1040,7 @@ def _probe(rc: RunConfig, ex: Executor, tables, weights, log) -> dict | None:
         "floor": rc.sens_floor,
         "dtype": rc.sens_dtype,
         "share_floor": rc.expert_share_floor,
+        **({"load_power": rc.expert_load_power} if rc.expert_load_power != 1.0 else {}),
         **({"batch": rc.sens_batch} if rc.sens_batch != 1 else {}),
     }
     spath, kpath = rc.workdir / "sensitivity.json", rc.workdir / "sensitivity.key.json"
@@ -1230,7 +1234,7 @@ def _run_resolved(rc: RunConfig, log) -> dict:
     t_phase1 = time.time()
     # MoE: all experts of a layer and projection weigh as one dense tensor, split by
     # routed-token share (empty for dense models)
-    weights = expert_weights(tables, rc.expert_share_floor)
+    weights = expert_weights(tables, rc.expert_share_floor, rc.expert_load_power)
     if weights:
         log(
             f"MoE: {len(weights)} expert tensors in "

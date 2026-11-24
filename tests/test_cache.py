@@ -753,6 +753,7 @@ def test_cache_keys_can_record_another_device_count(monkeypatch):
         sens_floor=0.05,
         sens_dtype="float32",
         expert_share_floor=0.05,
+        expert_load_power=1.0,
         sens_batch=1,
     )
     ids = torch.zeros(2, 4, dtype=torch.long)

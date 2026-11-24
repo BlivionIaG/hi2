@@ -20,6 +20,12 @@ on the same windows is in the result for comparison.
     python experiments/inkling_kl_eval.py --src STOCK --dst HI2 --ids heldout_mixed_ids.npy \\
         --windows 32 --devices cuda:0 cuda:1 --compute-dtype float16 --out kl.json
 
+``--routing-log`` records, in the same student pass, where the router sends every token of every
+window (per window, layer and expert) and reports per layer group the share of the
+token-expert assignments that go to INT2-class experts (mean code width < 3 bits over the
+expert's gate, up and down), to INT4-class ones (< 6) and to INT8-class ones: where the
+quantization error is paid. The counts are in ``<out stem>_routing.npz``.
+
 Exit code 0 when every gate held: the student covers every routed expert and nothing else
 was quantized, differs from the teacher, every value is finite, no KL is negative, the metric
 gives 0 on identical inputs, the groups restored the stock weights, the held-out ids match
@@ -28,11 +34,15 @@ missing expert, another quantized tensor) is refused before the model is loaded.
 """
 
 import argparse
+import collections
 import copy
 import hashlib
+import inspect
 import json
+import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -221,6 +231,213 @@ class Experts:
         return dict.fromkeys(self.mods, kind)
 
 
+def expert_bits(ck, path: str, layers, n_experts: int) -> torch.Tensor:
+    """Mean code width of every routed expert of an HI2 output, ``[layers, experts]``: the mean
+    over the rows of its gate, up and down (each has as many weights as the others and every
+    row of a tensor as many as the rest, so the mean over rows is the mean over weights)."""
+    out = torch.zeros(len(layers), n_experts, dtype=torch.float64)
+    for li, layer in enumerate(layers):
+        for e in range(n_experts):
+            bits = [
+                ck.get(f"{path}.{layer}.mlp.experts.{e}.{p}").row_nbits.double().mean()
+                for p in ("gate_proj", "up_proj", "down_proj")
+            ]
+            out[li, e] = torch.stack(bits).mean()
+    return out
+
+
+CLASSES = {
+    "int2": "mean code width < 3",
+    "int4": "3 <= width < 6",
+    "int8": "width >= 6",
+}
+EDGES = [
+    2.0,
+    2.5,
+    3.0,
+    3.5,
+    4.0,
+    5.0,
+    6.0,
+    7.0,
+    8.01,
+]  # of the histogram of expert widths
+
+
+def class_masks(bits: torch.Tensor) -> dict[str, torch.Tensor]:
+    """The INT2-, INT4- and INT8-class experts of ``expert_bits`` (every expert in one)."""
+    return {
+        "int2": bits < 3.0,
+        "int4": (bits >= 3.0) & (bits < 6.0),
+        "int8": bits >= 6.0,
+    }
+
+
+class Routing:
+    """Where the router of the student sends the tokens of the evaluation windows.
+
+    The layer program runs a layer for all windows at once: the windows are dealt round-robin
+    to the devices (one thread each, ``hi2.layerwise._layer_pass``) and a device runs its
+    share in batches of ``HI2_LOOP_SEQS`` windows through its own copy of the layer
+    (``_device_pass``). ``_device_pass`` is wrapped here so that the thread running a layer
+    call knows which windows each of its forwards holds, and a pre-hook on the experts of
+    every layer (the copies share it) counts, per window of the forward, the tokens sent to
+    each expert. ``counts[window, layer, expert]`` adds up the passes of a loop layer."""
+
+    def __init__(self, model, experts: "Experts", cfg, seq_len: int, n_windows: int):
+        from hi2 import layerwise, looped
+
+        self.layerwise = layerwise
+        self.seq_len = seq_len
+        _, layers = layerwise.find_layers(model)
+        self.layers = sorted(experts.mods)
+        self.slot = {id(layers[i]): s for s, i in enumerate(self.layers)}
+        self.n_experts = len(experts.mods[self.layers[0]])
+        self.passes = collections.Counter(c.layer for c in looped.schedule(cfg))
+        self.counts = torch.zeros(
+            n_windows, len(self.layers), self.n_experts, dtype=torch.int64
+        )
+        self.top_k: set[int] = set()
+        self.forwards = 0
+        self.problems: list[str] = []
+        self.lock = threading.Lock()
+        self.local = threading.local()
+
+        def hook(_module, args, kwargs):
+            # a plain function: the deep copy of a layer that every device pass makes
+            # shares it (a bound method would be copied with its owner, counts and all)
+            self._count(args, kwargs)
+
+        self.handles = [
+            layers[i].mlp.experts.register_forward_pre_hook(hook, with_kwargs=True)
+            for i in self.layers
+        ]
+        self.original = layerwise._device_pass
+        self.signature = inspect.signature(self.original)
+        layerwise._device_pass = self._device_pass
+
+    def close(self) -> None:
+        for h in self.handles:
+            h.remove()
+        self.layerwise._device_pass = self.original
+
+    def _windows(self, items, batch) -> list[list[int]]:
+        """The windows of every forward of a device, as ``layerwise._run`` batches them."""
+        if len(items) > 1 and os.environ.get("HI2_LAYER_BATCH", "1") != "0":
+            return self.layerwise._chunks(items, batch)
+        return [[i] for i in items]
+
+    def _device_pass(self, layer, dev, items, *args, **kwargs):
+        slot = self.slot.get(id(layer))
+        if slot is None:  # not a layer of the routed experts
+            return self.original(layer, dev, items, *args, **kwargs)
+        batch = self.signature.bind(layer, dev, items, *args, **kwargs).arguments.get(
+            "batch"
+        )
+        ctx = self.local
+        ctx.slot, ctx.forwards, ctx.k = slot, self._windows(items, batch), 0
+        try:
+            return self.original(layer, dev, items, *args, **kwargs)
+        finally:
+            if ctx.k != len(ctx.forwards):
+                self.problems.append(
+                    f"layer {self.layers[slot]}: {ctx.k} expert forwards for "
+                    f"{len(ctx.forwards)} batches of windows"
+                )
+            ctx.slot = None
+
+    def _count(self, args, kwargs):
+        ctx = self.local
+        if getattr(ctx, "slot", None) is None:
+            return
+        idx = args[1] if len(args) > 1 else kwargs["top_k_index"]
+        if ctx.k >= len(ctx.forwards):
+            raise RuntimeError("more expert forwards than batches of windows")
+        windows = ctx.forwards[ctx.k]
+        ctx.k += 1
+        n, k = idx.shape
+        if n != len(windows) * self.seq_len:
+            raise RuntimeError(
+                f"an expert forward holds {n} tokens, not {len(windows)} windows of "
+                f"{self.seq_len}"
+            )
+        rows = len(windows)
+        per = torch.zeros(rows, self.n_experts, dtype=torch.int64, device=idx.device)
+        sent = idx.reshape(
+            rows, -1
+        )  # window-major: the tokens of a window are consecutive
+        per.scatter_add_(1, sent, torch.ones_like(sent, dtype=torch.int64))
+        per = per.cpu()
+        with self.lock:
+            self.top_k.add(k)
+            self.forwards += 1
+            for j, w in enumerate(windows):
+                self.counts[w, ctx.slot] += per[j]
+
+    def summarize(
+        self, bits: torch.Tensor, groups: list[list[int]], group_name
+    ) -> dict:
+        """The routing against the code widths of the experts, per layer group and window."""
+        if len(self.top_k) != 1:
+            return {"complete": False, "problem": f"top-k seen: {sorted(self.top_k)}"}
+        (k,) = self.top_k  # one top-k for every layer
+        want = torch.tensor([self.passes[li] * self.seq_len * k for li in self.layers])
+        total = self.counts.sum(-1)  # [windows, layers]
+        complete = bool((total == want).all()) and not self.problems
+        masks = class_masks(bits)
+        counts = self.counts.double()
+
+        def block(slots: list[int]) -> dict:
+            c = counts[:, slots]  # [windows, layers, experts]
+            tot = c.sum((1, 2))
+            out = {
+                "layers": [self.layers[s] for s in slots],
+                "assignments_per_window": tot.tolist(),
+                "experts": {
+                    n: float(m[slots].double().mean()) for n, m in masks.items()
+                },
+                "assignments": {},
+                "per_window": {},
+                "mean_bits": float((c * bits[slots]).sum() / c.sum()),
+                "mean_bits_per_window": ((c * bits[slots]).sum((1, 2)) / tot).tolist(),
+            }
+            for n, m in masks.items():
+                by = (c * m[slots]).sum((1, 2))
+                out["assignments"][n] = float(by.sum() / c.sum())
+                out["per_window"][n] = (by / tot).tolist()
+            return out
+
+        slot_of = {li: s for s, li in enumerate(self.layers)}
+        return {
+            "complete": complete,
+            "top_k": k,
+            "classes": CLASSES,
+            "passes": {str(li): self.passes[li] for li in self.layers},
+            "groups": {
+                group_name(g): block([slot_of[li] for li in g if li in slot_of])
+                for g in groups
+            },
+            "all_layers": block(list(range(len(self.layers)))),
+            "expert_bits_histogram": {
+                "edges": EDGES,
+                "experts": [
+                    int(((bits >= a) & (bits < b)).sum())
+                    for a, b in zip(EDGES[:-1], EDGES[1:])
+                ],
+            },
+        }
+
+    def save(self, path: Path, bits: torch.Tensor) -> None:
+        np.savez_compressed(
+            path,
+            counts=self.counts.numpy().astype(np.int32),
+            expert_bits=bits.numpy().astype(np.float32),
+            layers=np.array(self.layers),
+            passes=np.array([self.passes[li] for li in self.layers]),
+            seq_len=self.seq_len,
+        )
+
+
 def sha256_array(a: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(a, dtype=np.int32).tobytes()).hexdigest()
 
@@ -261,6 +478,13 @@ def parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--max-kl", type=float, default=None, help="gate: KL of the whole student"
+    )
+    ap.add_argument(
+        "--routing-log",
+        action="store_true",
+        help="count where the student's router sends the tokens of every window (per "
+        "layer and expert) and report the share going to INT2-class experts per layer "
+        "group; the counts go to <out stem>_routing.npz",
     )
     ap.add_argument("--out", type=Path, required=True)
     return ap
@@ -422,7 +646,20 @@ def main(argv=None) -> int:
             probe = timed("probe_program", lambda: heads(ids[:1]))
         # --- the student
         timed("install_student", lambda: experts.set(experts.all("student")))
-        hs = timed("student_program", lambda: heads(ids))
+        routing = None
+        try:
+            if a.routing_log:
+                routing = Routing(
+                    model,
+                    experts,
+                    model.model.language_model.config,
+                    int(ids.shape[1]),
+                    int(ids.shape[0]),
+                )
+            hs = timed("student_program", lambda: heads(ids))
+        finally:
+            if routing is not None:
+                routing.close()
         gate("student_finite", torch.isfinite(hs).all(), tuple(hs.shape))
         stats = timed("metrics", lambda: kl_stats(lm, hs, ht, ids, head_dev))
         result["student"] = summarize(stats)
@@ -430,6 +667,29 @@ def main(argv=None) -> int:
         result["student_on_breakdown_windows"] = summarize(
             {k: v[:bw] for k, v in stats.items()}
         )
+        if routing is not None:
+            cfg = model.model.language_model.config
+            bits = expert_bits(ck, experts.path, routing.layers, routing.n_experts)
+            rgroups = parse_groups(
+                "auto",
+                len(experts.mods),
+                (cfg.loop_layer_index_start, cfg.loop_layer_index_end),
+                src.formats(),
+            )
+            result["routing"] = routing.summarize(bits, rgroups, group_name)
+            a.out.parent.mkdir(parents=True, exist_ok=True)
+            routing.save(a.out.with_name(f"{a.out.stem}_routing.npz"), bits)
+            gate(
+                "routing_log_complete",
+                result["routing"]["complete"],
+                f"{routing.forwards} expert forwards counted; {routing.problems[:2]}",
+            )
+            for name, g in result["routing"].get("groups", {}).items():
+                log(
+                    f"routing {name}: INT2-class experts {g['experts']['int2']:.3f} of "
+                    f"the experts, {g['assignments']['int2']:.3f} of the assignments, "
+                    f"{g['mean_bits']:.3f} bits per assignment"
+                )
         # --- where the damage is
         if groups:
             result["groups"] = {}

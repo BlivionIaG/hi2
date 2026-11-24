@@ -592,3 +592,218 @@ def test_a_layer_that_stays_quantized_fails_the_restore_gate(
     code, res = _score(kl, tiny, students["coarse"], ids_file, tmp_path)
     gate = res["gates"]["groups_restored_the_stock_weights"]
     assert code == 1 and not gate["ok"] and not gate["detail"].startswith("max diff 0 ")
+
+
+# ------------------------------------------------------------------ the routing log
+
+
+def _routing(kl, tiny, dst, ids, tmp_path, name, *extra):
+    """``--routing-log`` on the windows ``ids``: ``(exit code, result, the counts file)``."""
+    path = tmp_path / f"{name}_ids.npy"
+    np.save(path, ids)
+    code, res = _score(
+        kl,
+        tiny,
+        dst,
+        path,
+        tmp_path,
+        "--routing-log",
+        "--groups",
+        "none",
+        *extra,
+        name=f"{name}.json",
+    )
+    return code, res, np.load(tmp_path / f"{name}_routing.npz")
+
+
+def test_the_class_of_an_expert_follows_its_mean_code_width(kl):
+    bits = torch.tensor([[2.0, 2.99], [3.0, 5.99], [6.0, 8.0]], dtype=torch.float64)
+    m = kl.class_masks(bits)
+    assert m["int2"].tolist() == [[True, True], [False, False], [False, False]]
+    assert m["int4"].tolist() == [[False, False], [True, True], [False, False]]
+    assert m["int8"].tolist() == [[False, False], [False, False], [True, True]]
+    assert (sum(x.long() for x in m.values()) == 1).all()  # each expert in one class
+
+
+@pytest.mark.parametrize("per_window_forward", [False, True])
+def test_the_routing_log_sends_every_token_to_its_own_window_on_two_devices(
+    kl, tiny, students, ids_file, tmp_path, monkeypatch, per_window_forward
+):
+    """Six windows dealt round-robin to two devices in batches of two (windows 0 and 2, then 4
+    on the first; 1 and 3, then 5 on the second), or one forward per window
+    (``HI2_LAYER_BATCH=0``): the counts of window w are those of window w run alone,
+    whichever device and batch held it."""
+    monkeypatch.setenv("HI2_LOOP_SEQS", "2")
+    if per_window_forward:
+        monkeypatch.setenv("HI2_LAYER_BATCH", "0")
+    ids = np.load(ids_file)
+    both = ("--devices", "cpu", "cpu")
+    code, res, npz = _routing(
+        kl, tiny, students["coarse"], ids, tmp_path, "both", *both
+    )
+    assert code == 0 and res["ok"] and res["gates"]["routing_log_complete"]["ok"]
+    counts = npz["counts"]
+    assert counts.shape == (6, 6, 8)  # windows, layers, experts of the tiny model
+    for w in range(6):
+        solo = _routing(kl, tiny, students["coarse"], ids[w : w + 1], tmp_path, f"w{w}")
+        assert solo[0] == 0 and np.array_equal(solo[2]["counts"][0], counts[w]), w
+    assert len({counts[w].tobytes() for w in range(6)}) == 6  # the windows differ
+
+
+def test_the_routing_log_adds_up_and_reports_the_classes(
+    kl, tiny, students, ids_file, tmp_path
+):
+    ids = np.load(ids_file)
+    code, res, npz = _routing(kl, tiny, students["coarse"], ids, tmp_path, "coarse")
+    assert code == 0, res["gates"]
+    r = res["routing"]
+    passes = {0: 1, 1: 1, 2: 2, 3: 2, 4: 1, 5: 1}  # the loop layers run twice
+    assert r["passes"] == {str(k): v for k, v in passes.items()}
+    counts, bits = npz["counts"].astype(np.int64), npz["expert_bits"]
+    for (
+        layer,
+        n,
+    ) in passes.items():  # every token of every window, k experts, every pass
+        assert (counts[:, layer].sum(-1) == n * 24 * r["top_k"]).all(), layer
+    assert r["complete"] and list(r["groups"]) == ["0-1", "2-3", "4", "5"]
+    # the shares, recomputed from the counts and the widths of the output
+    int2 = bits < 3.0
+    for name, g in r["groups"].items():
+        slots = g["layers"]
+        c = counts[:, slots]
+        want = (c * int2[slots]).sum((1, 2)) / c.sum((1, 2))
+        assert g["per_window"]["int2"] == pytest.approx(want.tolist(), abs=1e-12), name
+        assert sum(g["assignments"].values()) == pytest.approx(1.0)
+        assert sum(g["experts"].values()) == pytest.approx(1.0)
+        assert g["mean_bits"] == pytest.approx(float((c * bits[slots]).sum() / c.sum()))
+        assert len(g["per_window"]["int2"]) == len(g["mean_bits_per_window"]) == 6
+    whole = r["all_layers"]
+    assert whole["layers"] == list(range(6))
+    assert whole["assignments"]["int2"] == pytest.approx(
+        float((counts * int2).sum() / counts.sum())
+    )
+    assert sum(r["expert_bits_histogram"]["experts"]) == 6 * 8  # every expert once
+    # a coarser output has more INT2-class experts and a lower code width than a finer one
+    code, res, _ = _routing(kl, tiny, students["fine"], ids, tmp_path, "fine")
+    assert code == 0
+    fine, coarse = res["routing"]["all_layers"], r["all_layers"]
+    assert fine["experts"]["int2"] < coarse["experts"]["int2"]
+    assert fine["mean_bits"] > coarse["mean_bits"]
+
+
+def test_the_routing_log_changes_nothing_it_measures(
+    kl, tiny, students, ids_file, tmp_path
+):
+    import hi2.layerwise as layerwise
+
+    original = layerwise._device_pass
+    code, plain = _score(
+        kl,
+        tiny,
+        students["coarse"],
+        ids_file,
+        tmp_path,
+        "--groups",
+        "none",
+        name="p.json",
+    )
+    assert code == 0 and "routing" not in plain
+    assert not (tmp_path / "p_routing.npz").exists()  # off unless asked for
+    code, logged, _ = _routing(
+        kl, tiny, students["coarse"], np.load(ids_file), tmp_path, "l"
+    )
+    assert code == 0
+    assert plain["student"]["kl_per_window"] == logged["student"]["kl_per_window"]
+    assert layerwise._device_pass is original  # the wrapper is gone
+
+
+def test_a_log_that_misses_a_batch_fails_its_gate(
+    kl, tiny, students, ids_file, tmp_path, monkeypatch
+):
+    real = kl.Routing._windows
+    monkeypatch.setattr(
+        kl.Routing,
+        "_windows",
+        lambda self, items, batch: [*real(self, items, batch), [0]],
+    )  # one batch of windows more than the layer runs
+    code, res, _ = _routing(
+        kl, tiny, students["coarse"], np.load(ids_file), tmp_path, "x"
+    )
+    assert code == 1 and not res["gates"]["routing_log_complete"]["ok"]
+    assert "expert forwards for" in res["gates"]["routing_log_complete"]["detail"]
+
+
+def test_a_forward_that_is_not_the_windows_it_is_said_to_hold_stops_the_run(
+    kl, tiny, students, ids_file, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HI2_LOOP_SEQS", "2")
+    monkeypatch.setattr(
+        kl.Routing, "_windows", lambda self, items, batch: [[i] for i in items]
+    )
+    with pytest.raises(RuntimeError, match="holds 48 tokens, not 1 windows of 24"):
+        _routing(kl, tiny, students["coarse"], np.load(ids_file), tmp_path, "y")
+
+
+@pytest.fixture(scope="module")
+def students_mixed(tiny, tmp_path_factory):
+    """An output whose experts do not all have one code width, and lie on both sides of the INT2
+    class edge (2.90-3.07 bits, 79 % of them below 3; the others are one class each)."""
+    return _quantize(tiny, tmp_path_factory.mktemp("kl_mixed"), "mixed", 3.7)
+
+
+@pytest.mark.parametrize("which", ["coarse", "fine", "mixed"])
+def test_the_widths_of_the_experts_are_those_of_the_allocation(
+    kl, tiny, students, students_mixed, which
+):
+    """The mean code width of an expert read from the rows of its tensors equals the one the
+    allocation report gives (2 bits plus 2 per INT4 and 6 per INT8 share of the rows),
+    averaged over its gate, up and down."""
+    from hi2.stack import Hi2Checkpoint
+
+    dst = students_mixed if which == "mixed" else students[which]
+    report = json.loads((dst / "hi2_report.json").read_text())["tensors"]
+    path = "model.language_model.layers"
+    bits = kl.expert_bits(Hi2Checkpoint(dst), path, list(range(6)), 8)
+    assert tuple(bits.shape) == (6, 8) and bits.min() >= 2.0 and bits.max() <= 8.0
+    wanted = []
+    for layer in range(6):
+        for e in range(8):
+            rows = [
+                report[f"{path}.{layer}.mlp.experts.{e}.{p}_proj.weight"]
+                for p in ("gate", "up", "down")
+            ]
+            want = np.mean([2 + 2 * r["frac_int4"] + 6 * r["frac_int8"] for r in rows])
+            assert float(bits[layer, e]) == pytest.approx(want, abs=1e-9), (layer, e)
+            wanted.append(round(float(want), 9))
+    assert (len(set(wanted)) > 1) == (which == "mixed")  # the others are all one width
+
+
+def test_an_output_of_mixed_widths_weighs_the_widths_by_the_tokens_each_expert_gets(
+    kl, tiny, students_mixed, ids_file, tmp_path
+):
+    """With one width everywhere the mean over the experts and over the assignments are the
+    same number; with several they differ and the log reports the second."""
+    code, res, npz = _routing(
+        kl, tiny, students_mixed, np.load(ids_file), tmp_path, "mixed"
+    )
+    assert code == 0, res["gates"]
+    counts = npz["counts"].astype(np.int64)
+    bits = npz["expert_bits"].astype(np.float64)
+    whole = res["routing"]["all_layers"]
+    by_tokens = float((counts * bits).sum() / counts.sum())
+    assert whole["mean_bits"] == pytest.approx(by_tokens, rel=1e-6)
+    assert abs(by_tokens - float(bits.mean())) > 1e-4  # the router prefers some experts
+    int2 = bits < 3.0
+    assert 0 < int2.sum() < int2.size  # both classes are there
+    assert whole["experts"]["int2"] == pytest.approx(float(int2.mean()))
+    assert whole["assignments"]["int2"] == pytest.approx(
+        float((counts * int2).sum() / counts.sum())
+    )
+    assert whole["assignments"]["int2"] != pytest.approx(
+        whole["experts"]["int2"], abs=1e-3
+    )
+    for name, g in res["routing"]["groups"].items():  # each window of each group
+        slots = g["layers"]
+        c = counts[:, slots]
+        want = ((c * bits[slots]).sum((1, 2)) / c.sum((1, 2))).tolist()
+        assert g["mean_bits_per_window"] == pytest.approx(want, rel=1e-6), name
