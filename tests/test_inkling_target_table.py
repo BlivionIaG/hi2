@@ -1,0 +1,268 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the hi2 project
+"""``experiments/inkling_target_table.py``: the sizes come from the report and from the files on disk,
+the groups' bits and predicted errors are weighted by weights, a missing evaluation prints as "-", and the
+rank correlation of the groups' KL with their bits, INT2 share, predicted error and weight error is the
+textbook Spearman coefficient."""
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+GIB = 2**30
+
+
+def _import():
+    name = "hi2_test_inkling_target_table"
+    if name in sys.modules:
+        return sys.modules[name]
+    path = (
+        Path(__file__).resolve().parents[1] / "experiments" / "inkling_target_table.py"
+    )
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+WEIGHTS = 100_000 * 1_000  # one expert tensor per layer
+
+
+def _report(bpw, int4, err):
+    """One expert tensor of 1e8 weights in each of four layers."""
+    tensors = {}
+    for i in range(4):
+        tensors[f"model.language_model.layers.{i}.mlp.experts.0.gate_proj.weight"] = {
+            "shape": [100_000, 1_000],
+            "bpw": bpw[i],
+            "frac_int4": int4[i],
+            "frac_int8": 0.0,
+            "block_hist": {"64": 100_000},
+            "pred_rel_err": err[i],
+        }
+    tensors["lm_head.weight"] = {"shape": [5, 5], "bpw": 16}
+    return {"summary": {}, "tensors": tensors}
+
+
+def _eval(kl, top1=0.9, ppl=1.01, sem=0.01, groups=None, rms=None):
+    ev = {
+        "student": {
+            "kl_mean": kl,
+            "kl_sem": sem,
+            "top1_agreement": top1,
+            "ppl_ratio": ppl,
+        }
+    }
+    if groups:
+        ev["groups"] = {
+            k: {"kl_mean": v, "kl_sem": 0.001, "top1_agreement": 0.95, "ppl_ratio": 1.0}
+            for k, v in groups.items()
+        }
+    if rms:
+        ev["weight_error_per_layer"] = {
+            str(i): {"relative_rms": v} for i, v in enumerate(rms)
+        }
+    return ev
+
+
+@pytest.fixture
+def tree(tmp_path):
+    runs, evals = tmp_path / "runs", tmp_path / "eval"
+    evals.mkdir()
+    # 3.0: fewer bits everywhere; 3.5: more bits in the later layers
+    specs = {
+        "3.0": ([2.5, 2.5, 2.5, 2.5], [0.5, 0.5, 0.5, 0.5], [0.04, 0.03, 0.02, 0.01]),
+        "3.5": ([3.0, 3.2, 3.4, 3.6], [0.6, 0.7, 0.8, 0.9], [0.04, 0.03, 0.02, 0.01]),
+    }
+    for t, (bpw, int4, err) in specs.items():
+        d = runs / f"bpw{t}"
+        d.mkdir(parents=True)
+        (d / "hi2_report.json").write_text(json.dumps(_report(bpw, int4, err)))
+        for name, size in (
+            ("model-00001-of-00001.safetensors", GIB),
+            ("model-vision.safetensors", GIB // 2),
+        ):
+            with open(d / name, "wb") as f:
+                f.truncate(size)  # sparse: the size on disk is what is read
+    (evals / "bpw3.5_mixed.json").write_text(json.dumps(_eval(0.10, 0.93, 1.0095)))
+    (evals / "bpw3.0_mixed.json").write_text(json.dumps(_eval(0.12, 0.915, 1.0243)))
+    (evals / "bpw3.5_wiki.json").write_text(json.dumps(_eval(0.047, 0.913, 1.033)))
+    # KL falls with the bits and with the later layers; the weight error is not monotone
+    (evals / "bpw3.5_fine.json").write_text(
+        json.dumps(
+            _eval(
+                0.10,
+                groups={"0": 0.4, "1": 0.3, "2": 0.2, "3": 0.1},
+                rms=[0.1, 0.3, 0.2, 0.4],
+            )
+        )
+    )
+    return runs, evals
+
+
+def test_ranks_average_ties_and_spearman_is_the_textbook_coefficient():
+    m = _import()
+    assert m.ranks([10.0, 30.0, 20.0]) == [1.0, 3.0, 2.0]
+    assert m.ranks([1.0, 2.0, 2.0, 3.0]) == [1.0, 2.5, 2.5, 4.0]
+    assert m.spearman([1, 2, 3, 4], [10, 20, 30, 40]) == pytest.approx(1.0)
+    assert m.spearman([1, 2, 3, 4], [40, 30, 20, 10]) == pytest.approx(-1.0)
+    # rank differences 3, 0, 0, -3: 1 - 6 * 18 / (4 * 15)
+    assert m.spearman([4, 3, 2, 1], [1, 3, 2, 4]) == pytest.approx(-0.8)
+    assert m.spearman([1, 2], [1, 2]) is None  # too few
+    assert m.spearman([1, 2, 3], [5, 5, 5]) is None  # constant
+
+
+def test_sizes_come_from_the_report_and_from_the_files(tree):
+    m = _import()
+    runs, evals = tree
+    data = m.collect(runs, evals, ["3.0", "3.5"], None)
+    e30, e35 = data["targets"]["3.0"], data["targets"]["3.5"]
+    # 4 tensors of 1e8 weights: bits per weight 2.5 and (3.0 + 3.2 + 3.4 + 3.6) / 4 = 3.3
+    assert e30["experts"]["weights_g"] == pytest.approx(0.4)
+    assert e30["experts"]["bpw"] == pytest.approx(2.5)
+    assert e35["experts"]["bpw"] == pytest.approx(3.3)
+    assert e35["experts"]["gib"] == pytest.approx(4e8 * 3.3 / 8 / GIB, abs=1e-3)
+    assert e35["total_gib"] == pytest.approx(1.5)  # the text file and the vision tower
+    assert e35["experts"]["int4"] == pytest.approx((0.6 + 0.7 + 0.8 + 0.9) / 4)
+    text = m.render(data)
+    row = next(r for r in text.splitlines() if r.startswith("| 3.5 |"))
+    assert (
+        "| 0.154 | 1.346 | 1.500 | 3.300 |" in row
+    )  # experts, the rest of the directory, the total, bpw
+    assert (
+        "0.0470 +- 0.0100 / 0.913 / x1.0330" in row
+    )  # the wiki set of 3.5, with its own sem
+    wiki30 = next(r for r in text.splitlines() if r.startswith("| 3.0 |")).split("|")
+    assert wiki30[-3].strip() == "-"  # no wiki evaluation of 3.0: a dash, not a zero
+
+
+def test_int8_rows_are_not_counted_as_int2():
+    m = _import()
+    report = {
+        "tensors": {
+            "model.language_model.layers.0.mlp.experts.0.up_proj.weight": {
+                "shape": [10, 100],
+                "bpw": 5.0,
+                "frac_int4": 0.5,
+                "frac_int8": 0.25,
+                "pred_rel_err": 0.02,
+            },
+            "model.language_model.layers.0.mlp.experts.0.down_proj.bias": {
+                "shape": [10, 100],
+                "bpw": 16.0,
+            },
+            "model.language_model.embed_tokens.weight": {
+                "shape": [10, 100],
+                "bpw": 16.0,
+            },
+        }
+    }
+    layers = m.layer_stats(report)
+    assert list(layers) == [0]  # only the expert weights
+    assert layers[0]["w2"] == pytest.approx(250.0)
+    assert layers[0]["weights"] == 1000
+
+
+def test_the_layers_of_a_group_are_weighted_by_their_weights():
+    m = _import()
+    layers = {
+        0: {
+            "weights": 1_000,
+            "bits": 1_000 * 2.0,
+            "w2": 1_000.0,
+            "err": 1_000 * 0.1,
+            "err2": 1_000 * 0.01,
+        },
+        1: {
+            "weights": 3_000,
+            "bits": 3_000 * 4.0,
+            "w2": 0.0,
+            "err": 3_000 * 0.02,
+            "err2": 3_000 * 0.0004,
+        },
+    }
+    g = m.group_stats(layers, 0, 1)
+    assert g["bpw"] == pytest.approx((2.0 + 12.0) / 4)
+    assert g["int2"] == pytest.approx(0.25)
+    assert g["pred_err"] == pytest.approx((0.1 + 0.06) / 4)
+    assert g["pred_err_rms"] == pytest.approx(((0.01 + 0.0012) / 4) ** 0.5)
+    assert m.group_stats(layers, 5, 6) == {}
+    assert m.parse_group("3-5") == (3, 5) and m.parse_group("7") == (7, 7)
+
+
+def test_the_group_table_ranks_the_kl_against_bits_int2_predicted_and_measured_error(
+    tree,
+):
+    m = _import()
+    runs, evals = tree
+    text = m.render(m.collect(runs, evals, ["3.0", "3.5"], None))
+    assert "Groups of layers at 3.5 bpw" in text
+    assert "Groups of layers at 3.0" not in text  # no fine evaluation of 3.0
+    # KL [0.4 .. 0.1] against bits [3.0 .. 3.6]: -1; against the INT2 share (falls with the bits): +1;
+    # against the predicted error [0.04 .. 0.01]: +1; against the weight error [0.1, 0.3, 0.2, 0.4]: -0.8
+    line = next(x for x in text.splitlines() if x.startswith("Spearman"))
+    assert "bits per weight -1.00" in line and "INT2 share +1.00" in line
+    assert "predicted relative error +1.00" in line and "weight RMS error -0.80" in line
+    assert "(4 groups)" in line
+    # the first group: 3.0 bits at 3.5, 2.5 at 3.0, KL 0.4, weight error 0.1
+    row = next(x for x in text.splitlines() if x.startswith("| 0 |"))
+    assert "0.4000" in row and "3.000" in row and "2.500" in row and "0.100" in row
+
+
+def test_bits_per_layer_are_listed_for_every_target(tree):
+    m = _import()
+    runs, evals = tree
+    text = m.render(m.collect(runs, evals, ["3.0", "3.5"], None))
+    rows = [x for x in text.splitlines() if x[:2] == "| " and x[2:4].isdigit()]
+    assert rows == [
+        "| 00 | 2.500 | 3.000 |",
+        "| 01 | 2.500 | 3.200 |",
+        "| 02 | 2.500 | 3.400 |",
+        "| 03 | 2.500 | 3.600 |",
+    ]
+
+
+def test_the_stock_directory_sizes_are_reported(tree, tmp_path):
+    m = _import()
+    runs, evals = tree
+    stock = tmp_path / "stock"
+    stock.mkdir()
+    for name, size in (
+        ("model-00001-of-00002.safetensors", GIB),
+        ("mtp.safetensors", GIB // 4),
+    ):
+        with open(stock / name, "wb") as f:
+            f.truncate(size)
+    text = m.render(m.collect(runs, evals, ["3.5"], stock))
+    assert "stock files 1.250 GiB (MTP 0.250)" in text
+
+
+def test_command_line_prints_writes_and_refuses(tree, tmp_path, capsys):
+    m = _import()
+    runs, evals = tree
+    out = tmp_path / "table.json"
+    assert (
+        m.main(
+            [
+                "--runs",
+                str(runs),
+                "--evals",
+                str(evals),
+                "--targets",
+                "3.0",
+                "3.5",
+                "--json",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert "#### Targets" in capsys.readouterr().out
+    data = json.loads(out.read_text())
+    assert data["targets"]["3.5"]["layers"]["3"]["bpw"] == pytest.approx(3.6)
+    assert data["targets"]["3.5"]["evals"]["fine"]["groups"]["0"] == pytest.approx(0.4)
+    assert m.main(["--runs", str(tmp_path / "none"), "--evals", str(evals)]) == 1
