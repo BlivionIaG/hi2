@@ -1230,7 +1230,7 @@ from `qad.py`, `looped.py`, `layerwise.py`:
   layers, never run on an MoE one): 300 steps are about 20 min per single-pass layer on one card; a loop layer decodes once
   per step and runs three calls per sequence, at most 3x. Measured bound: a final-KL step costs 3.4 s per layer call and
   window with the recompute (163 s for 48 calls). Whole run: 12 x 20 min + 12 x up to 60 min plus the two program passes,
-  about 40 min ([INFERENCE]; two cards help less than 2x).
+  about 8-16 h depending on how much the second card helps ([INFERENCE], not measured on an MoE layer).
 * **Reusable:** `FakeQuantLinear` with `qad_kernel` and `export`; the AdamW, cosine, keep-best and held-out body of
   `train_layer`; `StepBudget`, `split_indices`, `fingerprint`, the artifact `layerNNN.pt` and `QadResult`; the PTQ
   initialisation (`encode_many` through `StatsView`, its statistics already pooled over the calls). **Not:**
