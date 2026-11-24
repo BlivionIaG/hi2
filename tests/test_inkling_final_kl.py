@@ -38,6 +38,8 @@ PHASE = {
     "final_kl": 4,
     "final_batch": 1,
     "final_lr_p": 0.5,
+    "final_lr_norm": 0.1,
+    "final_norms": False,
     "final_evals": 2,
 }
 FIELDS = (
@@ -198,6 +200,42 @@ def world(tiny, ids, fk, kl, tmp_path_factory):
         "eval": json.loads((root / "held_eval.json").read_text()),
         "info": json.loads((rc.workdir / "final_kl.json").read_text()),
     }
+
+
+def _output_norms(dst):
+    from safetensors.torch import load_file
+
+    out = {}
+    for f in sorted(Path(dst).glob("model*.safetensors")):
+        out.update({k: v for k, v in load_file(str(f)).items() if "norm" in k})
+    return out
+
+
+def test_frozen_norms_are_not_in_the_final_kl_optimizer(world, fk, ids, tmp_path, monkeypatch):
+    """The switch removes the RMSNorm group; this is the direct check the output writer
+    cannot give while ``final_norms`` is false."""
+    seen = []
+    real = torch.optim.AdamW
+
+    def spy(params, **kw):
+        seen.append(list(params))
+        return real(params, **kw)
+
+    monkeypatch.setattr(torch.optim, "AdamW", spy)
+    monkeypatch.setattr(P, "_qad_encode", functools.partial(fk.qad_from_output, world["ns"]))
+    qc = make_config("fast", {**PHASE, "final_kl": 1, "final_evals": 1, "final_norms": False})
+    run(_rc(world["ptq"].src, tmp_path, "frozen_opt", ids, qad=qc), log=lambda *_: None)
+    assert len(seen) == 1 and len(seen[0]) == 1  # ladder bytes only
+
+
+def test_frozen_final_kl_norms_are_not_trained(world):
+    """``final_norms=False`` leaves every RMSNorm weight at the PTQ output's value; the
+    final-KL phase still trains the ladder bytes. With the norm learning rate at 0.1 in
+    this test, an ignored switch would move them by much more than the fp16 ulp."""
+    before, after = _output_norms(world["ptq"].dst), _output_norms(world["rc"].dst)
+    assert before and sorted(before) == sorted(after)
+    changed = [k for k in before if not torch.equal(before[k], after[k])]
+    assert not changed, changed[:6]
 
 
 # ------------------------------------------------------------- the start of the phase

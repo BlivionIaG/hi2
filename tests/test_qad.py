@@ -237,6 +237,9 @@ def test_config_presets_and_layer_spec():
     assert make_config("default", {"final_kl": 0}).final_kl == 0
     assert make_config("default", {"steps": "7", "keep_best": "false"}).steps == 7
     assert make_config("default", {"keep_best": "false"}).keep_best is False
+    frozen = make_config("default", {"final_norms": False, "final_lr_norm": 0})
+    assert frozen.final_norms is False and frozen.final_lr_norm == 0
+    assert make_config("default", {"final_norms": "false"}).final_norms is False
     with pytest.raises(SystemExit):
         make_config("default", {"nope": 1})
     with pytest.raises(SystemExit):
