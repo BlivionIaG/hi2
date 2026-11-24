@@ -20,6 +20,14 @@ on the same windows is in the result for comparison.
     python experiments/inkling_kl_eval.py --src STOCK --dst HI2 --ids heldout_mixed_ids.npy \\
         --windows 32 --devices cuda:0 cuda:1 --compute-dtype float16 --out kl.json
 
+``--ids`` may instead be a v2 calibration directory (``manifest.json`` and
+``<split>_<category>__<language>__<length>_ids.npy``): every file of ``--split`` is scored
+with its own window length in one model load, reported per set, per category and per
+language, plus the KL of each ``--position-buckets`` range. The single-file form above is
+unchanged: it writes the same result as before. ``--batch-windows N`` runs the layer program
+on N windows per forward (0: every window at once, the stage-4 behaviour): the 8k/16k/32k
+windows need a small N to fit the cards, the smoke finds it.
+
 ``--routing-log`` records, in the same student pass, where the router sends every token of every
 window (per window, layer and expert) and reports per layer group the share of the
 token-expert assignments that go to INT2-class experts (mean code width < 3 bits over the
@@ -463,15 +471,170 @@ def fingerprint(src: Path, ids: np.ndarray, dtype: str) -> str:
     return h.hexdigest()
 
 
+def parse_position_buckets(spec: str) -> list[tuple[int, int | None]]:
+    """``0-2048,2048-8192,8192-16384,16384-`` -> ``[(0, 2048), ..., (16384, None)]``.
+
+    The ranges must start at 0, be contiguous and not overlap. The final bucket takes every
+    position at or beyond its lower bound, so the last upper bound is optional."""
+    if not spec:
+        return []
+    out: list[tuple[int, int | None]] = []
+    for part in spec.split(","):
+        lo, sep, hi = part.partition("-")
+        lo = int(lo)
+        hi = int(hi) if sep and hi else None
+        if not out and lo != 0:
+            raise SystemExit("position buckets must start at 0")
+        if out and out[-1][1] != lo:
+            raise SystemExit(
+                f"position bucket {part!r} does not start where the previous one ended"
+            )
+        if hi is not None and hi <= lo:
+            raise SystemExit(f"position bucket {part!r}: the upper bound is not above the lower")
+        out.append((lo, hi))
+    return out
+
+
+def bucket_label(lo: int, hi: int | None) -> str:
+    return f"{lo}-{hi}" if hi is not None else f"{lo}+"
+
+
+@torch.no_grad()
+def kl_position_buckets(
+    lm, hs, ht, buckets, device=None, chunk: int = 256, lm_student=None
+) -> dict[str, dict]:
+    """KL(stock || student) and top-1 agreement of the positions of each bucket.
+
+    ``hs`` and ``ht`` are ``[n, T, H]`` head inputs; the KL of a position is summed over the
+    vocabulary (as in ``kl_stats``) and pooled over every window and position in the bucket.
+    ``buckets`` is ``[(lo, hi), ...]`` from ``parse_position_buckets``; the last bucket also
+    takes the positions beyond its ``hi``. A bucket with no position in these windows has
+    ``positions == 0`` and ``None`` statistics."""
+    n, t, _ = hs.shape
+    nb = len(buckets)
+    index = torch.full((t,), nb - 1, dtype=torch.long)
+    for bi, (lo, hi) in enumerate(buckets[:-1]):
+        index[lo:hi] = bi
+    index = index.to(device if device is not None else hs.device)
+    kl = torch.zeros(nb, dtype=torch.float64, device=index.device)
+    top = torch.zeros(nb, dtype=torch.float64, device=index.device)
+    count = torch.zeros(nb, dtype=torch.float64, device=index.device)
+    for i in range(n):
+        for s in range(0, t, chunk):
+            a, b = hs[i, s : s + chunk], ht[i, s : s + chunk]
+            if device is not None:
+                a, b = a.to(device), b.to(device)
+            lt = torch.log_softmax(lm(b).float(), -1)
+            ls = torch.log_softmax(
+                (lm if lm_student is None else lm_student)(a).float(), -1
+            )
+            p = lt.exp()
+            k = (p * (lt - ls)).sum(-1).double()
+            bi = index[s : s + k.shape[0]]
+            kl.index_add_(0, bi, k)
+            top.index_add_(0, bi, (lt.argmax(-1) == ls.argmax(-1)).double())
+            count.index_add_(0, bi, torch.ones_like(k))
+    out = {}
+    for j, (lo, hi) in enumerate(buckets):
+        c = float(count[j].item())
+        out[bucket_label(lo, hi)] = {
+            "positions": int(c),
+            "kl_mean": float(kl[j].item()) / c if c else None,
+            "top1_agreement": float(top[j].item()) / c if c else None,
+        }
+    return out
+
+
+def load_eval_set(
+    root: Path, split: str = "heldout", limit: int = 0
+) -> list[tuple[str, np.ndarray, dict]]:
+    """The files of one split of a v2 calibration directory: ``(key, ids [n, T], meta)``.
+
+    ``key`` is the manifest key (``category__language__length``) and ``meta`` carries the
+    category, language, length and file name. Every file is checked against the manifest's
+    sha256 and size before it is scored."""
+    mpath = root / "manifest.json"
+    if not mpath.exists():
+        raise SystemExit(f"{mpath}: missing (a directory --ids needs the v2 manifest)")
+    manifest = json.loads(mpath.read_text())
+    if manifest.get("schema") != "hi2.inkling-calib-v2/1":
+        raise SystemExit(f"{mpath}: schema {manifest.get('schema')!r} is not the v2 set")
+    if manifest.get("ok") is not True:
+        raise SystemExit(f"{mpath}: the build recorded a failed gate")
+    if not isinstance(manifest.get("gates"), dict):
+        raise SystemExit(f"{mpath}: no gates in the manifest")
+    entries = []
+    for name, info in sorted(manifest.get("files", {}).items()):
+        if not name.startswith(f"{split}_"):
+            continue
+        key = name[len(split) + 1 : -len("_ids.npy")]
+        path = root / name
+        if path.stat().st_size != info["bytes"] or sha256_file(path) != info["sha256"]:
+            raise SystemExit(f"{name}: sha256/size differ from the manifest")
+        ids = np.load(path)
+        if ids.ndim != 2 or ids.dtype.kind != "i":
+            raise SystemExit(f"{name}: expected an integer [n, T] array, got {ids.dtype} {ids.shape}")
+        if limit:
+            ids = ids[:limit]
+        entries.append(
+            (
+                key,
+                ids,
+                {
+                    "category": info["category"],
+                    "language": info["language"],
+                    "length": int(ids.shape[1]),
+                    "file": name,
+                },
+            )
+        )
+    if not entries:
+        raise SystemExit(f"{root}: no {split} files in the manifest")
+    return entries
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--src", type=Path, required=True, help="the stock model directory")
     ap.add_argument("--dst", type=Path, required=True, help="the HI2 output directory")
     ap.add_argument(
-        "--ids", type=Path, required=True, help="held-out windows, .npy [n, T]"
+        "--ids",
+        type=Path,
+        required=True,
+        help="held-out windows .npy [n, T], or a v2 calibration directory: every file of "
+        "--split is scored with its own length",
+    )
+    ap.add_argument(
+        "--split",
+        choices=("heldout", "calib", "ood"),
+        default="heldout",
+        help="with a directory --ids: which split of the manifest to score",
+    )
+    ap.add_argument(
+        "--position-buckets",
+        default=None,
+        metavar="0-2048,2048-8192,...",
+        help="add the KL of each position bucket (the KL of a position is summed over the "
+        "vocabulary, then pooled over the positions and windows of the bucket); the last "
+        "bucket takes every position beyond its lower bound",
     )
     ap.add_argument("--ids-sha256", default=None, help="expected sha256 of ALL windows")
     ap.add_argument("--windows", type=int, default=0, help="first N windows (0: all)")
+    ap.add_argument(
+        "--batch-windows",
+        type=int,
+        default=0,
+        help="run the layer program on at most N windows per forward (0: all windows at "
+        "once, the stage-4 behaviour); the v2 8k/16k/32k windows need a small N to fit",
+    )
     ap.add_argument(
         "--seq-len", type=int, default=0, help="crop every window (0: whole)"
     )
@@ -587,23 +750,48 @@ def main(argv=None) -> int:
         print(f"ok={result['ok']}" + (f" failed: {bad}" if bad else ""))
         return 0 if result["ok"] else 1
 
-    full = np.load(a.ids)
-    digest = sha256_array(full)
-    if a.ids_sha256:
-        gate(
-            "ids_match_the_manifest",
-            digest == a.ids_sha256,
-            f"{digest[:16]} vs {a.ids_sha256[:16]}",
-        )
-    ids_np = full[: a.windows] if a.windows else full
-    if a.seq_len:
-        ids_np = ids_np[:, : a.seq_len]
-    ids = torch.from_numpy(ids_np.astype(np.int64))
-    result |= {
-        "windows": int(ids.shape[0]),
-        "seq_len": int(ids.shape[1]),
-        "ids_sha256_all_windows": digest,
-    }
+    set_mode = a.ids.is_dir()
+    if set_mode:
+        if a.ids_sha256:
+            raise SystemExit(
+                "--ids-sha256 is per file: a directory --ids checks every file against its "
+                "manifest"
+            )
+        if a.teacher_cache is not None:
+            raise SystemExit(
+                "--teacher-cache is per file: not available with a directory --ids"
+            )
+        if a.routing_log:
+            raise SystemExit(
+                "--routing-log is per window set: run one .npy file at a time"
+            )
+        entries = load_eval_set(a.ids, a.split, a.windows)
+        if a.seq_len:
+            entries = [
+                (k, v[:, : a.seq_len], {**m, "length": int(v[:, : a.seq_len].shape[1])})
+                for k, v, m in entries
+            ]
+        result["eval_set"] = {"dir": str(a.ids), "split": a.split}
+        result["windows"] = int(sum(v.shape[0] for _, v, _ in entries))
+        result["seq_len"] = sorted({int(v.shape[1]) for _, v, _ in entries})
+    else:
+        full = np.load(a.ids)
+        digest = sha256_array(full)
+        if a.ids_sha256:
+            gate(
+                "ids_match_the_manifest",
+                digest == a.ids_sha256,
+                f"{digest[:16]} vs {a.ids_sha256[:16]}",
+            )
+        ids_np = full[: a.windows] if a.windows else full
+        if a.seq_len:
+            ids_np = ids_np[:, : a.seq_len]
+        ids = torch.from_numpy(ids_np.astype(np.int64))
+        result |= {
+            "windows": int(ids.shape[0]),
+            "seq_len": int(ids.shape[1]),
+            "ids_sha256_all_windows": digest,
+        }
     devices = [torch.device(d) for d in a.devices]
     decode = next((d for d in devices if d.type == "cuda"), torch.device("cpu"))
     try:
@@ -658,123 +846,263 @@ def main(argv=None) -> int:
         def heads(window_ids):
             return looped.teacher_head_inputs(model, window_ids, ex, log=log)
 
-        # --- the teacher
-        fp = fingerprint(a.src, ids_np, a.compute_dtype)
-        ht = None
-        if a.teacher_cache is not None and a.teacher_cache.exists():
-            blob = torch.load(a.teacher_cache, map_location="cpu", weights_only=True)
-            if blob.get("fingerprint") == fp:
-                ht = blob["heads"]
-                log(f"teacher head inputs from {a.teacher_cache}")
-        timed("install_teacher", lambda: experts.set(experts.all("teacher")))
-        if ht is None:
-            ht = timed("teacher_program", lambda: heads(ids))
-            if a.teacher_cache is not None:
-                a.teacher_cache.parent.mkdir(parents=True, exist_ok=True)
-                tmp = a.teacher_cache.with_name(f".{a.teacher_cache.name}.tmp")
-                torch.save({"fingerprint": fp, "heads": ht}, tmp)
-                tmp.replace(a.teacher_cache)
-        gate("teacher_finite", torch.isfinite(ht).all(), tuple(ht.shape))
-        same = kl_stats(lm, ht[:1], ht[:1], ids[:1], head_dev)
-        gate(
-            "metric_is_zero_on_identical_inputs",
-            float(same["kl"].abs().max()) == 0.0,
-            float(same["kl"][0]),
-        )
-        groups = []
-        if a.groups != "none":
-            cfg = model.model.language_model.config
-            groups = parse_groups(
-                a.groups,
-                len(experts.mods),
-                (cfg.loop_layer_index_start, cfg.loop_layer_index_end),
-                src.formats(),
+        def program(window_ids):
+            """The layer program on at most ``--batch-windows`` windows per forward: a 32k
+            window at batch 1, four 8k windows, or every window at once (0)."""
+            n = window_ids.shape[0]
+            if not a.batch_windows or n <= a.batch_windows:
+                return heads(window_ids)
+            return torch.cat(
+                [
+                    heads(window_ids[i : i + a.batch_windows])
+                    for i in range(0, n, a.batch_windows)
+                ],
+                dim=0,
             )
-            # the stock model once more on one window, for the restore check below: the
-            # same program on the same batch, so only a weight that did not come back
-            # can make the two differ
-            probe = timed("probe_program", lambda: heads(ids[:1]))
-        lm_student = None
-        if a.int8_class:
-            int8_probe = _int8_probe()
-            result["int8"], lm_student = timed(
-                "int8_class",
-                lambda: int8_probe.apply(
-                    model, a.int8_class, a.int8_block, ex, log, lm
-                ),
-            )
-        # --- the student
-        if not a.stock_student:
-            timed("install_student", lambda: experts.set(experts.all("student")))
-        routing = None
-        try:
-            if a.routing_log:
-                routing = Routing(
-                    model,
-                    experts,
-                    model.model.language_model.config,
-                    int(ids.shape[1]),
-                    int(ids.shape[0]),
+
+        buckets = parse_position_buckets(a.position_buckets or "")
+        head = {}
+        if set_mode:
+            if a.groups not in ("auto", "none"):
+                raise SystemExit(
+                    "--groups needs one .npy file: a directory --ids scores the whole student"
                 )
-            hs = timed("student_program", lambda: heads(ids))
-        finally:
-            if routing is not None:
-                routing.close()
-        gate("student_finite", torch.isfinite(hs).all(), tuple(hs.shape))
-        head = {} if lm_student is None else {"lm_student": lm_student}
-        stats = timed("metrics", lambda: kl_stats(lm, hs, ht, ids, head_dev, **head))
-        result["student"] = summarize(stats)
-        bw = max(1, min(a.breakdown_windows, ids.shape[0]))
-        result["student_on_breakdown_windows"] = summarize(
-            {k: v[:bw] for k, v in stats.items()}
-        )
-        if routing is not None:
-            cfg = model.model.language_model.config
-            bits = expert_bits(ck, experts.path, routing.layers, routing.n_experts)
-            rgroups = parse_groups(
-                "auto",
-                len(experts.mods),
-                (cfg.loop_layer_index_start, cfg.loop_layer_index_end),
-                src.formats(),
-            )
-            result["routing"] = routing.summarize(bits, rgroups, group_name)
-            a.out.parent.mkdir(parents=True, exist_ok=True)
-            routing.save(a.out.with_name(f"{a.out.stem}_routing.npz"), bits)
-            gate(
-                "routing_log_complete",
-                result["routing"]["complete"],
-                f"{routing.forwards} expert forwards counted; {routing.problems[:2]}",
-            )
-            for name, g in result["routing"].get("groups", {}).items():
-                log(
-                    f"routing {name}: INT2-class experts {g['experts']['int2']:.3f} of "
-                    f"the experts, {g['assignments']['int2']:.3f} of the assignments, "
-                    f"{g['mean_bits']:.3f} bits per assignment"
+            if a.int8_class:
+                raise SystemExit(
+                    "--int8-class changes the model in place: run one .npy file at a time"
                 )
-        # --- where the damage is
-        if groups:
-            result["groups"] = {}
-            for layers in groups:
-                want = {
-                    i: ("student" if i in layers else "teacher") for i in experts.mods
+            if a.groups == "auto":
+                log("groups: skipped for a directory --ids (one .npy file at a time)")
+            per = []
+            for key, ids_np, meta in entries:
+                ids = torch.from_numpy(ids_np.astype(np.int64))
+                log(f"set {key}: {ids.shape[0]} windows of {ids.shape[1]} tokens")
+                timed(
+                    f"install_teacher:{key}",
+                    lambda: experts.set(experts.all("teacher")),
+                )
+                ht = timed(f"teacher_program:{key}", lambda: program(ids))
+                gate(
+                    f"teacher_finite:{key}",
+                    torch.isfinite(ht).all(),
+                    tuple(ht.shape),
+                )
+                if not per:  # the metric gate belongs to the program, not to one set
+                    same = kl_stats(lm, ht[:1], ht[:1], ids[:1], head_dev)
+                    gate(
+                        "metric_is_zero_on_identical_inputs",
+                        float(same["kl"].abs().max()) == 0.0,
+                        float(same["kl"][0]),
+                    )
+                if not a.stock_student:
+                    timed(
+                        f"install_student:{key}",
+                        lambda: experts.set(experts.all("student")),
+                    )
+                hs = timed(f"student_program:{key}", lambda: program(ids))
+                gate(
+                    f"student_finite:{key}",
+                    torch.isfinite(hs).all(),
+                    tuple(hs.shape),
+                )
+                stats = timed(
+                    f"metrics:{key}",
+                    lambda: kl_stats(lm, hs, ht, ids, head_dev, **head),
+                )
+                per.append(
+                    {
+                        "key": key,
+                        "meta": meta,
+                        "stats": stats,
+                        "buckets": kl_position_buckets(
+                            lm, hs, ht, buckets, head_dev, **head
+                        )
+                        if buckets
+                        else None,
+                    }
+                )
+                entry = {
+                    "category": meta["category"],
+                    "language": meta["language"],
+                    "length": meta["length"],
+                    "windows": int(ids.shape[0]),
+                    **summarize(stats),
+                    "position_buckets": per[-1]["buckets"],
                 }
-                experts.set(want)
-                hg = heads(ids[:bw])
-                res = summarize(kl_stats(lm, hg, ht[:bw], ids[:bw], head_dev))
-                res["layers"] = layers
-                res["formats"] = sorted({src.expert_format(i) for i in layers})
-                result["groups"][group_name(layers)] = res
-                log(f"group {group_name(layers)}: KL {res['kl_mean']:.6g}")
-            experts.set(experts.all("teacher"))
-            again = timed("restore_program", lambda: heads(ids[:1]))
-            diff = float((again - probe).abs().max())
-            exact = all(d.type == "cpu" for d in devices)  # a GPU sums in any order
-            tol = 0.0 if exact else 5e-3 * float(probe.abs().max())
-            gate(
-                "groups_restored_the_stock_weights",
-                diff <= tol,
-                f"max diff {diff:.3g} (tolerance {tol:.3g})",
+                result["eval_set"].setdefault("sets", {})[key] = entry
+                log(f"set {key}: KL {entry['kl_mean']:.6g}")
+
+            def pooled(items):
+                return {k: torch.cat([it["stats"][k] for it in items]) for k in METRICS}
+
+            def bucket_pool(items):
+                acc: dict[str, dict] = {}
+                for it in items:
+                    for label, d in (it["buckets"] or {}).items():
+                        if not d["positions"]:
+                            continue
+                        a_ = acc.setdefault(
+                            label, {"positions": 0, "kl": 0.0, "top": 0.0}
+                        )
+                        a_["positions"] += d["positions"]
+                        a_["kl"] += d["kl_mean"] * d["positions"]
+                        a_["top"] += d["top1_agreement"] * d["positions"]
+                return {
+                    label: {
+                        "positions": d["positions"],
+                        "kl_mean": d["kl"] / d["positions"],
+                        "top1_agreement": d["top"] / d["positions"],
+                    }
+                    for label, d in acc.items()
+                }
+
+            by_cat = collections.defaultdict(list)
+            by_lang = collections.defaultdict(list)
+            for it in per:
+                by_cat[it["meta"]["category"]].append(it)
+                by_lang[it["meta"]["language"]].append(it)
+            result["eval_set"]["category"] = {}
+            for cat, items in sorted(by_cat.items()):
+                d = summarize(pooled(items))
+                if buckets:
+                    d["position_buckets"] = bucket_pool(items)
+                result["eval_set"]["category"][cat] = d
+            result["eval_set"]["language"] = {}
+            for lang, items in sorted(by_lang.items()):
+                d = summarize(pooled(items))
+                if buckets:
+                    d["position_buckets"] = bucket_pool(items)
+                result["eval_set"]["language"][lang] = d
+            if buckets:
+                result["eval_set"]["position_buckets"] = bucket_pool(per)
+            result["student"] = summarize(pooled(per))
+            log(
+                f"all sets: KL {result['student']['kl_mean']:.6g} over "
+                f"{result['student']['windows']} windows"
             )
+        else:
+            # --- the teacher
+            fp = fingerprint(a.src, ids_np, a.compute_dtype)
+            ht = None
+            if a.teacher_cache is not None and a.teacher_cache.exists():
+                blob = torch.load(a.teacher_cache, map_location="cpu", weights_only=True)
+                if blob.get("fingerprint") == fp:
+                    ht = blob["heads"]
+                    log(f"teacher head inputs from {a.teacher_cache}")
+            timed("install_teacher", lambda: experts.set(experts.all("teacher")))
+            if ht is None:
+                ht = timed("teacher_program", lambda: program(ids))
+                if a.teacher_cache is not None:
+                    a.teacher_cache.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = a.teacher_cache.with_name(f".{a.teacher_cache.name}.tmp")
+                    torch.save({"fingerprint": fp, "heads": ht}, tmp)
+                    tmp.replace(a.teacher_cache)
+            gate("teacher_finite", torch.isfinite(ht).all(), tuple(ht.shape))
+            same = kl_stats(lm, ht[:1], ht[:1], ids[:1], head_dev)
+            gate(
+                "metric_is_zero_on_identical_inputs",
+                float(same["kl"].abs().max()) == 0.0,
+                float(same["kl"][0]),
+            )
+            groups = []
+            if a.groups != "none":
+                cfg = model.model.language_model.config
+                groups = parse_groups(
+                    a.groups,
+                    len(experts.mods),
+                    (cfg.loop_layer_index_start, cfg.loop_layer_index_end),
+                    src.formats(),
+                )
+                # the stock model once more on one window, for the restore check below: the
+                # same program on the same batch, so only a weight that did not come back
+                # can make the two differ
+                probe = timed("probe_program", lambda: heads(ids[:1]))
+            lm_student = None
+            if a.int8_class:
+                int8_probe = _int8_probe()
+                result["int8"], lm_student = timed(
+                    "int8_class",
+                    lambda: int8_probe.apply(
+                        model, a.int8_class, a.int8_block, ex, log, lm
+                    ),
+                )
+            head = {} if lm_student is None else {"lm_student": lm_student}
+            # --- the student
+            if not a.stock_student:
+                timed("install_student", lambda: experts.set(experts.all("student")))
+            routing = None
+            try:
+                if a.routing_log:
+                    routing = Routing(
+                        model,
+                        experts,
+                        model.model.language_model.config,
+                        int(ids.shape[1]),
+                        int(ids.shape[0]),
+                    )
+                hs = timed("student_program", lambda: program(ids))
+            finally:
+                if routing is not None:
+                    routing.close()
+            gate("student_finite", torch.isfinite(hs).all(), tuple(hs.shape))
+            stats = timed("metrics", lambda: kl_stats(lm, hs, ht, ids, head_dev, **head))
+            result["student"] = summarize(stats)
+            if buckets:
+                result["student"]["position_buckets"] = kl_position_buckets(
+                    lm, hs, ht, buckets, head_dev, **head
+                )
+            bw = max(1, min(a.breakdown_windows, ids.shape[0]))
+            result["student_on_breakdown_windows"] = summarize(
+                {k: v[:bw] for k, v in stats.items()}
+            )
+            if routing is not None:
+                cfg = model.model.language_model.config
+                bits = expert_bits(ck, experts.path, routing.layers, routing.n_experts)
+                rgroups = parse_groups(
+                    "auto",
+                    len(experts.mods),
+                    (cfg.loop_layer_index_start, cfg.loop_layer_index_end),
+                    src.formats(),
+                )
+                result["routing"] = routing.summarize(bits, rgroups, group_name)
+                a.out.parent.mkdir(parents=True, exist_ok=True)
+                routing.save(a.out.with_name(f"{a.out.stem}_routing.npz"), bits)
+                gate(
+                    "routing_log_complete",
+                    result["routing"]["complete"],
+                    f"{routing.forwards} expert forwards counted; {routing.problems[:2]}",
+                )
+                for name, g in result["routing"].get("groups", {}).items():
+                    log(
+                        f"routing {name}: INT2-class experts {g['experts']['int2']:.3f} of "
+                        f"the experts, {g['assignments']['int2']:.3f} of the assignments, "
+                        f"{g['mean_bits']:.3f} bits per assignment"
+                    )
+            # --- where the damage is
+            if groups:
+                result["groups"] = {}
+                for layers in groups:
+                    want = {
+                        i: ("student" if i in layers else "teacher")
+                        for i in experts.mods
+                    }
+                    experts.set(want)
+                    hg = heads(ids[:bw])
+                    res = summarize(kl_stats(lm, hg, ht[:bw], ids[:bw], head_dev))
+                    res["layers"] = layers
+                    res["formats"] = sorted({src.expert_format(i) for i in layers})
+                    result["groups"][group_name(layers)] = res
+                    log(f"group {group_name(layers)}: KL {res['kl_mean']:.6g}")
+                experts.set(experts.all("teacher"))
+                again = timed("restore_program", lambda: heads(ids[:1]))
+                diff = float((again - probe).abs().max())
+                exact = all(d.type == "cpu" for d in devices)  # a GPU sums in any order
+                tol = 0.0 if exact else 5e-3 * float(probe.abs().max())
+                gate(
+                    "groups_restored_the_stock_weights",
+                    diff <= tol,
+                    f"max diff {diff:.3g} (tolerance {tol:.3g})",
+                )
         result["weight_error_per_layer"] = {
             str(k): v for k, v in sorted(experts.weight_error.items())
         }
