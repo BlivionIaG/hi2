@@ -800,24 +800,67 @@ x1.0001, relative RMS of the installed layer-0 weights 0.121, every gate ok. Tha
 names, shapes and decode of the real model inside the script; the numbers are those of 12
 tensors, not of a quantization. A 65k-token pass is not a CPU job.
 
+### The pilot on two V620 (measured, 2026-11-24)
+
+The pilot ran on slot a2 (HIP 0,1) as the `pilot` step of the box chain: 4 windows of 2,048
+tokens at 3.5 bpw, `--devices cuda:0,cuda:1`, float16 encode, then the float32 evaluation on
+the same cards. Exit 0 for both.
+
+| Phase of `hi2 quantize` | Seconds | Note |
+| --- | --- | --- |
+| model load and capture | 103 | |
+| phase 1: layer program with statistics, merge, write, tables | 1,150 | forward 204 (48 layer calls, 4 windows), merge 264 (1 s on layer 0, 21 s on layer 23), tables 500 (20 s per layer), write 12 |
+| allocation | 39 | INT2 41.8 % / INT4 58.2 % / INT8 0 % of the rows at 3.5 bpw with 4-window statistics |
+| encode | 628 | 9,216 tensors, 14.7 per second, about 26 s per layer of 384 tensors |
+| restack | 1,290, now 14 | see the second defect below |
+| validation | 155 | |
+
+Host memory peaked at 131 GiB in the quantize and at 232 GiB in the float32 evaluation (the
+formula said 184); VRAM was 10 GiB per card in the quantize and 7.1 and 5.5 GiB in the
+evaluation; the statistics cache is 40.3 GiB, the stacked output 13.7 GiB (0.6 of them the
+vision tower) and the per-expert staging 14 GiB; 88 GiB stay free after three targets; the
+hottest card reached 67 C, no page fault. The evaluation (4 windows of 512 tokens):
+`install_teacher` 25 s, teacher program 75 s, `install_student` 58 s, student program 72 s;
+KL 0.088 +- 0.056 nats, top-1 0.939, perplexity x1.0009. That is a sample of 2,048 tokens of a
+student fitted on 8,192 tokens, where every expert Linear was below the token floor and took
+the layer average ("128/128 experts below the token floor"): it checks the chain, it is not a
+result.
+
+The pilot found two defects, both fixed in this tree:
+
+* `hi2.service` refused every `cuda:N` with "requested accelerator is unavailable": on torch
+  2.12+rocm7.14 under `HIP_VISIBLE_DEVICES=0,1`, `torch.cuda.is_available()` is true and
+  `torch._C._cuda_getDeviceCount()` is 2, but `torch.cuda.device_count()` is 0 until
+  `torch.cuda.init()` has run (amdsmi answers before it). `cuda_device_count()` starts the
+  runtime first; `resolve_config`, the tuning-evaluation check and `doctor` use it.
+* `hi2.stack.restack` copied the key list of the shard for every tensor it read
+  (`safe_open(...).keys()`: 60 ms for the 83,589 keys of this shard) and for every expert part it
+  planned, quadratic in the tensor count: 21.5 min for the 9,216 tensors, every target. It now
+  reads each shard's key set once: 14.4 s for the same staging, and the output is byte-identical
+  to the old code's (`cmp` of both shards, the index and `config.json`).
+
 ### Costs and risks
 
-* **GPU needs [inference].** A lease of slot a2 (HIP 0,1, both cards free, 28 GiB each as in
-  the smoke) in three blocks: the pilot (1-2 h), the first encode and its evaluations (5-7 h:
-  the program pass costs 52-55 s per forward of two windows [measured, 2026-11-23], 128 of
-  them for 524,288 tokens is about 2 h before the statistics, the tables and the encode are
-  added), and the 3.0 and 4.0 encodes (the statistics are cached; 2-3 h each with their
-  evaluation). The encode of 24.5 G weights with GPTQ and two refinement sweeps has not been
-  timed at this size (the stage-2 estimate of 12.9 M weights/s, 32 min per target, was for the
-  data-free path, device not recorded), which is what the pilot is for. The fit limit (22.2 /
-  22.9 / 23.6 GiB of 24.0 for the final-KL student at 3.0 / 3.5 / 4.0) matters only for a
+* **GPU needs.** A lease of slot a2 (HIP 0,1, both cards free, 28 GiB each as in the smoke)
+  in three blocks [inference, before the pilot]: the pilot (1-2 h; measured: 56 min with the
+  old restack, 35 min with the fixed one, plus a 6 min evaluation), the first encode and its
+  evaluations (5-7 h: the program pass costs 52-55 s per forward of two windows [measured,
+  2026-11-23], 128 of them for 524,288 tokens is about 2 h before the statistics, the tables
+  and the encode are added; after the pilot the part that does not depend on the tokens is
+  about 30 min, the forward is 0.06 h if it stays flat in the windows and 3.6 h if it grows
+  with them [projection]), and the 3.0 and 4.0 encodes (the statistics are cached; 2-3 h each
+  with their evaluation). The encode of 24.5 G weights with GPTQ and two refinement sweeps
+  took 628 s on the two cards [measured, the pilot, above], not the 32 min of the stage-2
+  data-free estimate. The fit limit (22.2 / 22.9 / 23.6 GiB of 24.0 for the final-KL student
+  at 3.0 / 3.5 / 4.0) matters only for a
   later QAD stage: a `--no-qad` encode trains no student. A step runs for hours, so the
   guard of the box holds its `boot.lock` for the first 600 s of a step only
   (`GUARD_BOOT_SECONDS`; measured with stand-in commands: a second taker waited 2 s of a 12 s
   command with a 3 s window, 7 s of a 9 s command without one).
 * **Host memory** 100-130 GiB resident in the program and student phases of the float16
-  encode [measured]; a float32 evaluation holds 120 GiB after the load and 184 GiB after its
-  first program pass [measured, stage 3, 2 x 128 tokens]. The box has 503 GiB.
+  encode [measured], 131 GiB at the peak of the pilot; a float32 evaluation holds 120 GiB after
+  the load and 184 GiB after its first program pass [measured, stage 3, 2 x 128 tokens], 232 GiB
+  at the peak of the pilot's evaluation [measured]. The box has 503 GiB.
 * **Disk** 170 GiB free at 96 % [measured]: the pilot writes ~54 GiB and is removed before the
   real run; then the cache (39.3 GiB) and three outputs (~15 GiB each) leave ~85 GiB, above
   the 60 GiB spare. The gate refuses a step that would break it.
@@ -825,9 +868,11 @@ tensors, not of a quantization. A 65k-token pass is not a CPU job.
   float16): float16 rounding alone is a KL of 3.2e-3 against float32 on the same weights
   [measured, stage 2, 512 tokens], which would be a large part of the signal at 4 bpw. The
   program is transfer-bound (52-55 s per forward of two windows in float16 [measured]; float32
-  doubles the bytes): a 32-window pass is about 8 forwards of ~100 s, 13 min; the first student
-  adds the cached teacher pass and the group breakdown (4 groups x 8 windows), about 35 min, the
-  later ones about 20 min (arithmetic, not run on the GPU).
+  doubles the bytes): the pilot's float32 passes over 2,048 tokens took 75 s (teacher) and 72 s
+  (student) [measured, 1.6 s per layer call], so a 65k-token pass is 13 min if the cost stays
+  flat in the tokens and 40 min if it is linear [inference]; the first student adds the cached
+  teacher pass and the group breakdown (4 groups x 8 windows), the later ones the student pass
+  alone.
 * The held-out set is chat, tool use, instructions, arithmetic and docs: it says nothing about
   long context, code or other languages; the OOD sets are small (17 windows each).
 
