@@ -803,15 +803,21 @@ tensors, not of a quantization. A 65k-token pass is not a CPU job.
 ### Costs and risks
 
 * **GPU needs [inference].** A lease of slot a2 (HIP 0,1, both cards free, 28 GiB each as in
-  the smoke), held through the pilot and the first encode; the fit limit is 22.2 / 22.9 / 23.6
-  GiB of 24.0 for the final-KL student at 3.0 / 3.5 / 4.0, but a `--no-qad` encode does not
-  train a student (the numbers matter for a later QAD stage). The program pass costs 52-55 s per
-  4,096 tokens [measured, 2026-11-23]: 524,288 tokens are 128 such passes, about 2 h before the
-  statistics and the tables are added; the encode of 24.5 G weights with GPTQ and two
-  refinement sweeps has not been timed at this size (the stage-2 estimate of 12.9 M weights/s,
-  32 min per target, was for the data-free path, device not recorded), which is what the pilot
-  is for.
-* **Host memory** 100-130 GiB resident in the program and student phases [measured].
+  the smoke) in three blocks: the pilot (1-2 h), the first encode and its evaluations (5-7 h:
+  the program pass costs 52-55 s per forward of two windows [measured, 2026-11-23], 128 of
+  them for 524,288 tokens is about 2 h before the statistics, the tables and the encode are
+  added), and the 3.0 and 4.0 encodes (the statistics are cached; 2-3 h each with their
+  evaluation). The encode of 24.5 G weights with GPTQ and two refinement sweeps has not been
+  timed at this size (the stage-2 estimate of 12.9 M weights/s, 32 min per target, was for the
+  data-free path, device not recorded), which is what the pilot is for. The fit limit (22.2 /
+  22.9 / 23.6 GiB of 24.0 for the final-KL student at 3.0 / 3.5 / 4.0) matters only for a
+  later QAD stage: a `--no-qad` encode trains no student. A step runs for hours, so the
+  guard of the box holds its `boot.lock` for the first 600 s of a step only
+  (`GUARD_BOOT_SECONDS`; measured with stand-in commands: a second taker waited 2 s of a 12 s
+  command with a 3 s window, 7 s of a 9 s command without one).
+* **Host memory** 100-130 GiB resident in the program and student phases of the float16
+  encode [measured]; a float32 evaluation holds 120 GiB after the load and 184 GiB after its
+  first program pass [measured, stage 3, 2 x 128 tokens]. The box has 503 GiB.
 * **Disk** 170 GiB free at 96 % [measured]: the pilot writes ~54 GiB and is removed before the
   real run; then the cache (39.3 GiB) and three outputs (~15 GiB each) leave ~85 GiB, above
   the 60 GiB spare. The gate refuses a step that would break it.
