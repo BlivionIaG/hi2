@@ -65,7 +65,12 @@ class QadConfig:
     min_gain: float = 0.0
     min_steps: int = 0
     eval_every: int = 0  # steps between held-out evaluations (0 = steps / evals)
-    batch: int = 4  # sequences per optimizer step (gradient accumulation)
+    batch: int = 4  # sequences per micro-batch
+    # Micro-batches per optimizer step: batch x accum sequences are forwarded before one
+    # step. 1 keeps the historical behaviour; 2 halves the live activation set.
+    accum: int = 1
+    # Global gradient-norm clip over the latents, ladder parameters and norms; 0 = off.
+    clip: float = 0.0
     # AdamW lr of the latent weights, in latent_units: with "step" the latent is stored in
     # units of its block's quantization step, so lr_w is a fraction of a step per update
     # and transfers across models; "abs" (lr ~1e-4) over-steps on Qwen3.5-4B early layers.
@@ -78,6 +83,11 @@ class QadConfig:
     # ladders; measured slightly better on Qwen3.5-0.8B); ptq: at the GPTQ-compensated weights
     # (step 0 reproduces the PTQ checkpoint exactly). Keep-best guards both.
     init: str = "weights"
+    # A PTQ checkpoint directory to take the selected (and unselected) layers' initial
+    # encodings from byte for byte. The QAD run's Config has refine_passes=0 and may see
+    # the source in another dtype; re-encoding can change single codes at ties, so the
+    # stage-4 PTQ output is the exact steps=0 control.
+    init_from: str | None = None
     layers: str | None = None  # e.g. "0-5,9"; None = every layer
     warmup: float = 0.05  # fraction of steps with linear warm-up
     keep_best: bool = True
@@ -177,6 +187,10 @@ def make_config(preset: str = "default", overrides: dict | None = None) -> QadCo
         raise SystemExit("QAD dtype must be 'float32', 'float16' or 'bfloat16'")
     if qc.samples < 1 or qc.steps < 0 or qc.batch < 1 or qc.val < 1:
         raise SystemExit("QAD samples/batch/val must be >= 1 and steps >= 0")
+    if qc.accum < 1:
+        raise SystemExit("QAD accum must be >= 1")
+    if qc.clip < 0:
+        raise SystemExit("QAD clip must be >= 0 (0 = off)")
     if qc.expert_groups < 0:
         raise SystemExit("QAD expert_groups must be >= 0 (0 = as many as fit)")
     return qc
@@ -224,7 +238,7 @@ def estimate_seconds(
     if n_layers <= 0 or total == 0:
         return 0.0, n_layers
     per_layer = total / n_layers
-    step = _STEP_S * (per_layer / _STEP_P) ** _STEP_EXP * (qc.batch * seq_len / 8192)
+    step = _STEP_S * (per_layer / _STEP_P) ** _STEP_EXP * (qc.batch * qc.accum * seq_len / 8192)
     steps = qc.steps * min(qc.budget, 1.0) * len(parse_layers(qc.layers, n_layers))
     sec = step * steps * _OVERHEAD
     return (sec if gpu else 30 * sec), n_layers
@@ -583,6 +597,26 @@ class _GroupBatches:
         return batch
 
 
+def _sample_batches(
+    order: list[int],
+    batch: int,
+    accum: int,
+    train_idx: list[int],
+    generator: torch.Generator,
+) -> tuple[list[list[int]], list[int]]:
+    """``accum`` consecutive micro-batches of ``batch`` training samples, and the order
+    left over. The generator draws complete shuffled permutations, so a sequence can
+    repeat only after every training sequence was seen (the old single-batch path)."""
+    need = batch * accum
+    while len(order) < need:
+        order += [
+            train_idx[j]
+            for j in torch.randperm(len(train_idx), generator=generator).tolist()
+        ]
+    batches = [order[i : i + batch] for i in range(0, need, batch)]
+    return batches, order[need:]
+
+
 def train_layer(
     layer: nn.Module,
     fq: dict[str, FakeQuantLinear],
@@ -770,19 +804,19 @@ def train_layer(
     order: list[int] = []
     every = qc.eval_every or max(1, n_steps // max(1, qc.evals))
     trace = [(0, None, loss0)]
+    step_trace: list[dict] = []
+    accum = max(1, int(qc.accum))
     train_loss = float("nan")
     spent, stopped = 0, False
     for step in range(n_steps):
         spent = step + 1
         if gb is not None:
-            batch = gb.next()
+            batches = [gb.next() for _ in range(accum)]
         else:
-            if len(order) < qc.batch:
-                order += [
-                    train_idx[j]
-                    for j in torch.randperm(len(train_idx), generator=g).tolist()
-                ]
-            batch, order = order[: qc.batch], order[qc.batch :]
+            batches, order = _sample_batches(
+                order, qc.batch, accum, train_idx, g
+            )
+        total_n = sum(len(b) for b in batches)
         w = weights()
         # the detached copies are the leaves the backward writes into: the rounding of the
         # math dtype is a straight-through (the gradient of the rounded weight goes to the
@@ -790,15 +824,26 @@ def train_layer(
         wd = {k: v.detach().to(dt).detach().requires_grad_(True) for k, v in w.items()}
         tot = 0.0
         if not reps:
-            for i in batch:
-                loss = loss_fn(run(wd, i), i) / len(batch)
-                loss.backward()
-                tot += loss.item()
+            for batch in batches:
+                for i in batch:
+                    loss = loss_fn(run(wd, i), i) / total_n
+                    loss.backward()
+                    tot += loss.item()
             grads = [wd[k].grad.float() if wd[k].grad is not None else None for k in w]
         else:
-            tot, grads = _parallel_step(
-                w, wd, batch, xs, ys, [(dev, layer, kw)] + reps, dtype=dt
-            )
+            grads = None
+            for batch in batches:
+                tot_b, grads_b = _parallel_step(
+                    w, wd, batch, xs, ys, [(dev, layer, kw)] + reps, dtype=dt
+                )
+                scale = len(batch) / total_n
+                tot += tot_b * scale
+                if grads is None:
+                    grads = [g * scale for g in grads_b]
+                else:
+                    grads = [a + g * scale for a, g in zip(grads, grads_b)]
+                for v in wd.values():
+                    v.grad = None
         if not reps:
             names = [k for k in w if wd[k].grad is not None]
             torch.autograd.backward(
@@ -806,19 +851,38 @@ def train_layer(
             )
         else:
             torch.autograd.backward(list(w.values()), grads)
+        # Global gradient norm of the trained tensors (latents, ladder parameters, norms)
+        # before the clip; the per-step trace records it and clipping keeps it bounded.
+        grad_norm = math.sqrt(
+            sum(
+                (p.grad.float().pow(2).sum().item() if p.grad is not None else 0.0)
+                for p in [*lat, *prm, *norm_params.values()]
+            )
+        )
+        if qc.clip > 0 and grad_norm > qc.clip:
+            coef = qc.clip / (grad_norm + 1e-12)
+            for p in [*lat, *prm, *norm_params.values()]:
+                if p.grad is not None:
+                    p.grad.mul_(coef)
         opt.step()
         sched.step()
         opt.zero_grad(set_to_none=True)
         for m in fq.values():
             m.project()
         train_loss = tot
+        step_trace.append(
+            {"step": step + 1, "train": tot, "grad_norm": grad_norm}
+        )
         if (step + 1) % every == 0 or step + 1 == n_steps:
             prev = trace[-1][2]
             vl = val_loss()
             trace.append((step + 1, tot, vl))
             if qc.keep_best and vl < best:
                 best, best_state = vl, snapshot()
-            log(f"  {tag} step {step + 1}/{n_steps} train {tot:.4e} val {vl:.4e}")
+            log(
+                f"  {tag} step {step + 1}/{n_steps} train {tot:.4e} "
+                f"val {vl:.4e} grad {grad_norm:.3e}"
+            )
             if event := getattr(log, "event", None):
                 event(
                     "qad",
@@ -856,7 +920,7 @@ def train_layer(
         "val_init": loss0,
         "val_after": after,
         "val_final": final,
-        "train_last": train_loss,
+        "train_last": None if math.isnan(train_loss) else train_loss,
         "kept": kept,
         "steps": spent,
         "allotted": n_steps,
@@ -864,6 +928,7 @@ def train_layer(
         "seconds": time.time() - t0,
         "gpu_peak_gib": acc.max_memory_allocated() / 2**30 if on_gpu else None,
         "trace": trace,
+        "step_trace": step_trace,
     }
     if qc.train_norms:
         out["norms"] = norms
@@ -890,6 +955,9 @@ LEGACY_DEFAULTS = {
     "kl_tokens": 256,
     "dtype": "float32",
     "expert_groups": 0,
+    "accum": 1,
+    "clip": 0.0,
+    "init_from": None,
 }
 
 
@@ -905,6 +973,9 @@ def qad_meta(qc: QadConfig) -> dict:
         "kl_weight",
         "kl_tokens",
         "expert_groups",
+        "accum",
+        "clip",
+        "init_from",
     }
     return {k: v for k, v in asdict(qc).items() if k not in new or v != getattr(d, k)}
 
@@ -1065,19 +1136,30 @@ def init_layer(layer, linears, tables, picks, view, cfg, ex, wstager, log):
     """The PTQ encoding of a layer's Linears, all of them in one batched
     :func:`hi2.calibrate.encode_many` call, from the statistics and Hessians ``view``
     (:class:`hi2.cache.StatsView`) holds: ``({name: HI2Tensor}, {name: the GPTQ-compensated
-    weights})``. ``linears`` maps module names to checkpoint tensor names."""
+    weights})``. ``linears`` maps module names to checkpoint tensor names.
+
+    The encoding uses ``cfg`` as the run configured it, and the source tensor in the
+    dtype the pipeline holds. A QAD run whose Config turns code refinement off still
+    takes its exact steps=0 control from the PTQ output (``--qad-init-from``), not from a
+    second encode with guessed options."""
     from .calibrate import EncodeRequest, encode_many
     from .stats import ColumnStats
 
     reqs, loaded = [], {}
     for name, ckpt in linears.items():
-        w = wstager.to_host(layer.get_submodule(name).weight.detach().float())
-        sid = view.sigma_id(ckpt)
+        # Same dtype as the pipeline's source tensor (bf16 on Inkling): encode_many moves
+        # it to float32 itself.
+        w = wstager.to_host(layer.get_submodule(name).weight.detach())
+        sid = view.sigma_id(ckpt) if cfg.rounding == "gptq" else None
         if sid is not None and sid not in loaded:  # one load per shared input
             loaded[sid] = view.sigma(ckpt)
         sigma = loaded.get(sid) if sid is not None else None
         st = view.stats_state(ckpt)
-        stats = ColumnStats.from_state(st, "cpu") if st is not None else None
+        stats = (
+            ColumnStats.from_state(st, "cpu")
+            if st is not None and st["n"] > 0
+            else None
+        )
         if cfg.rounding == "gptq" and sigma is None:
             log(f"warning: {ckpt} has no Hessian; nearest-rounding initialisation")
         reqs.append(

@@ -3,6 +3,7 @@
 """Layer-wise QAD (spec 13): exact fake-quant forward, STE gradients, training, export (CPU)."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -12,7 +13,15 @@ from hi2.calibrate import Config, build_table, encode_with_picks
 from hi2.executor import Executor
 from hi2.format import dequantize, dequantize_stored
 from hi2.hessian import HessianStats
-from hi2.qad import FakeQuantLinear, make_config, parse_layers, train_layer
+
+from hi2.qad import (
+    FakeQuantLinear,
+    _sample_batches,
+    init_layer,
+    make_config,
+    parse_layers,
+    train_layer,
+)
 from hi2.stats import ColumnStats
 
 CANDS = [(2, 32), (2, 16), (4, 32), (4, 64), (8, 32)]
@@ -63,6 +72,116 @@ def _perturb(fq, seed=3):
             grp.lo_u.add_(3 * torch.randn(grp.lo_u.shape, generator=g))
             grp.step_u.add_(3 * torch.randn(grp.step_u.shape, generator=g))
     fq.project()
+
+
+def test_the_ptq_initializer_uses_the_qad_config_and_source_dtype(monkeypatch):
+    """The initialiser encodes with the run's own Config (the QAD run turns code
+    refinement off and trains the ladders itself) and reads the source tensor in the
+    dtype the pipeline holds. The exact steps=0 PTQ control comes from
+    ``--qad-init-from`` instead of a second encode with guessed options."""
+    seen = []
+
+    class View:
+        def sigma_id(self, name):
+            return None
+
+        def stats_state(self, name):
+            return None
+
+    class Stager:
+        def to_host(self, t):
+            return t
+
+    def fake_encode_many(reqs, cfg, ex):
+        seen.append((cfg.refine_passes, reqs[0].w.dtype))
+        for r in reqs:
+            r.comp_out["comp"] = torch.zeros(r.table.shape)
+        return ["encoded"]
+
+    monkeypatch.setattr("hi2.calibrate.encode_many", fake_encode_many)
+    layer = nn.Module()
+    layer.linear = nn.Linear(4, 4, bias=False).to(torch.bfloat16)
+    table = SimpleNamespace(shape=(4, 4))
+    encoded, comps = init_layer(
+        layer,
+        {"linear": "w"},
+        {"w": table},
+        {"w": torch.zeros(4, dtype=torch.long)},
+        View(),
+        Config(rounding="gptq", refine_passes=0),
+        None,
+        Stager(),
+        lambda *_: None,
+    )
+    assert seen == [(0, torch.bfloat16)]
+    assert encoded == {"linear": "encoded"} and comps["linear"].shape == (4, 4)
+
+
+def test_accumulated_micro_batches_keep_whole_permutations():
+    idx = list(range(7))
+    g = torch.Generator().manual_seed(3)
+    batches, left = _sample_batches([], 2, 3, idx, g)
+    assert [len(b) for b in batches] == [2, 2, 2]
+    assert len(set(sum(batches, []))) == 6  # distinct before the permutation restarts
+    assert left == [1]  # the permutation had seven, the three micro-batches used six
+    batches, left = _sample_batches([5, 6], 2, 2, idx, g)
+    assert batches[0] == [5, 6] and [len(b) for b in batches] == [2, 2]
+    assert set(sum(batches, [])) <= set(idx)
+
+
+def test_gradient_clipping_changes_the_update_and_is_traced():
+    w, x = _w(40, 128), _x(seed=8)
+    xb = x[:256]
+    t0, comp = _ptq(w, xb)
+
+    class One(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = nn.Linear(128, 40, bias=False)
+
+        def forward(self, x):
+            return self.linear(x)
+
+    layer = One()
+    with torch.no_grad():
+        layer.linear.weight.copy_(w)
+    xs = [xb.unsqueeze(0)]
+    with torch.no_grad():
+        ys = [layer(xs[0])]
+    fq = {}
+    for name, clip in (("free", 0.0), ("clipped", 1e-9)):
+        fq[name] = {
+            "linear": FakeQuantLinear(w, t0, comp, "weights", "step")
+        }
+        qc = make_config(
+            "default",
+            {
+                "steps": 1,
+                "batch": 1,
+                "val": 1,
+                "lr_w": 0.1,
+                "lr_p": 0.1,
+                "clip": clip,
+                "seed": 2,
+                "keep_best": False,
+            },
+        )
+        info = train_layer(
+            layer,
+            fq[name],
+            xs,
+            ys,
+            [0],
+            [0],
+            {},
+            qc,
+            torch.device("cpu"),
+            lambda *_: None,
+        )
+        assert info["step_trace"][0]["grad_norm"] > 1e-9
+    assert not torch.equal(
+        fq["free"]["linear"].latent, fq["clipped"]["linear"].latent
+    )
 
 
 @pytest.mark.parametrize("act_order", [False, True])
@@ -507,6 +626,13 @@ def test_step_units_train_and_keep_exactness():
     assert info["steps"] == info["allotted"] == qc.steps
     assert not info["early_stop"]
     assert [step for step, _, _ in info["trace"]] == [0, 10, 20, 30, 40]
+    assert [row["step"] for row in info["step_trace"]] == list(range(1, qc.steps + 1))
+    assert all(
+        torch.isfinite(torch.tensor(row["train"]))
+        and row["grad_norm"] > 0
+        and torch.isfinite(torch.tensor(row["grad_norm"]))
+        for row in info["step_trace"]
+    )
     losses = [loss for loss, _ in observed]
     assert len(losses) == len(info["trace"])
     assert all(torch.isfinite(torch.tensor(loss)) for loss in losses)

@@ -356,7 +356,7 @@ def encode_many(
                 if use_gptq[ri]:
                     jobs.append(GptqJob(wt[rows.to(dev)], d, u, nb, b, perm))
                     where.append((ri, rows + lo))
-                    refine_with.append(hs_keep if r.comp_out is None else None)
+                    refine_with.append(hs_keep)
                     out.append(None)  # placeholder keeps the candidate order
                 else:
                     enc = encode_rows(wt[rows.to(dev)], d, nb, b, cfg.effort)

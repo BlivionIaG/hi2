@@ -420,7 +420,11 @@ def _merge_infos(infos: list[dict]) -> dict:
     """One layer's info from its groups' (first ``val_before``, last ``val_after``,
     summed steps and seconds, the worst peak, the per-group records)."""
     first, last = infos[0], infos[-1]
-    out = {k: v for k, v in first.items() if k != "trace"}
+    out = {k: v for k, v in first.items() if k not in ("trace", "step_trace")}
+    out["trace"] = [row for i in infos for row in i.get("trace", [])]
+    out["step_trace"] = [
+        row for i in infos for row in i.get("step_trace", [])
+    ]
     out.update(
         val_after=last["val_after"],
         val_final=last["val_final"],
@@ -438,6 +442,53 @@ def _merge_infos(infos: list[dict]) -> dict:
         group_sizes=[i.get("group_size") for i in infos],
         kept_per_group=[i["kept"] for i in infos],
     )
+    return out
+
+
+def _ptq_inits(src: str | Path, linears: dict[str, str]) -> dict[str, object]:
+    """``{module name: HI2Tensor}`` read byte for byte from the PTQ output ``src``.
+
+    A QAD run re-encodes each layer with its own Config and batch composition, which
+    can move a single code at a rounding tie; the PTQ checkpoint is the exact reference
+    the steps=0 control needs. Flat tensors and per-expert stacked containers are read;
+    ``split_stack`` recovers the members of a stack."""
+    from .checkpoint import from_tensors, open_source, read_tensors, source_map
+    from .stack import GROUPS, hi2_bases, read_fields, split_stack
+
+    wanted = {ckpt.removesuffix(".weight") for ckpt in linears.values()}
+    by_member: dict[str, object] = {}
+    wmap = source_map(Path(src))
+    for shard in sorted(set(wmap.values())):
+        with open_source(Path(src), shard) as f:
+            keys = set(f.keys())
+            single, stacked = hi2_bases(keys)
+            for base in single:
+                if base in wanted:
+                    by_member[base] = from_tensors(read_tensors(f, base), base)
+            for base in stacked:
+                group = base.rpartition(".")[2]
+                parts = GROUPS.get(group)
+                pre = base.rpartition(".")[0]
+                if parts is None or not any(
+                    want.startswith(pre + ".") for want in wanted
+                ):
+                    continue
+                fields = read_fields(f, base, stacked=True, keys=keys)
+                for e, tensors in enumerate(split_stack(fields, len(parts))):
+                    for p, tensor in enumerate(tensors):
+                        by_member[f"{pre}.{e}.{parts[p]}"] = tensor
+    out = {}
+    for name, ckpt in linears.items():
+        base = ckpt.removesuffix(".weight")
+        if base in by_member:
+            out[name] = by_member[base]
+            continue
+        match = re.search(r"\.experts\.(\d+)\.([^.]+)$", name)
+        if match:
+            pre = base.rpartition(".")[0]
+            member = f"{pre}.{match.group(1)}.{match.group(2)}"
+            if member in by_member:
+                out[name] = by_member[member]
     return out
 
 
@@ -464,6 +515,29 @@ def _train_groups(
 ):
     """Train a layer's Linears group by group; the other groups stay at their current
     decode. Returns ``({checkpoint name: HI2Tensor}, info, {param name: fp16 value})``."""
+    if steps == 0:
+        return (
+            {linears[n]: inits[n] for n in linears},
+            {
+                "kept": "ptq",
+                "seconds": 0.0,
+                "steps": 0,
+                "allotted": 0,
+                "early_stop": False,
+                "val_before": 0.0,
+                "val_after": 0.0,
+                "val_final": 0.0,
+                "train_last": None,
+                "gpu_peak_gib": None,
+                "group_size": len(linears),
+                "groups": 1,
+                "group_sizes": [len(linears)],
+                "kept_per_group": ["ptq"],
+                "trace": [(0, None, 0.0)],
+                "step_trace": [],
+            },
+            {},
+        )
     groups, n_groups = _group_names(layer, linears, qc.expert_groups)
     tensors = {linears[n]: t for n, t in inits.items()}
     if not groups:
@@ -615,6 +689,12 @@ def qad_looped(
     for li in range(n_layers):
         layer = layers[li]
         linears = linears_of(li)
+        ptq = _ptq_inits(qc.init_from, linears) if qc.init_from else {}
+        if qc.init_from:
+            log(
+                f"QAD layer {li}: init-from {len(ptq)}/{len(linears)} linears from "
+                f"{qc.init_from}"
+            )
         art = qdir / f"layer{li:03d}.pt"
         rec = torch.load(art, weights_only=False, mmap=True) if art.exists() else None
         norms: dict = {}
@@ -630,6 +710,7 @@ def qad_looped(
             inits, comps = init_layer(
                 layer, linears, tables, picks, view, cfg, ex, wstager, log
             )
+            inits.update(ptq)
             samples, xs, ys, train_idx, val_idx, groups = _samples_for(
                 teacher, layout, li, qc, teacher.n_seq
             )
@@ -689,6 +770,7 @@ def qad_looped(
             inits, comps = init_layer(
                 layer, linears, tables, picks, view, cfg, ex, wstager, log
             )
+            inits.update(ptq)
             tensors = {linears[nm]: t for nm, t in inits.items()}
             info = {
                 "kept": "ptq",

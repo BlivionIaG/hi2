@@ -324,6 +324,64 @@ def test_the_config_carries_the_group_count():
         make_config("fast", {"expert_groups": -1})
 
 
+def _expert_tensors(dst):
+    from hi2.format import dequantize_stored
+    from hi2.stack import Hi2Checkpoint
+
+    ck = Hi2Checkpoint(dst)
+    out = {}
+    for base in sorted(ck.logical()):
+        if ".mlp.experts." in base and ".layers." in base:
+            out[base] = dequantize_stored(ck.get(base))
+    return out
+
+
+def test_steps_zero_qad_experts_are_bit_identical_to_ptq(src, ids, tmp_path):
+    """The steps=0 control: with the PTQ initialisation and its fallback, a QAD run at
+    0 optimizer steps must write exactly the PTQ-only checkpoint for its layers. It
+    failed while init_layer dropped the PTQ run's two code-refinement sweeps."""
+    from hi2.qad import make_config
+
+    ptq_rc = _rc(src, tmp_path / "ptq", calib_ids=ids, calib_samples=N_SEQ, seq_len=T)
+    run(ptq_rc, log=lambda *_: None)
+    qc = make_config(
+        "fast",
+        {
+            "steps": 0,
+            "samples": 6,
+            "val": 2,
+            "batch": 2,
+            "layers": "0-2",
+            "expert_groups": 1,
+            "init_from": str(ptq_rc.dst),
+        },
+    )
+    qad_rc = _rc(
+        src,
+        tmp_path / "qad0",
+        calib_ids=ids,
+        calib_samples=N_SEQ,
+        seq_len=T,
+        qad=qc,
+    )
+    logs = []
+    run(qad_rc, log=lambda *a: logs.append(" ".join(map(str, a))))
+    a, b = _expert_tensors(ptq_rc.dst), _expert_tensors(qad_rc.dst)
+    assert a.keys() == b.keys() and a
+    covered = [
+        line for line in logs if "init-from " in line and " linears from " in line
+    ]
+    assert covered and all(
+        int(line.split("init-from ")[1].split("/")[0])
+        == int(line.split("/")[1].split()[0])
+        for line in covered
+    ), covered[:3]
+    for name in a:
+        assert torch.equal(a[name], b[name]), name
+    report = json.loads((qad_rc.workdir / "qad_report.json").read_text())
+    assert all(report[i]["steps"] == 0 for i in range(3))
+
+
 # ---------------------------------------------------------------- the CLI
 
 
@@ -342,12 +400,19 @@ def test_the_cli_carries_the_looped_qad_options():
             "0",
             "--qad-expert-groups",
             "4",
+            "--qad-accum",
+            "2",
+            "--qad-clip",
+            "1",
+            "--qad-val",
+            "16",
         ]
     )
     assert a.qad_layers == "0-5" and a.qad_final_kl == 0
     over = _qad_overrides(a)
     assert over["layers"] == "0-5" and over["final_kl"] == 0
     assert over["expert_groups"] == 4
+    assert over["accum"] == 2 and over["clip"] == 1.0 and over["val"] == 16
 
 
 # ---------------------------------------------------------------- the pipeline
@@ -392,6 +457,10 @@ def test_a_looped_quantize_trains_the_single_pass_and_loop_layers(
     assert seen["L0"] is None and seen["L1"] is None
     assert seen["L2"] == [w for w in range(N_SEQ) for _ in range(2)]
     assert (rc.workdir / "qad" / "layer002.pt").exists()
+    art = torch.load(rc.workdir / "qad" / "layer002.pt", weights_only=False)
+    trace = art["info"]["step_trace"]
+    assert [row["step"] for row in trace] == [1, 2]
+    assert all(row["grad_norm"] > 0 for row in trace)
     assert not (rc.workdir / "qad" / "layer003.pt").exists()  # PTQ only, no artifact
     assert not (rc.workdir / "qad" / "head_inputs.pt").exists()
     qcfg = json.loads((rc.dst / "config.json").read_text())["quantization_config"]

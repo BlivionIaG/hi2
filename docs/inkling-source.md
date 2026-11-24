@@ -1260,15 +1260,25 @@ output is not the LM head's input) and `--sequential`; `--qad-layers none` keeps
   recorded call kwargs, the block states and the messages; `functional_call` replaces the layer's weights, so the
   rest of the model is not in the graph. The experts of a layer train group by group (`QadConfig.expert_groups`,
   `--qad-expert-groups`; 0 = enough groups to keep one under 300 M weights; the other Linears train in group 0),
-  which keeps one group's latent/unit/gradient/Adam state around 6 GiB instead of 19 GiB.
+  which keeps one group's latent/unit/gradient/Adam state around 6 GiB instead of 19 GiB. `--qad-batch 8
+  --qad-accum 2` accumulates two micro-batches per optimizer step (16 windows, defaults unchanged), `--qad-clip 1`
+  clips the global latent/ladder/norm gradient, and `--qad-val 16` widens the held-out keep-best set.
+* **Exact PTQ start.** `--qad-init-from DIR` reads the layer encodings of a PTQ output byte for byte instead of
+  re-encoding them: the QAD run's Config has `refine_passes=0` and its `encode_many` batch composition differs, which
+  can move single codes at rounding ties. With `--qad-steps 0` the selected layers then reproduce the PTQ output's
+  dequantized experts exactly (the test's steps=0 control), and the PTQ encodings are never rebuilt for the fallback.
 * **Artifacts.** `qad/layerNNN.pt` per *trained* layer (tensors, info, norms) with a fingerprint that includes the
   pass count, `expert_groups` and the selected layers, so a re-run reuses exact artifacts and training an unselected
-  layer is never resumed as if it had trained; unselected layers are PTQ-encoded again (deterministic). The pass
-  that runs to the end saves `head_inputs.pt` only when `final_kl > 0`, for `hi2.finalkl`'s placement-free phase.
+  layer is never resumed as if it had trained; unselected layers are PTQ-encoded or taken from `--qad-init-from`. The
+  pass that runs to the end saves `head_inputs.pt` only when `final_kl > 0`, for `hi2.finalkl`'s placement-free phase.
+  The artifact's `info` keeps the per-evaluation `trace` (step, train, val) and the per-step `step_trace` (train loss
+  and pre-clip gradient norm); the latter is also logged at every evaluation.
 * **Tests.** `tests/test_qad_looped.py` (CPU, the fork's tiny looped checkpoint): the exact unique-state count, the
   dedupe identity, the memory guard, the head cache, the later passes' messages and block states against a reference
   `run_program`, the group split, the pass groups, a full `hi2 quantize` (layers 0-2, loop layer 2 with two passes)
-  and its resume; 22 mutants of the module and its groundwork are killed (QL3-QL21, QG1/QG2/QG4).
+  and its resume, the PTQ-init request unit and the steps=0 control against a PTQ run; 22 mutants of the module and
+  its groundwork are killed (QL3-QL21, QG1/QG2/QG4), plus `experiments/qad_looped_mutants.py` for the PTQ start,
+  accumulation, clipping and the saved gradient trace.
 * **Not yet measured on the GPU:** one 3.5 bpw run over layers 0-5 (`--qad-layers 0-5 --qad-final-kl 0`) and its
   held-out group KL is the next step; the time [INFERENCE] follows `estimate_seconds`: 3.6 s per 4 x 2048-token
   step at 1.019 G expert weights, 300 steps x 6 layers -> about 2 h on one card, plus the capture and the final
