@@ -744,6 +744,20 @@ def test_a_forward_that_is_not_the_windows_it_is_said_to_hold_stops_the_run(
         _routing(kl, tiny, students["coarse"], np.load(ids_file), tmp_path, "y")
 
 
+def test_more_expert_forwards_than_batches_of_windows_stop_the_run(
+    kl, tiny, students, ids_file, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HI2_LOOP_SEQS", "2")
+    real = kl.Routing._windows
+    monkeypatch.setattr(
+        kl.Routing,
+        "_windows",
+        lambda self, items, batch: real(self, items, batch)[:-1],
+    )  # the last batch of windows is missing from the log's own plan
+    with pytest.raises(RuntimeError, match="more expert forwards than batches"):
+        _routing(kl, tiny, students["coarse"], np.load(ids_file), tmp_path, "z")
+
+
 @pytest.fixture(scope="module")
 def students_mixed(tiny, tmp_path_factory):
     """An output whose experts do not all have one code width, and lie on both sides of the INT2
@@ -807,3 +821,101 @@ def test_an_output_of_mixed_widths_weighs_the_widths_by_the_tokens_each_expert_g
         c = counts[:, slots]
         want = ((c * bits[slots]).sum((1, 2)) / c.sum((1, 2))).tolist()
         assert g["mean_bits_per_window"] == pytest.approx(want, rel=1e-6), name
+
+
+# ------------------------------------------------------------------- one INT8 class
+
+
+def _int8(kl, tiny, dst, ids_file, tmp_path, cls, *extra, name=None):
+    return _score(
+        kl, tiny, dst, ids_file, tmp_path,
+        "--groups", "none", "--int8-class", cls, "--int8-block", "32", *extra,
+        name=name or f"int8_{cls}.json",
+    )  # fmt: skip
+
+
+def _class_size(tiny, tmp_path, cls) -> tuple[int, int]:
+    """Tensors and weights the class has in the tiny model."""
+    import sys
+
+    from hi2.pipeline import _load_model
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
+    import inkling_int8_probe as probe
+
+    rc = RunConfig(
+        src=tiny, dst=tmp_path / "x", workdir=tmp_path / "wx",
+        compute_dtype="float32", devices=["cpu"],
+    )  # fmt: skip
+    params = probe.class_weights(_load_model(rc, lambda *_: None), cls)
+    return len(params), sum(p.numel() for p in params.values())
+
+
+@pytest.mark.parametrize("cls", ["attn", "embed", "lm_head"])
+def test_an_int8_class_is_stored_in_the_student_and_read_back(
+    kl, tiny, students, ids_file, tmp_path, cls
+):
+    code, plain = _score(
+        kl, tiny, students["fine"], ids_file, tmp_path, "--groups", "none",
+        name="plain.json",
+    )  # fmt: skip
+    assert code == 0 and "int8" not in plain and plain["stock_student"] is False
+    code, res = _int8(kl, tiny, students["fine"], ids_file, tmp_path, cls)
+    assert code == 0 and res["ok"], res["gates"]
+    tensors, weights = _class_size(tiny, tmp_path, cls)
+    info = res["int8"]
+    assert (info["class"], info["block"]) == (cls, 32)
+    assert (info["tensors"], info["elements"]) == (tensors, weights)
+    assert tensors == {"attn": 6 * 6, "embed": 1, "lm_head": 1}[cls]
+    assert info["bytes_bf16"] == 2 * weights and 0 < info["bytes_int8"] < weights * 1.1
+    assert res["gates"]["int8_class_changed_the_weights"]["ok"]
+    a, b = plain["student"]["kl_per_window"], res["student"]["kl_per_window"]
+    assert len(a) == len(b) == 6 and a != b  # the class moved the scores
+    assert all(x >= 0 for x in b)
+    assert res["tensors"] == plain["tensors"]  # the experts are the output's, as before
+
+
+@pytest.mark.parametrize("cls", ["attn", "embed", "lm_head"])
+def test_a_stock_student_differs_from_the_teacher_by_the_class_alone(
+    kl, tiny, students, ids_file, tmp_path, cls
+):
+    """The teacher is the stock model with the class in bf16 (float here): a student that is
+    the same model but for the INT8 class scores a KL above zero (it would be exactly zero if
+    the teacher pass or the teacher's head saw the class too) and its experts are the stock
+    ones."""
+    cache = tmp_path / "teacher.pt"
+    code, first = _int8(
+        kl, tiny, students["fine"], ids_file, tmp_path, cls, "--stock-student",
+        "--teacher-cache", str(cache), name="s1.json",
+    )  # fmt: skip
+    assert code == 0, first["gates"]
+    assert first["stock_student"] is True and first["tensors"]["changed"] == 0
+    assert "student_differs_from_the_teacher" not in first["gates"]
+    assert first["gates"]["int8_class_changed_the_weights"]["ok"]
+    kls = first["student"]["kl_per_window"]
+    assert all(
+        x > 0 for x in kls
+    )  # the tiny random model is chaotic: no absolute scale
+    # the cached teacher is the stock one: a second run on top of it scores the same
+    code, again = _int8(
+        kl, tiny, students["fine"], ids_file, tmp_path, cls, "--stock-student",
+        "--teacher-cache", str(cache), name="s2.json",
+    )  # fmt: skip
+    assert code == 0 and again["student"]["kl_per_window"] == kls
+    # the INT8 class costs less on its own than the 2.6 bpw experts do
+    _, coarse = _score(
+        kl, tiny, students["coarse"], ids_file, tmp_path, "--groups", "none",
+        name="coarse.json",
+    )  # fmt: skip
+    assert first["student"]["kl_mean"] < coarse["student"]["kl_mean"]
+
+
+def test_the_int8_options_that_cannot_work_together_are_refused(
+    kl, tiny, students, ids_file, tmp_path
+):
+    argv = ["--src", str(tiny), "--dst", str(students["fine"]), "--ids", str(ids_file)]
+    argv += ["--devices", "cpu", "--out", str(tmp_path / "o.json")]
+    with pytest.raises(SystemExit, match="needs --int8-class"):
+        kl.main([*argv, "--stock-student"])
+    with pytest.raises(SystemExit, match="needs --groups none"):
+        kl.main([*argv, "--int8-class", "attn"])  # the groups default is auto

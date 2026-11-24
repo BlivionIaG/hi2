@@ -26,6 +26,11 @@ token-expert assignments that go to INT2-class experts (mean code width < 3 bits
 expert's gate, up and down), to INT4-class ones (< 6) and to INT8-class ones: where the
 quantization error is paid. The counts are in ``<out stem>_routing.npz``.
 
+``--int8-class attn|embed|lm_head`` stores ONE bf16 class of the student (the attention
+projections, the embedding, the LM head) as HI2 INT8 and reads it back before the student pass
+(``experiments/inkling_int8_probe.py``, exploratory); ``--stock-student`` keeps the stock experts,
+so the student differs from the teacher by that class alone.
+
 Exit code 0 when every gate held: the student covers every routed expert and nothing else
 was quantized, differs from the teacher, every value is finite, no KL is negative, the metric
 gives 0 on identical inputs, the groups restored the stock weights, the held-out ids match
@@ -82,11 +87,14 @@ def group_name(layers: list[int]) -> str:
 
 
 @torch.no_grad()
-def kl_stats(lm, hs, ht, ids, device=None, chunk: int = 256) -> dict[str, torch.Tensor]:
+def kl_stats(
+    lm, hs, ht, ids, device=None, chunk: int = 256, lm_student=None
+) -> dict[str, torch.Tensor]:
     """Per window means of the metrics of ``METRICS`` (float64 ``[n]``): ``hs`` and ``ht``
     are ``[n, T, H]`` head inputs of the student and the teacher, ``ids`` the ``[n, T]``
     tokens (the next-token NLL scores positions ``0..T-2``). The head and its soft-cap
-    ``lm`` run on ``device`` in chunks of ``chunk`` positions."""
+    ``lm`` run on ``device`` in chunks of ``chunk`` positions; the student's states go
+    through ``lm_student`` when it is given (a head that is not the teacher's)."""
     n, t, _ = hs.shape
     out = {k: torch.zeros(n, dtype=torch.float64) for k in METRICS}
     for i in range(n):
@@ -96,7 +104,9 @@ def kl_stats(lm, hs, ht, ids, device=None, chunk: int = 256) -> dict[str, torch.
             if device is not None:
                 a, b = a.to(device), b.to(device)
             lt = torch.log_softmax(lm(b).float(), -1)
-            ls = torch.log_softmax(lm(a).float(), -1)
+            ls = torch.log_softmax(
+                (lm if lm_student is None else lm_student)(a).float(), -1
+            )
             p = lt.exp()
             tot["kl"] += (p * (lt - ls)).sum().item()
             tot["top1"] += (lt.argmax(-1) == ls.argmax(-1)).sum().item()
@@ -486,12 +496,51 @@ def parser() -> argparse.ArgumentParser:
         "layer and expert) and report the share going to INT2-class experts per layer "
         "group; the counts go to <out stem>_routing.npz",
     )
+    ap.add_argument(
+        "--int8-class",
+        choices=("attn", "embed", "lm_head"),
+        default=None,
+        help="store ONE bf16 class of the student as HI2 INT8 and read it back before the "
+        "student pass (inkling_int8_probe.py): the attention projections, the embedding or "
+        "the LM head; the teacher is untouched; needs --groups none",
+    )
+    ap.add_argument(
+        "--int8-block",
+        type=int,
+        choices=(32, 64),
+        default=64,
+        help="the HI2 INT8 candidate (8, B) of --int8-class",
+    )
+    ap.add_argument(
+        "--stock-student",
+        action="store_true",
+        help="with --int8-class: keep the stock experts in the student, which then differs "
+        "from the teacher by that class alone",
+    )
     ap.add_argument("--out", type=Path, required=True)
     return ap
 
 
+def _int8_probe():
+    """``experiments/inkling_int8_probe.py``, imported when ``--int8-class`` asks for it."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import inkling_int8_probe
+
+    return inkling_int8_probe
+
+
 def main(argv=None) -> int:
     a = parser().parse_args(argv)
+    if a.stock_student and not a.int8_class:
+        raise SystemExit(
+            "--stock-student needs --int8-class: the student would be the teacher"
+        )
+    if a.int8_class and a.groups != "none":
+        raise SystemExit(
+            "--int8-class needs --groups none: a group pass restores the stock class"
+        )
     if a.transformers is not None:
         sys.path.insert(0, str(a.transformers))
 
@@ -511,6 +560,7 @@ def main(argv=None) -> int:
         "dtype": a.compute_dtype,
         "devices": a.devices,
         "seconds": {},
+        "stock_student": a.stock_student,
     }
 
     def gate(name, ok, detail, hard=True):
@@ -644,8 +694,18 @@ def main(argv=None) -> int:
             # same program on the same batch, so only a weight that did not come back
             # can make the two differ
             probe = timed("probe_program", lambda: heads(ids[:1]))
+        lm_student = None
+        if a.int8_class:
+            int8_probe = _int8_probe()
+            result["int8"], lm_student = timed(
+                "int8_class",
+                lambda: int8_probe.apply(
+                    model, a.int8_class, a.int8_block, ex, log, lm
+                ),
+            )
         # --- the student
-        timed("install_student", lambda: experts.set(experts.all("student")))
+        if not a.stock_student:
+            timed("install_student", lambda: experts.set(experts.all("student")))
         routing = None
         try:
             if a.routing_log:
@@ -661,7 +721,8 @@ def main(argv=None) -> int:
             if routing is not None:
                 routing.close()
         gate("student_finite", torch.isfinite(hs).all(), tuple(hs.shape))
-        stats = timed("metrics", lambda: kl_stats(lm, hs, ht, ids, head_dev))
+        head = {} if lm_student is None else {"lm_student": lm_student}
+        stats = timed("metrics", lambda: kl_stats(lm, hs, ht, ids, head_dev, **head))
         result["student"] = summarize(stats)
         bw = max(1, min(a.breakdown_windows, ids.shape[0]))
         result["student_on_breakdown_windows"] = summarize(
@@ -724,11 +785,19 @@ def main(argv=None) -> int:
             "expected": want_n,
         }
     changed = experts.changed / max(experts.installed, 1)
-    gate(
-        "student_differs_from_the_teacher",
-        changed >= 0.5,
-        f"{changed:.3f} of {experts.installed} tensors changed",
-    )
+    if a.int8_class:
+        gate(
+            "int8_class_changed_the_weights",
+            result["int8"]["weight_max_abs_error"] > 0,
+            f"{result['int8']['tensors']} tensors, largest weight change "
+            f"{result['int8']['weight_max_abs_error']:.3g}",
+        )
+    if not a.stock_student:
+        gate(
+            "student_differs_from_the_teacher",
+            changed >= 0.5,
+            f"{changed:.3f} of {experts.installed} tensors changed",
+        )
     kls = torch.tensor(result["student"]["kl_per_window"])
     gate("every_value_finite", bool(torch.isfinite(kls).all()), "per-window KL")
     gate("no_negative_kl", bool(kls.min() >= -1e-6), float(kls.min()))

@@ -435,11 +435,10 @@ def test_the_resume_copy_belongs_to_its_output_its_windows_and_its_teacher_file(
     other = tmp_path / "other_output"
     other.mkdir()
     (other / "model-00001-of-00001.safetensors").write_bytes(b"x" * 7)
-    assert fk.resume_key(other, ids, "heads.pt") != base
+    seven = fk.resume_key(other, ids, "heads.pt")
+    assert seven != base
     (other / "model-00001-of-00001.safetensors").write_bytes(b"x" * 8)
-    assert fk.resume_key(other, ids, "heads.pt") != fk.resume_key(
-        world["ptq"].dst, ids, "heads.pt"
-    )
+    assert fk.resume_key(other, ids, "heads.pt") != seven  # the same name, another size
 
 
 def test_a_student_that_does_not_fit_the_devices_stops_before_the_phase(

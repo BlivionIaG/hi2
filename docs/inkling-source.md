@@ -1198,6 +1198,74 @@ The mixed set's KL per window, for the three encodes (`kl_per_window` in the eva
   proportions nobody counted, and nothing of long context (windows of 2,048 tokens); the OOD
   sets are small (17 windows each).
 
+## Layer-wise QAD on a looped model
+
+`qad.qad_layerwise` trains layer L from the quantized prefix's output to the unquantized layer's output, one
+hidden tensor per layer. `pipeline._check_looped` refuses it for Inkling-2: a layer call is `layer(hidden,
+block_states[, messages], **kwargs)` and its 24 layers are 48 calls. Read from `qad.py`, `looped.py`, `layerwise.py`:
+
+* **Layers 0-5 and 18-23 (one call each): yes.** The layer program (`looped._Program.run`) hands every call its
+  input, block states and output over per-sequence host states, so the teacher's inputs and targets come from one
+  pass. The recipe's student input (the quantized prefix's output) needs a second program through the quantized
+  layers (for 18-23 through the loop span too: 36 calls, about 19 min at the 3.5 encode's measured 1,324 s forward for
+  48 calls); teacher-forced inputs need none.
+* **Loop layers 6-17 (three calls, one set of weights): yes, teacher-forced.** One fake-quantized set per layer; each
+  pass is its own sample (teacher input, the pass's kwargs, its messages from `looped._Messages` over the stored states
+  of the pass before), the loss the sum of the passes' nMSE. No student input inside the span: the messages of pass 2
+  come from layers 6-17 of pass 1, and those above L are still PTQ. [INFERENCE] Whether teacher-forced layers help the
+  final KL is not known; the one-layer test measures it.
+* **Storage.** One state of 264 windows (256 + 8 held-out) x 2048 x 2304 is 2.32 GiB in float16, 4.64 in float32: the 48
+  outputs 111 / 223 GiB, the span's 37 states 86 GiB; block states are views, messages (75 MB per window and call) are
+  recomputed. The disk has 60 GiB free, so RAM (shared) or 128 windows (44 GiB). A single-pass layer alone needs
+  `qad_layerwise`'s three buffers, 7 GiB.
+* **VRAM** is the layer's trained state, not the activations: `FakeQuantLinear` keeps a float32 latent, its `unit`, the
+  gradient and two Adam moments, 20 B x 1.019 G weights (128 experts x 7.96 M) = 19 GiB, plus 2-4 GiB of decoded weights.
+  The torch decode graph (several float32 copies) does not fit 30 GiB; the fused `qad_kernel` might ([INFERENCE], never
+  run on 128 experts); else expert groups (32 live, 96 frozen at their PTQ decode).
+* **Time.** `estimate_seconds` gives 3.5 s per step of 4 x 2048 tokens at this layer size ([INFERENCE]: scaled from dense
+  layers, never run on an MoE one): 300 steps are about 20 min per single-pass layer on one card; a loop layer decodes once
+  per step and runs three calls per sequence, at most 3x. Measured bound: a final-KL step costs 3.4 s per layer call and
+  window with the recompute (163 s for 48 calls). Whole run: 12 x 20 min + 12 x up to 60 min plus the two program passes,
+  about 40 min ([INFERENCE]; two cards help less than 2x).
+* **Reusable:** `FakeQuantLinear` with `qad_kernel` and `export`; the AdamW, cosine, keep-best and held-out body of
+  `train_layer`; `StepBudget`, `split_indices`, `fingerprint`, the artifact `layerNNN.pt` and `QadResult`; the PTQ
+  initialisation (`encode_many` through `StatsView`, its statistics already pooled over the calls). **Not:**
+  `capture_inputs`, `_propagate`, `_buffers` (one tensor per layer), the driver loop (layer i+1 reads layer i) and
+  `train_layer`'s `functional_call(layer, wd, (x,), kw)`, which takes only a hidden tensor.
+* **Hard:** the 19 GiB state in 30 GiB, the span's storage, teacher-forced inputs in the span, the time. **Only unwritten:**
+  the call-function version of `train_layer`, the driver with its artifacts and resume, the tests on the tiny looped
+  checkpoint, lifting `_check_looped` for the layers done.
+
+## One bf16 class in INT8 (exploratory, eval only)
+
+Quality must not degrade: the parts that are bf16 in the stock checkpoint (attention, embedding, LM head; the vision tower
+stays) become INT8 only if that is shown to be free. `experiments/inkling_int8_probe.py` and three options of
+`experiments/inkling_kl_eval.py` measure it **one class at a time**, inside the float32 KL eval (no runtime path exists
+for INT8 attention, embeddings or head: this is a measurement of the numbers, not of a speed or a format):
+
+* **The scheme** is HI2's own INT8 row candidate `(8, B)` through the repo's data-free encode (`Config(candidates=[(8, B)],
+  rounding="nearest", smooth=0.0)`, `build_table`, `encode_with_picks`, `hi2.format.dequantize`), `B` = 64 first (8 + 16/64
+  bits per weight + 48 bits per row = 8.25 bpw, 7.75 bits saved per weight), 32 only for a class that fails (8.5 bpw).
+  Classes: `attn` (`q/k/v_proj.linear`, `o_proj.linear`, `o_proj.gate_proj`, `relative_position_bias.linear` of the 24
+  layers; not `sink_proj` or the short convolutions), `embed` (`embed_tokens`), `lm_head`.
+* **The eval** is `inkling_kl_eval.py --groups none --int8-class C --int8-block B [--stock-student]`: the teacher pass
+  (or its cache) is the stock model with the class in bf16, the student is the PTQ output (or, with `--stock-student`,
+  the stock experts: the class alone) with the class stored as INT8 and read back. For `lm_head` the model keeps its own
+  head and the student scores through a copy (`inkling_int8_probe.apply` returns the student's logits function), so the teacher is never
+  touched. A gate (`int8_class_changed_the_weights`) fails when the class did not move; `student_differs_from_the_teacher`
+  is skipped for a stock student. The result has an `int8` block: tensors, weights, bytes in bf16 / INT8 / saved, bits per
+  weight, rms and largest weight error.
+* **The rule** (mine, stated before the numbers): a class PASSES when the paired per-window increase of KL over the same
+  model with the class in bf16 is at most 1 paired standard error AND the top-1 agreement moved by at most 1e-4, on all
+  three held-out sets (mixed, wiki, pydocs). Otherwise it stays bf16. `inkling_int8_probe.py report --eval DIR --student
+  bpw3.5 --classes attn embed lm_head --block 64 --json OUT` applies it to the eval files
+  (`bpwT-int8CLSB_SET.json` against `bpwT_SET.json`; `stock-int8CLSB_SET.json` gives the class alone and its share of the
+  PTQ KL) and always exits 0: the verdicts are in the output. The driver steps are `inkling_stage4.sh int8 T CLASS [SET]
+  [stock]` (`INT8_BLOCK`, default 64).
+* **Limits.** Eval-only; weight-only data-free INT8 (no activations; a calibrated encode is not tried); one class at
+  a time (the classes are not shown to add up); the float32 eval's own noise is the paired standard error above, and a
+  class that passes at 1 sem may still cost up to about that much KL: the report prints the increase, not just the verdict.
+
 ## Known gaps before a quantization run
 
 * **`hi2.moe.UnfusedExperts` and Inkling (fixed on this branch).** It used to keep the fused

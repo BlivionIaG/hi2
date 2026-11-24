@@ -651,3 +651,71 @@ def test_the_whole_chain_on_the_tiny_checkpoint_on_the_cpu(tmp_path):
         env={**env, "PRODUCTION": "1"}, capture_output=True, text=True,
     )  # fmt: skip
     assert p.returncode == 1
+
+
+# ------------------------------------------------------------------- one INT8 class
+
+
+def test_an_int8_class_is_scored_on_the_outputs_windows_and_teacher_under_its_own_name(
+    box,
+):
+    (box.out / "runs" / "bpw3.5").mkdir(parents=True)
+    code, out, lines = box.drive("int8", "3.5", "attn", "wiki")
+    assert code == 0, out
+    (ev,) = _gpu(lines)
+    assert ev.startswith("GPU int8-3.5-attn-wiki ")
+    assert _flag(ev, "--int8-class") == "attn" and _flag(ev, "--int8-block") == "64"
+    assert "--stock-student" not in ev and _flag(ev, "--groups") == "none"
+    assert "--breakdown-windows" not in ev and "--routing-log" not in ev
+    assert _flag(ev, "--ids").endswith("/calib/heldout_wiki_ids.npy")
+    assert _flag(ev, "--ids-sha256") == SHA["wiki"] and _flag(ev, "--windows") == "32"
+    assert _flag(ev, "--teacher-cache").endswith("/teacher/wiki_w32_float32.pt")
+    assert _flag(ev, "--out").endswith("/eval/bpw3.5-int8attn64_wiki.json")
+    assert _flag(ev, "--dst").endswith("/runs/bpw3.5")
+    # the set defaults to the mixed windows, with the teacher pass of the stage-4 evaluation
+    code, out, lines = box.drive("int8", "3.5", "embed")
+    ev = _gpu(lines)[-1]
+    assert ev.startswith("GPU int8-3.5-embed-mixed ")
+    assert _flag(ev, "--teacher-cache").endswith("/teacher/mixed_w32_float32.pt")
+    assert _flag(ev, "--out").endswith("/eval/bpw3.5-int8embed64_mixed.json")
+
+
+def test_the_int8_class_on_the_stock_experts_and_the_block_are_settings(box):
+    (box.out / "runs" / "bpw3.5-p0.5").mkdir(parents=True)
+    code, out, lines = box.drive(
+        "int8", "3.5-p0.5", "lm_head", "pydocs", "stock", INT8_BLOCK="32"
+    )
+    assert code == 0, out
+    (ev,) = _gpu(lines)
+    assert ev.startswith("GPU int8-3.5-p0.5-lm_head-pydocs-stock ")
+    assert "--stock-student" in ev and _flag(ev, "--int8-block") == "32"
+    assert _flag(ev, "--out").endswith("/eval/stock-int8lm_head32_pydocs.json")
+    assert _flag(ev, "--dst").endswith("/runs/bpw3.5-p0.5")  # the output it stands on
+
+
+def test_the_int8_step_refuses_what_it_cannot_score(box):
+    (box.out / "runs" / "bpw3.5").mkdir(parents=True)
+    for bad, text in (
+        (("int8", "3.5", "experts"), "attn, embed or lm_head"),
+        (("int8", "3.5"), "attn, embed or lm_head"),
+        (("int8", "3.5", "attn", "fine"), "mixed, wiki or pydocs"),
+        (("int8", "3.5", "attn", "mixed", "other"), "'stock' or nothing"),
+        (("int8", "4.0", "attn"), "no output at"),
+    ):
+        code, out, lines = box.drive(*bad)
+        assert code != 0 and text in out and _gpu(lines) == [], bad
+
+
+def test_the_int8_commands_parse_with_the_real_eval_parser(box):
+    kl = _load("hi2_s4_kl_parser_int8", "experiments/inkling_kl_eval.py")
+    (box.out / "runs" / "bpw3.5").mkdir(parents=True)
+    for args in (
+        ("int8", "3.5", "attn", "mixed"),
+        ("int8", "3.5", "lm_head", "wiki", "stock"),
+    ):
+        code, out, lines = box.drive(*args)
+        assert code == 0, (args, out)
+        words = _gpu(lines)[-1].split()
+        a = kl.parser().parse_args(words[3:])
+        assert a.int8_class == args[2] and a.int8_block == 64 and a.groups == "none"
+        assert a.stock_student == (args[-1] == "stock")

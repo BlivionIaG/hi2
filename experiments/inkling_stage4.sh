@@ -16,6 +16,11 @@
 #                     per-layer-group breakdown, wiki, pydocs; fine: the mixed windows and their
 #                     teacher pass, broken down by FINE_GROUPS; routing: the mixed windows with
 #                     the routing log, no breakdown) -> $EVALS/bpwT_SET.json
+#   int8 T CLASS [SET] [stock]
+#                     (GPU) exploratory: the KL eval of the output at T with ONE bf16 class (attn: the attention
+#                     projections, embed, lm_head) stored as HI2 INT8 (8, INT8_BLOCK) and read back; `stock`: on the
+#                     stock experts instead (the class alone) -> $EVALS/bpwT-int8CLASSBLOCK_SET.json (stock-int8...)
+#                     compare with inkling_int8_probe.py report
 #   teacher-heads     (GPU) the stock model's float32 head inputs on the FKL_TRAIN training windows
 #                     of the final-KL phase -> $TEACHER/fkl_train_wN_float32.pt
 #   finalkl T         (GPU) the final logit-KL phase from the finished output at T: FKL_STEPS steps
@@ -66,6 +71,7 @@ fi
 PILOT_SAMPLES=${PILOT_SAMPLES:-4}
 FINE_GROUPS=${FINE_GROUPS:-0-2,3-5,6-8,9-11,12-14,15-17,18-20,21-23} # `eval T fine`: groups of three layers
 EVAL_GROUPS=${EVAL_GROUPS:-auto} # `eval T mixed`: the per-layer-group breakdown (none: the scores only)
+INT8_BLOCK=${INT8_BLOCK:-64} # `int8`: the HI2 INT8 candidate (8, B) a bf16 class is stored as (32 or 64)
 # `finalkl`: steps, training windows, held-out windows (from FKL_VAL_OFFSET), windows per step, the
 # ladder bytes' learning rate (8-bit levels per step; 0.03 is the preset's final_lr_p, the best of the
 # one sweep that exists, 4B at 3.0 bpw; nothing was measured on Inkling: pass FKL_LR to compare), held-out evaluations
@@ -285,6 +291,22 @@ step_eval() {
     [[ $set != routing ]] || E+=(--routing-log)
     step "eval-$1-$set" devrun "eval-$1-$set" "${E[@]}"
 }
+step_int8() { # int8 T CLASS [SET] [stock]
+    target "${1:-}"
+    local cls=${2:-} set=${3:-mixed} stock=${4:-}
+    [[ $cls =~ ^(attn|embed|lm_head)$ ]] || die "int8 T CLASS: the class is attn, embed or lm_head"
+    [[ $set =~ ^(mixed|wiki|pydocs)$ ]] || die "int8 T CLASS SET: the set is mixed, wiki or pydocs"
+    [[ -z $stock || $stock == stock ]] || die "the last argument of int8 is 'stock' or nothing"
+    [[ -d $RUNS/bpw$1 ]] || stop "no output at $RUNS/bpw$1: run quantize $1 first"
+    check_calibration "$SAMPLES"
+    need_gib 2 "the evaluation"
+    local name=bpw$1-int8$cls${INT8_BLOCK}_$set sname=int8-$1-$cls-$set
+    [[ -z $stock ]] || name=stock-int8$cls${INT8_BLOCK}_$set sname=$sname-stock
+    eval_cmd "$RUNS/bpw$1" "$set" "$EVAL_WINDOWS" 0 none "$name" "${set}_w${EVAL_WINDOWS}_${EVAL_DTYPE}"
+    E+=(--int8-class "$cls" --int8-block "$INT8_BLOCK")
+    [[ -z $stock ]] || E+=(--stock-student)
+    step "$sname" devrun "$sname" "${E[@]}"
+}
 step_teacher_heads() {
     check_calibration "$SAMPLES"
     need_gib 2 "the teacher's head inputs of the final-KL windows"
@@ -374,6 +396,7 @@ case $cmd in
     pilot) locked gpu step_pilot ;;
     quantize) locked gpu step_quantize "$@" ;;
     eval) locked gpu step_eval "$@" ;;
+    int8) locked gpu step_int8 "$@" ;;
     teacher-heads) locked gpu step_teacher_heads ;;
     finalkl) locked gpu step_finalkl "$@" ;;
     status) step_status ;;
