@@ -195,10 +195,15 @@ def field_names(base: str, with_scale: bool, stacked: bool) -> list[str]:
     return names
 
 
-def read_fields(f, base: str, stacked: bool = False) -> dict[str, torch.Tensor]:
+def read_fields(
+    f, base: str, stacked: bool = False, keys=None
+) -> dict[str, torch.Tensor]:
     """The arrays of one HI2 tensor or stack from an open safetensors file, keyed by
-    field name (no prefix)."""
-    keys = set(f.keys())
+    field name (no prefix). A caller that reads many tensors of one file passes its
+    ``keys`` (a set): ``f.keys()`` copies every name of the file, 60 ms for the 83,000
+    of an Inkling-2 shard, so a call per tensor made a restack take twenty minutes."""
+    if keys is None:
+        keys = set(f.keys())
     names = field_names(base, f"{base}.hi2_col_scale" in keys, stacked)
     return {n.rsplit(".hi2_", 1)[1]: f.get_tensor(n) for n in names}
 
@@ -298,15 +303,18 @@ class Hi2Checkpoint:
 
     def iter_shard(self, shard: str, f):
         """``(logical base, HI2Tensor)`` of every HI2 tensor stored in ``shard``."""
+        keys = set(f.keys())
         for b in self.single:
             if self.shard(b) == shard:
-                yield b, from_fields(read_fields(f, b))
+                yield b, from_fields(read_fields(f, b, keys=keys))
         for s in self.stacked:
             if self.shard(s) != shard:
                 continue
             pre = s.rpartition(".")[0]
             for e, parts in enumerate(
-                split_stack(read_fields(f, s, stacked=True), len(self.parts(s)))
+                split_stack(
+                    read_fields(f, s, stacked=True, keys=keys), len(self.parts(s))
+                )
             ):
                 for name, t in zip(self.parts(s), parts):
                     yield member_base(pre, e, name), t
@@ -340,7 +348,9 @@ def checkpoint_stats(d: Path) -> dict:
     }
 
 
-def _plan_stacked(ck: Hi2Checkpoint, files: dict, log) -> dict[str, list[list[str]]]:
+def _plan_stacked(
+    ck: Hi2Checkpoint, files: dict, keys: dict, log
+) -> dict[str, list[list[str]]]:
     """Complete groups whose experts can be stacked (checked on the small arrays)."""
     plan = {}
     for s, members in stack_groups(ck.single).items():
@@ -350,7 +360,7 @@ def _plan_stacked(ck: Hi2Checkpoint, files: dict, log) -> dict[str, list[list[st
                 row = []
                 for b in parts:
                     f = files[ck.shard(b)]
-                    names = f.keys()
+                    names = keys[ck.shard(b)]
                     cs = f"{b}.hi2_col_scale"
                     row.append(
                         HI2Tensor(
@@ -406,8 +416,9 @@ def restack(
     consumed: set[str] = set()
     with ExitStack() as es:
         files = {s: es.enter_context(safe_open(src / s, "pt")) for s in shards}
+        keys = {s: frozenset(f.keys()) for s, f in files.items()}
         if layout == "stacked":
-            plan = _plan_stacked(ck, files, log)
+            plan = _plan_stacked(ck, files, keys, log)
             member_of = {}
             for s, members in plan.items():
                 for parts in members:
@@ -465,7 +476,14 @@ def restack(
                     data[x] = f.get_tensor(x)
                 elif kind == "stack":
                     members = [
-                        [from_fields(read_fields(files[ck.shard(b)], b)) for b in parts]
+                        [
+                            from_fields(
+                                read_fields(
+                                    files[ck.shard(b)], b, keys=keys[ck.shard(b)]
+                                )
+                            )
+                            for b in parts
+                        ]
                         for parts in stacks_out[x]
                     ]
                     for fld, t in build_stack(members).items():
@@ -474,7 +492,9 @@ def restack(
                     pre = x.rpartition(".")[0]
                     parts = ck.parts(x)
                     for e, ts in enumerate(
-                        split_stack(read_fields(f, x, stacked=True), len(parts))
+                        split_stack(
+                            read_fields(f, x, stacked=True, keys=keys[sh]), len(parts)
+                        )
                     ):
                         for pname, t in zip(parts, ts):
                             b = member_base(pre, e, pname)

@@ -245,6 +245,48 @@ def test_checkpoint_restack_both_ways(tmp_path):
         restack(src, st, "stacked", log=lambda *_: None)
 
 
+class _KeyCounting:
+    """A safetensors file that counts how often its whole key list is copied."""
+
+    calls = 0
+
+    def __init__(self, f):
+        self._f = f
+
+    def keys(self):
+        type(self).calls += 1
+        return self._f.keys()
+
+    def __getattr__(self, name):
+        return getattr(self._f, name)
+
+    def __enter__(self):
+        self._f.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._f.__exit__(*exc)
+
+
+def test_restack_copies_the_key_list_once_per_shard(tmp_path, monkeypatch):
+    """``f.keys()`` copies every name of the file (60 ms for an Inkling-2 shard): a copy
+    per tensor made the restack of 9,216 tensors take twenty minutes."""
+    import safetensors
+
+    src = tmp_path / "pe"
+    _write_per_expert(src)  # two shards
+    real = safetensors.safe_open
+    monkeypatch.setattr(
+        safetensors, "safe_open", lambda *a, **k: _KeyCounting(real(*a, **k))
+    )
+    _KeyCounting.calls = 0
+    restack(src, tmp_path / "st", "stacked", log=lambda *_: None)
+    assert 0 < _KeyCounting.calls <= 3 * 2
+    _KeyCounting.calls = 0
+    restack(tmp_path / "st", tmp_path / "back", "per-expert", log=lambda *_: None)
+    assert 0 < _KeyCounting.calls <= 3 * 2
+
+
 def test_unstackable_group_stays_per_expert(tmp_path):
     from hi2.checkpoint import load_dequantized, weight_map
 
