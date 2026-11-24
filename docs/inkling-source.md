@@ -842,17 +842,64 @@ The pilot found two defects, both fixed in this tree:
   reads each shard's key set once: 14.4 s for the same staging, and the output is byte-identical
   to the old code's (`cmp` of both shards, the index and `config.json`).
 
+### The 3.5 bpw encode on 256 windows (measured, 2026-11-24)
+
+The `quantize-3.5` step of the chain: 256 windows of 2,048 tokens (524,288 tokens of the 265
+built), `--target-bpw 3.5 --bits 2,4,8 --candidates lean --no-qad --sensitivity none`, float16
+encode on `cuda:0,cuda:1`. Exit 0 in 3,344 s (55.7 min).
+
+| Phase of `hi2 quantize` | Seconds | Note |
+| --- | --- | --- |
+| model load and capture | 129 | |
+| phase 1: layer program with statistics, merge, write, tables | 2,342 | forward 1,324 (14-17 s per layer call, 36-41 s for the second call of a loop layer), merge 218, write 13, tables 512 (20 s per layer; 57 s on layer 0) |
+| allocation | 43 | INT2 42.2 % / INT4 57.8 % / INT8 0 % of the rows |
+| encode | 597 | 9,216 tensors, 15.4 per second |
+| restack | 11 | the fixed one |
+| validation | 174 | |
+
+The forward took 6.5 times the pilot's for 64 times the windows: 4.3 s per layer call at 4
+windows (204 s for 48 calls), 27.6 s at 256 (1,324 s), which a fixed part of about 4 s per call
+and 0.09 s per window fits [two-point fit, inference]. The two projections made from the pilot
+(a flat 13 s and a linear 3.6 h) were off by a factor of 100 and of 10. A further target reuses
+the statistics (the cache key holds the windows, not the target) and should cost the
+allocation, the encode, the restack and the validation, about 15 min [inference until the 3.0
+run]. Resources of the step, sampled every 30 s: process RSS up to 182 GiB (131 GiB in the
+layer log lines), MemAvailable at least 293 GiB, 15.0 GiB of VRAM per card, 66 C at the hottest
+card, 0 page faults, disk free 116 GiB at the end.
+
+Token coverage of the 256-window statistics, by (layer, projection) group of 128 experts: 48 of
+the 72 groups have every expert at the token floor, 12 have one below it (topped up with the
+layer average), 9 have two and 3 have three; the median expert sees 25,000-32,000 tokens
+outside the loop and 43,000-84,000 in the loop layers (three passes), the least routed expert of
+a layer 1,900-17,000 (the pilot topped up all 128 of every group).
+
+Allocation (`experiments/inkling_alloc_report.py`; shares of INT2/INT4/INT8 by weights, blocks
+by rows, bits per weight of everything stored; stock = the NVFP4 experts at 4.5 bits and the
+MXFP8 ones at 8.25):
+
+| Scope | Weights G | INT2 % | INT4 % | INT8 % | B16 % | B32 % | B64 % | bpw | GiB | Stock GiB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| all experts | 24.461 | 42.2 | 57.8 | 0.0 | 1.7 | 15.9 | 82.4 | 3.498 | 9.962 | 14.594 |
+| layers 0-5 | 6.115 | 34.6 | 65.4 | 0.0 | 1.8 | 16.0 | 82.3 | 3.649 | 2.598 | 3.204 |
+| layers 6-17 (loop) | 12.231 | 46.1 | 53.9 | 0.0 | 1.7 | 16.1 | 82.3 | 3.420 | 4.870 | 6.407 |
+| layers 18-19 | 2.038 | 42.0 | 58.0 | 0.0 | 1.6 | 13.1 | 85.4 | 3.493 | 0.829 | 1.068 |
+| layers 20-23 (MXFP8) | 4.077 | 41.9 | 58.1 | 0.0 | 2.0 | 16.5 | 81.5 | 3.508 | 1.665 | 3.916 |
+
+No row takes INT8 at 3.5 bpw: the global lambda that meets the budget does not buy 8 bits for
+any row. The pilot (four windows, every expert topped up) gave nearly the same split: 41.8 %
+INT2, 3.498 bpw; INT4 67.5 % in layers 0-5 against 65.4 %, 56.4 % against 58.0 % in layers
+18-19, the same elsewhere. The split says where the cost tables put the bits; whether it is the
+split the KL wants is the evaluation's question.
+
 ### Costs and risks
 
 * **GPU needs.** A lease of slot a2 (HIP 0,1, both cards free, 28 GiB each as in the smoke)
   in three blocks [inference, before the pilot]: the pilot (1-2 h; measured: 56 min with the
   old restack, 35 min with the fixed one, plus a 6 min evaluation), the first encode and its
-  evaluations (5-7 h: the program pass costs 52-55 s per forward of two windows [measured,
-  2026-11-23], 128 of them for 524,288 tokens is about 2 h before the statistics, the tables
-  and the encode are added; after the pilot the part that does not depend on the tokens is
-  about 30 min, the forward is 0.06 h if it stays flat in the windows and 3.6 h if it grows
-  with them [projection]), and the 3.0 and 4.0 encodes (the statistics are cached; 2-3 h each
-  with their evaluation). The encode of 24.5 G weights with GPTQ and two refinement sweeps
+  evaluations (measured: the 3.5 encode on 256 windows took 56 min, of which the forward was
+  22 min, see the section above; the evaluations are added), and the 3.0 and 4.0 encodes (the
+  statistics are cached: allocation, encode, restack and validation, about 15 min each, with
+  their evaluation). The encode of 24.5 G weights with GPTQ and two refinement sweeps
   took 628 s on the two cards [measured, the pilot, above], not the 32 min of the stage-2
   data-free estimate. The fit limit (22.2 / 22.9 / 23.6 GiB of 24.0 for the final-KL student
   at 3.0 / 3.5 / 4.0) matters only for a
