@@ -120,6 +120,21 @@ def _positive(name, value, *, zero=False):
         raise ValueError(f"{name} must be {'nonnegative' if zero else 'positive'}")
 
 
+def cuda_device_count() -> int:
+    """The accelerators the runtime opens, 0 when there is none.
+
+    ``torch.cuda.device_count()`` before the first call into the runtime is answered by amdsmi on
+    ROCm, and measured 0 under ``HIP_VISIBLE_DEVICES=0,1`` (torch 2.12+rocm7.14: ``is_available()``
+    True, ``device_count()`` 0, 2 after ``torch.cuda.init()``), which made every ``cuda:N`` look
+    unavailable and stopped a GPU run at its first check."""
+    import torch
+
+    if not torch.cuda.is_available():
+        return 0
+    torch.cuda.init()
+    return torch.cuda.device_count()
+
+
 def resolve_config(rc, log=lambda message: None, *, check_ownership=True):
     """Resolve all fallbacks before either planning or allocating compute work."""
     import regex
@@ -205,7 +220,7 @@ def resolve_config(rc, log=lambda message: None, *, check_ownership=True):
         device = torch.device(value)
         if device.type == "cuda":
             index = device.index if device.index is not None else 0
-            if not torch.cuda.is_available() or index >= torch.cuda.device_count():
+            if index >= cuda_device_count():
                 raise RuntimeError(f"requested accelerator is unavailable: {value}")
             device = torch.device("cuda", index)
         elif device.type != "cpu":
@@ -402,7 +417,7 @@ def doctor() -> dict:
         )
         info["devices"] = [
             {"index": i, "name": torch.cuda.get_device_name(i)}
-            for i in range(torch.cuda.device_count())
+            for i in range(cuda_device_count())
         ]
         info["cpu_available"] = True
         info["fused_kernel"] = {
@@ -548,10 +563,7 @@ def plan_tuning(
         dev = torch.device(name)
         if dev.type not in ("cpu", "cuda"):
             raise ValueError("tuning evaluation supports cpu or cuda:N")
-        if dev.type == "cuda" and (
-            not torch.cuda.is_available()
-            or (dev.index or 0) >= torch.cuda.device_count()
-        ):
+        if dev.type == "cuda" and ((dev.index or 0) >= cuda_device_count()):
             raise RuntimeError(f"tuning evaluation accelerator unavailable: {name}")
     text = Path(text).resolve()
     if not text.is_file():

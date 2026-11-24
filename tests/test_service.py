@@ -147,6 +147,63 @@ def test_recipe_roundtrip_and_explicit_override(source, tmp_path):
         config_from_dict({**doc, "schema_version": 999})
 
 
+class _RocmBeforeInit:
+    """torch.cuda as torch 2.12+rocm7.14 answers under HIP_VISIBLE_DEVICES=0,1: the runtime is
+    available, device_count() is 0 until torch.cuda.init() has run, then 2."""
+
+    def __init__(self, count=2, available=True):
+        self.count, self.available, self.initialized = count, available, False
+
+    def install(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: self.available)
+        monkeypatch.setattr(torch.cuda, "init", self.init)
+        monkeypatch.setattr(torch.cuda, "device_count", self.device_count)
+        monkeypatch.setattr(torch.cuda, "get_device_name", lambda i: f"gpu{i}")
+        return self
+
+    def init(self):
+        self.initialized = True
+
+    def device_count(self):
+        return self.count if self.initialized else 0
+
+
+def test_a_device_count_of_zero_before_the_runtime_starts_is_not_unavailable(
+    source, tmp_path, monkeypatch
+):
+    cuda = _RocmBeforeInit().install(monkeypatch)
+    assert torch.cuda.device_count() == 0  # what hi2 used to see: every cuda:N refused
+    rc = resolve_config(
+        configuration(source, tmp_path, devices=["cuda:0", "cuda:1"]),
+        check_ownership=False,
+    )
+    assert rc.devices == ["cuda:0", "cuda:1"] and cuda.initialized
+    with pytest.raises(RuntimeError, match="unavailable: cuda:2"):
+        resolve_config(
+            configuration(source, tmp_path, devices=["cuda:2"]), check_ownership=False
+        )
+
+
+def test_without_an_accelerator_a_cuda_device_is_still_refused(
+    source, tmp_path, monkeypatch
+):
+    _RocmBeforeInit(count=0, available=False).install(monkeypatch)
+    with pytest.raises(RuntimeError, match="unavailable: cuda:0"):
+        resolve_config(
+            configuration(source, tmp_path, devices=["cuda:0"]), check_ownership=False
+        )
+
+
+def test_doctor_lists_the_devices_the_runtime_opens(monkeypatch):
+    from hi2.service import doctor
+
+    _RocmBeforeInit().install(monkeypatch)
+    assert doctor()["devices"] == [
+        {"index": 0, "name": "gpu0"},
+        {"index": 1, "name": "gpu1"},
+    ]
+
+
 def test_failed_atomic_write_preserves_previous_artifact(tmp_path):
     artifact = tmp_path / "record.json"
     artifact.write_bytes(b"original")
