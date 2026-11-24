@@ -769,7 +769,7 @@ Every command it builds is parsed by the real parser of the tool in
 | `plan T` | CPU | `hi2 quantize --dry-run --json` at T bpw: 6 s each on the real directory [measured]; 542,995 tokens available, 524,288 needed | |
 | `pilot` | GPU | the whole chain at 3.5 bpw with 4 windows (8,192 tokens) into `runs/pilot`, own cache, then a KL on 4 windows of 512 tokens | cache ~39 GiB + output ~15 GiB [the 2026-11-23 measurement], removed by `clean-pilot` |
 | `quantize T` | GPU | calibration (the first call fills `stage4/cache`, the next ones reuse it), allocation, encode, validation | the first: cache + output; then ~15 GiB each |
-| `eval T [SET]` | GPU | the KL above in float32 (`EVAL_DTYPE`; the encode keeps float16) on 32 windows (`mixed`, with the group breakdown on 8) or the OOD set | ~1 GiB with the teacher cache |
+| `eval T [SET]` | GPU | the KL above in float32 (`EVAL_DTYPE`; the encode keeps float16) on 32 windows (`mixed`, with the group breakdown on 8) or the OOD set; `fine`: the same windows and the same teacher pass as `mixed`, broken down by `FINE_GROUPS` (default eight groups of three layers, `0-2,3-5,...,21-23`) into `eval/bpwT_fine.json`, about 8 x 110 s of group passes [inference from the 3.5 run: four groups took 110-160 s each] | ~1 GiB with the teacher cache |
 
 The encode command (`hi2 quantize SRC DST --calib calib.txt --calib-samples 256 --seq-len 2048
 --include '\.mlp\.experts\.' --bits 2,4,8 --candidates lean --target-bpw T --no-qad

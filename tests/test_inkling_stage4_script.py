@@ -184,6 +184,24 @@ def test_an_out_of_distribution_set_has_no_breakdown_and_its_own_hash(box):
     assert "--breakdown-windows" not in ev and _flag(ev, "--max-kl") == "0.5"
 
 
+def test_the_fine_set_breaks_the_mixed_windows_down_and_shares_their_teacher(box):
+    (box.out / "runs" / "bpw3.5").mkdir(parents=True)
+    code, out, lines = box.drive("eval", "3.5", "fine")
+    assert code == 0, out
+    (ev,) = _gpu(lines)
+    assert ev.startswith("GPU eval-3.5-fine ")
+    # the same held-out windows and the same teacher pass as `mixed`: no second teacher run
+    assert _flag(ev, "--ids").endswith("/calib/heldout_mixed_ids.npy")
+    assert _flag(ev, "--ids-sha256") == SHA["mixed"] and _flag(ev, "--windows") == "32"
+    assert _flag(ev, "--teacher-cache").endswith("/teacher/mixed_w32_float32.pt")
+    assert _flag(ev, "--out").endswith("/eval/bpw3.5_fine.json")
+    assert _flag(ev, "--groups") == "0-2,3-5,6-8,9-11,12-14,15-17,18-20,21-23"
+    assert _flag(ev, "--breakdown-windows") == "8"
+    # the groups are a setting
+    code, out, lines = box.drive("eval", "3.5", "fine", FINE_GROUPS="0-11,12-23")
+    assert code == 0 and _flag(_gpu(lines)[-1], "--groups") == "0-11,12-23"
+
+
 def test_eval_needs_an_output_to_score(box):
     code, out, lines = box.drive("eval", "3.5")
     assert code == 1 and "no output at" in out and _gpu(lines) == []
@@ -340,7 +358,7 @@ def test_every_command_the_driver_builds_parses_with_the_real_parsers(box):
         (box.out / "runs" / f"bpw{t}").mkdir(parents=True)
     steps = [("pilot",), ("plan", "3.5")]
     steps += [("quantize", t) for t in ("3.0", "3.5", "4.0")]
-    steps += [("eval", "3.5", s) for s in ("mixed", "wiki", "pydocs")]
+    steps += [("eval", "3.5", s) for s in ("mixed", "wiki", "pydocs", "fine")]
     for args in steps:
         code, out, lines = box.drive(*args, MAX_KL="1.0")
         assert code == 0, (args, out)
@@ -362,8 +380,8 @@ def test_every_command_the_driver_builds_parses_with_the_real_parsers(box):
             a = calib.parser().parse_args(words[2:])
             assert a.command == "verify" and a.production
             seen["verify"] += 1
-    # pilot: 1 encode + 1 KL; plan: 1 dry-run plan; 3 encodes; 3 KLs; a verify before each
-    assert seen == {"quantize": 5, "eval": 4, "verify": 7}
+    # pilot: 1 encode + 1 KL; plan: 1 dry-run plan; 3 encodes; 4 KLs; a verify before each
+    assert seen == {"quantize": 5, "eval": 5, "verify": 8}
 
 
 # ---------------------------------------------------- the dry run of the chain, tiny model

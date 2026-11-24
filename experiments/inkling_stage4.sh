@@ -13,7 +13,8 @@
 #   quantize T        (GPU) calibration (the first call fills $CACHE, the others reuse it),
 #                     allocation and encode at T bpw -> $RUNS/bpwT
 #   eval T [SET]      (GPU) KL against the stock model on the held-out SET (mixed: with the
-#                     per-layer-group breakdown, wiki, pydocs) -> $EVALS/bpwT_SET.json
+#                     per-layer-group breakdown, wiki, pydocs; fine: the mixed windows and their
+#                     teacher pass, broken down by FINE_GROUPS) -> $EVALS/bpwT_SET.json
 #   status            the state of the steps, the results, the disk
 #   clean-pilot       remove the pilot's work, cache, output and teacher pass
 #   tiny              (CPU, TINY=1) the toy model and its calibration set for the dry run
@@ -25,7 +26,7 @@
 # and refuses unless HIP_VISIBLE_DEVICES is set; define it in $STAGE4_ENV (sourced last, it
 # may redefine any function) to run a guard instead. `cpu_run python-args...` likewise.
 # Settings (defaults in the code): W OUT SRC CAL CACHE WORK RUNS EVALS TEACHER STATE LOGS
-# DEVICES DTYPE EVAL_DTYPE SAMPLES SEQ PILOT_SAMPLES EVAL_WINDOWS BREAKDOWN_WINDOWS MIN_FREE_GB
+# DEVICES DTYPE EVAL_DTYPE SAMPLES SEQ PILOT_SAMPLES EVAL_WINDOWS BREAKDOWN_WINDOWS FINE_GROUPS MIN_FREE_GB
 # PRODUCTION EXTRA_QUANTIZE MAX_KL TRANSFORMERS STAGE4_ENV DRY TINY.
 set -u
 
@@ -55,6 +56,7 @@ else
     GIB_CACHE=${GIB_CACHE:-40} GIB_OUT=${GIB_OUT:-16} # measured: 39.3 GiB, ~15 GiB
 fi
 PILOT_SAMPLES=${PILOT_SAMPLES:-4}
+FINE_GROUPS=${FINE_GROUPS:-0-2,3-5,6-8,9-11,12-14,15-17,18-20,21-23} # `eval T fine`: groups of three layers
 CAL=${CAL:-$OUT/calib}
 CACHE=${CACHE:-$OUT/cache}
 WORK=${WORK:-$OUT/work}
@@ -189,7 +191,7 @@ eval_cmd() { # eval_cmd DST SET WINDOWS LEN GROUPS OUTNAME TEACHERNAME -> E
         --devices ${DEVICES//,/ } --compute-dtype "$EVAL_DTYPE" --groups "$5"
         --teacher-cache "$TEACHER/$7.pt" --out "$EVALS/$6.json")
     [[ $4 == 0 ]] || E+=(--seq-len "$4")
-    [[ $5 != auto ]] || E+=(--breakdown-windows "$BREAKDOWN_WINDOWS")
+    [[ $5 == none ]] || E+=(--breakdown-windows "$BREAKDOWN_WINDOWS")
     [[ -z $MAX_KL ]] || E+=(--max-kl "$MAX_KL")
     [[ -z $TRANSFORMERS ]] || E+=(--transformers "$TRANSFORMERS")
 }
@@ -198,7 +200,7 @@ target() { [[ ${1:-} =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "a target in bits per weig
 step_config() {
     local v
     for v in REPO W OUT SRC CAL CACHE WORK RUNS EVALS TEACHER STATE LOGS DEVICES DTYPE EVAL_DTYPE SEQ SAMPLES \
-        PILOT_SAMPLES PILOT_EVAL_WINDOWS PILOT_EVAL_LEN EVAL_WINDOWS BREAKDOWN_WINDOWS \
+        PILOT_SAMPLES PILOT_EVAL_WINDOWS PILOT_EVAL_LEN EVAL_WINDOWS BREAKDOWN_WINDOWS FINE_GROUPS \
         MIN_FREE_GB GIB_CACHE GIB_OUT PRODUCTION EXTRA_QUANTIZE MAX_KL TINY DRY; do
         printf '%-20s %s\n' "$v" "${!v}"
     done
@@ -251,13 +253,16 @@ step_quantize() {
 }
 step_eval() {
     target "${1:-}"
-    local set=${2:-mixed} groups=none
-    [[ $set != mixed ]] || groups=auto
+    local set=${2:-mixed} ids=${2:-mixed} groups=none
+    case $set in
+        mixed) groups=auto ;;
+        fine) ids=mixed groups=$FINE_GROUPS ;; # the held-out mixed windows, a finer breakdown
+    esac
     [[ -d $RUNS/bpw$1 ]] || stop "no output at $RUNS/bpw$1: run quantize $1 first"
     check_calibration "$SAMPLES"
     need_gib 2 "the evaluation"
-    eval_cmd "$RUNS/bpw$1" "$set" "$EVAL_WINDOWS" 0 "$groups" "bpw${1}_$set" \
-        "${set}_w${EVAL_WINDOWS}_${EVAL_DTYPE}"
+    eval_cmd "$RUNS/bpw$1" "$ids" "$EVAL_WINDOWS" 0 "$groups" "bpw${1}_$set" \
+        "${ids}_w${EVAL_WINDOWS}_${EVAL_DTYPE}"
     step "eval-$1-$set" devrun "eval-$1-$set" "${E[@]}"
 }
 step_status() {
