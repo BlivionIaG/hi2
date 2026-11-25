@@ -120,8 +120,10 @@ def load_calibration_ids_offset(text, tok, samples, seq_len, skip_tokens):
     import json
 
     if text.suffix == ".jsonl":
+        # JSONL records end at LF, not at every character str.splitlines()
+        # considers a line boundary: U+0085 or U+2028 inside a JSON string is legal.
         raw = "\n\n".join(
-            json.loads(ln)["text"] for ln in text.read_text().splitlines() if ln
+            json.loads(ln)["text"] for ln in text.read_text().split("\n") if ln.strip()
         )
     else:
         raw = text.read_text()
