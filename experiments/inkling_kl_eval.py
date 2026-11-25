@@ -54,6 +54,7 @@ import inspect
 import json
 import os
 import re
+import resource
 import sys
 import threading
 import time
@@ -736,6 +737,19 @@ def main(argv=None) -> int:
         result["gates"] = gates
         result["ok"] = not failed()
         result["seconds"]["total"] = round(time.perf_counter() - t_start, 1)
+        result["rss_gib"] = round(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20, 1
+        )
+        cuda = [d for d in result["devices"] if str(d).startswith("cuda")]
+        if cuda and torch.cuda.is_available():
+            result["peak_memory_gib"] = {
+                str(d): round(torch.cuda.max_memory_allocated(d) / 2**30, 2)
+                for d in cuda
+            }
+            result["peak_reserved_gib"] = {
+                str(d): round(torch.cuda.max_memory_reserved(d) / 2**30, 2)
+                for d in cuda
+            }
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_text(json.dumps(result, indent=2))
         if "student" in result:
