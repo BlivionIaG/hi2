@@ -27,6 +27,7 @@ CALIB_SAMPLES=${CALIB_SAMPLES:-256}
 CALIB_SEQ_LEN=${CALIB_SEQ_LEN:-2048}
 SUB=${SUB:-32}
 OOD_WINDOWS=${OOD_WINDOWS:-8}
+POSITION_BUCKETS=${POSITION_BUCKETS:-0-2048,2048-8192,8192-16384,16384-32768}
 FORCE=${FORCE:-0}
 SKIP_PREFLIGHT=${SKIP_PREFLIGHT:-0}
 SKIP_CALIB_TEXT=${SKIP_CALIB_TEXT:-0}
@@ -130,14 +131,18 @@ Inputs: same stages 1-4 allocation (target-bpw 3.5, same include/exclude/candida
   first 256 x 2048), 13.67 GiB. New = stage8/runs/bpw3.5-v2, 3.5 bpw, only the
   calibration text changed. Size gate: the new output directory is within +-1%
   of 13.67 GiB.
-Held-out: stage-4 v2 no-copyleft: 8 heldout sets, 48 windows (six per set),
-  32K tokens. Pooled KL uses the first 32 windows in sorted set order (SUB=32);
-  the category gate uses ALL 48 windows so every one of the 8 categories is gated.
-  Float32 evaluation of the old and new student, same window indices.
+Held-out: stage-4 v2 no-copyleft has 27 files/820 windows (2K, 8K, 16K, 32K).
+  Native stats preflight is skipped (calibration is 2048 tokens). Only one float32
+  eval try at 8192 and one at 16384; 32K is not preflighted and is excluded. If the
+  16384 try fails, 16K is excluded too; the 8192 try must pass. A materialized
+  subset with the first 32 windows in sorted file order over the remaining lengths
+  is evaluated, so every remaining category (agentic, code, general_chat,
+  long_context, math_reasoning, multilingual) is gated. Float32 evaluation of the
+  old and new student, same window indices.
 Metric: delta = new KL - old KL per held-out window.
   pooled improves only if mean(delta) < -1.0 * sem(delta),
     sem = sd(delta, ddof=1) / sqrt(n).
-  category gate: for each of the 8 held-out categories over all its windows,
+  category gate: for each remaining held-out category over all its selected windows,
     mean(delta) <= 1.0 * sem(delta).
     The category sem is the paired sem of the windows in that category.
   A category worsens when delta > sem. Any worsening category keeps the old PTQ.
@@ -207,68 +212,125 @@ log "lease $OWNER.a2 live; holder pid $HOLDER_PID"
 lease_ok || { REASON=lease-not-live; exit 1; }
 
 # ---- preflight --------------------------------------------------------------
+# Calibration is 2048 tokens; the stats ladder was irrelevant (and a 32K eager
+# attention score matrix needs ~42 GiB). Only the float32 eval preflight remains:
+# one try at 8192 and one at 16384. 32K is not preflighted and is excluded.
 PRE=$OUT/preflight
 DEC=$PRE/decision.json
-stats_try() {
-  local L=$1
-  local out=$PRE/stats_$L.json
-  rm -f "$out"
-  run_gpu "preflight_stats_$L" "$GPU_SH" "$TREE/experiments/inkling_looped_smoke.py" \
-    --src "$SRC" --transformers "$TRANSFORMERS" \
-    --devices cuda:0 cuda:1 --seqs 1 --seq-len "$L" --calib-layers 1 \
-    --compute-dtype float16 --skip-compare --text "$CALIB_TEXT" \
-    --workdir "$PRE/work" --out "$out"
-}
+mkdir -p "$PRE"
+for L in 8192 16384; do
+  if [[ ! -s "$PRE/window_$L.npy" ]]; then
+    "$PY" - "$PRE/window_32768.npy" "$PRE/window_$L.npy" "$L" <<'PY'
+import numpy as np, sys
+a = np.load(sys.argv[1])
+np.save(sys.argv[2], a[..., : int(sys.argv[3])])
+PY
+  fi
+done
+
 eval_try() {
   local L=$1
   local out=$PRE/eval_$L.json
   rm -f "$out"
   run_gpu "preflight_eval_$L" "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-    --dst "$OLD" --ids "$PRE/window_32768.npy" --windows 1 --seq-len "$L" \
+    --dst "$OLD" --ids "$PRE/window_$L.npy" --windows 1 \
     --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
-    --batch-windows 1 --position-buckets --out "$out"
+    --batch-windows 1 --position-buckets "$POSITION_BUCKETS" --out "$out"
 }
+valid=0
 if [[ -s "$DEC" ]]; then
+  if "$PY" - "$DEC" >/dev/null 2>&1 <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d.get("exclude_32k") is True
+assert int(d.get("eval_max")) in (8192, 16384)
+assert int(d.get("exclude_above")) in (8192, 16384)
+PY
+  then
+    valid=1
+  fi
+fi
+if [[ "$valid" == "1" ]]; then
   log "reusing preflight decision: $DEC"
 elif [[ "$SKIP_PREFLIGHT" == "1" ]]; then
-  [[ -s "$DEC" ]] || cat > "$DEC" <<'EOF'
-{"stats_max":null,"eval_max":32768,"batch_windows":1,"assumed":true,"skipped":true}
+  cat > "$DEC" <<'EOF'
+{"stats_max":null,"eval_8192":{"ok":null},"eval_16384":{"ok":null},
+ "eval_max":16384,"exclude_32k":true,"exclude_above":16384,
+ "not_preflighted":[32768],"assumed":true,"skipped":true}
 EOF
-  log "preflight skipped by SKIP_PREFLIGHT=1"
+  log "preflight skipped by SKIP_PREFLIGHT=1; 32K excluded"
 else
-  STATS_MAX=""
-  if stats_try 65536; then
-    STATS_MAX=65536
+  rm -f "$DEC"
+  eval_try 8192 || { REASON=preflight-eval-8192-failed; exit 1; }
+  if eval_try 16384; then
+    EVAL_MAX=16384
+    EVAL_16K=1
+    log "eval preflight 16384 passed"
   else
-    for ((L=32768; L>=2048; L-=1024)); do
-      if stats_try "$L"; then STATS_MAX=$L; break; fi
-    done
+    EVAL_MAX=8192
+    EVAL_16K=0
+    log "eval preflight 16384 failed once; 16K and 32K will be excluded"
   fi
-  [[ -n "$STATS_MAX" ]] || { REASON=preflight-stats-all-failed; exit 1; }
-  log "stats max $STATS_MAX"
-
-  EVAL_MAX=""
-  for ((L=32768; L>=2048; L-=1024)); do
-    if eval_try "$L"; then EVAL_MAX=$L; break; fi
-  done
-  [[ -n "$EVAL_MAX" ]] || { REASON=preflight-eval-all-failed; exit 1; }
-  log "eval max $EVAL_MAX"
-  "$PY" - "$DEC" "$STATS_MAX" "$EVAL_MAX" "$BATCH_WINDOWS" <<'PY'
-import json, sys
-path, stats, ev, batch = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+  "$PY" - "$DEC" "$PRE/eval_8192.json" "$PRE/eval_16384.json" \
+    "$EVAL_MAX" "$EVAL_16K" <<'PY'
+import json, os, sys
+path, p8, p16, ev, ok16 = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+def block(p):
+    if not os.path.exists(p):
+        return {"ok": False}
+    d = json.load(open(p))
+    peaks = d.get("peak_memory_gib") or {}
+    vals = [float(v) for v in peaks.values() if v is not None]
+    return {
+        "ok": True,
+        "seconds": d.get("seconds"),
+        "peak_memory_gib": peaks,
+        "peak_reserved_gib": d.get("peak_reserved_gib"),
+        "rss_gib": d.get("rss_gib"),
+        "max_peak_gib": max(vals) if vals else None,
+    }
+b8, b16 = block(p8), block(p16)
+headroom = (
+    24.0 - b16["max_peak_gib"]
+    if ok16 and b16.get("max_peak_gib") is not None
+    else None
+)
+out = {
+    "stats_max": None,
+    "eval_8192": b8,
+    "eval_16384": b16,
+    "eval_16k_ok": bool(ok16),
+    "eval_max": ev,
+    "exclude_32k": True,
+    "exclude_above": ev,
+    "not_preflighted": [32768],
+    "headroom_gib_16k": headroom,
+    "assumed": False,
+    "skipped": False,
+}
 with open(path, "w") as f:
-    json.dump({"stats_max": stats, "eval_max": ev, "batch_windows": batch,
-               "assumed": False, "skipped": False}, f, indent=2)
+    json.dump(out, f, indent=2)
     f.write("\n")
 PY
 fi
-EVAL_SEQ=$("$PY" - "$DEC" <<'PY'
+EVAL_MAX=$("$PY" - "$DEC" <<'PY'
 import json, sys
-d = json.load(open(sys.argv[1]))
-print(int(d.get("eval_max") or 32768))
+print(int(json.load(open(sys.argv[1]))["eval_max"]))
 PY
 )
-log "preflight decision: $DEC; eval_seq=$EVAL_SEQ"
+EXCLUDE_ABOVE=$("$PY" - "$DEC" <<'PY'
+import json, sys
+print(int(json.load(open(sys.argv[1]))["exclude_above"]))
+PY
+)
+EVAL_IDS=$OUT/eval_ids
+if [[ "$EXCLUDE_ABOVE" -lt 32768 ]]; then
+  "$PY" "$TREE/experiments/inkling_eval_subset.py" \
+    --src "$V2" --dst "$EVAL_IDS" --max-length "$EXCLUDE_ABOVE" --windows "$SUB"
+else
+  EVAL_IDS=$V2
+fi
+log "preflight decision: $DEC; eval_max=$EVAL_MAX; exclude_above=$EXCLUDE_ABOVE; ids=$EVAL_IDS"
 
 # ---- quantize ---------------------------------------------------------------
 if [[ -f "$NEW/hi2_run.json" && "$FORCE" != "1" ]]; then
@@ -314,18 +376,18 @@ if [[ "$SKIP_EVAL" != "1" ]]; then
     log "reusing eval/old_heldout.json"
   else
     run_gpu eval_old_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-      --dst "$OLD" --ids "$V2" --windows 0 --split heldout \
-      --seq-len "$EVAL_SEQ" --devices cuda:0 cuda:1 --compute-dtype float32 \
-      --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets \
+      --dst "$OLD" --ids "$EVAL_IDS" --windows 0 --split heldout \
+      --devices cuda:0 cuda:1 --compute-dtype float32 \
+      --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets "$POSITION_BUCKETS" \
       --out "$OUT/eval/old_heldout.json" || { REASON=eval-old-failed; exit 1; }
   fi
   if [[ -s "$OUT/eval/new_heldout.json" && "$FORCE" != "1" ]]; then
     log "reusing eval/new_heldout.json"
   else
     run_gpu eval_new_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-      --dst "$NEW" --ids "$V2" --windows 0 --split heldout \
-      --seq-len "$EVAL_SEQ" --devices cuda:0 cuda:1 --compute-dtype float32 \
-      --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets \
+      --dst "$NEW" --ids "$EVAL_IDS" --windows 0 --split heldout \
+      --devices cuda:0 cuda:1 --compute-dtype float32 \
+      --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets "$POSITION_BUCKETS" \
       --out "$OUT/eval/new_heldout.json" || { REASON=eval-new-failed; exit 1; }
   fi
 fi
@@ -336,7 +398,7 @@ if [[ "$SKIP_OOD" != "1" ]]; then
     run_gpu eval_old_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
       --dst "$OLD" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
       --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
-      --batch-windows 1 --position-buckets --out "$OUT/eval/old_ood.json" || {
+      --batch-windows 1 --position-buckets "$POSITION_BUCKETS" --out "$OUT/eval/old_ood.json" || {
         REASON=eval-old-ood-failed; exit 1; }
   fi
   if [[ -s "$OUT/eval/new_ood.json" && "$FORCE" != "1" ]]; then
@@ -345,7 +407,7 @@ if [[ "$SKIP_OOD" != "1" ]]; then
     run_gpu eval_new_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
       --dst "$NEW" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
       --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
-      --batch-windows 1 --position-buckets --out "$OUT/eval/new_ood.json" || {
+      --batch-windows 1 --position-buckets "$POSITION_BUCKETS" --out "$OUT/eval/new_ood.json" || {
         REASON=eval-new-ood-failed; exit 1; }
   fi
 fi
@@ -364,6 +426,17 @@ if [[ "$SKIP_OOD" == "1" ]]; then
 fi
 "$PY" "$TREE/experiments/inkling_v2_compare.py" "${SUMMARY_ARGS[@]}" \
   > "$OUT/logs/summary.log" 2>&1 || { REASON=summary-failed; exit 1; }
+"$PY" - "$OUT/summary.json" "$DEC" <<'PY'
+import json, sys
+path, dec = sys.argv[1], sys.argv[2]
+d = json.load(open(path))
+p = json.load(open(dec))
+d["preflight"] = p
+d["not_preflighted"] = p.get("not_preflighted", [])
+with open(path, "w") as f:
+    json.dump(d, f, indent=2)
+    f.write("\n")
+PY
 cat "$OUT/logs/summary.log"
 
 if "$PY" - "$OUT/summary.json" <<'PY'
