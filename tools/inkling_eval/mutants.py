@@ -74,6 +74,41 @@ def _probe_agentic(module) -> None:
     assert module.score_agentic(item, right)["ok"] is True
 
 
+def _probe_agentic_control(module) -> None:
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "book_hotel",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    }
+    item = {
+        "expected": {
+            "name": None,
+            "args": None,
+            "tools": [tool],
+            "control": True,
+            "must_include": ["2026-12-03", "2"],
+        }
+    }
+    good = (
+        "<|message_model|><|content_text|>"
+        "The reservation used check-in 2026-12-03 for 2 nights.<|end_message|>"
+    )
+    assert module.score_agentic(item, good)["ok"] is True
+    called = good + (
+        '<|message_model|>book_hotel<|content_invoke_tool_json|>'
+        '{"name":"book_hotel","args":{"city":"Osaka"}}<|end_message|>'
+    )
+    assert module.score_agentic(item, called)["ok"] is False
+    missing = "<|message_model|><|content_text|>The reservation is confirmed.<|end_message|>"
+    assert module.score_agentic(item, missing)["ok"] is False
+
+
 def _probe_math(module) -> None:
     item = {"expected": {"answer": "18"}}
     assert module.score_math(item, "The answer is 19.")["ok"] is False
@@ -178,6 +213,20 @@ MUTANTS = [
         '    args_ok = graded["args"] is not None and canon(graded["args"]) == canon(expected["args"])',
         "    args_ok = True",
         _probe_agentic,
+    ),
+    (
+        "control_accepts_a_tool_call",
+        "scoring.py",
+        '            "ok": not attempted and not missing and bool(body.strip())',
+        '            "ok": not missing and bool(body.strip())',
+        _probe_agentic_control,
+    ),
+    (
+        "control_ignores_the_required_answer",
+        "scoring.py",
+        '            "ok": not attempted and not missing and bool(body.strip())',
+        '            "ok": not attempted and bool(body.strip())',
+        _probe_agentic_control,
     ),
     (
         "math_accepts_any_number",

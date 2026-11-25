@@ -18,6 +18,7 @@ from tools.inkling_eval.runner import load_records, read_meta, truncation_summar
 
 CHECK_KEYS = (
     "plan_sha256",
+    "set",
     "template",
     "seed",
     "reasoning_effort",

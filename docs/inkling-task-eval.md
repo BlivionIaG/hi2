@@ -40,25 +40,24 @@ back to the cleaned whole text, so extraction is still defined.
 
 Second, the budgets assumed the model answered immediately. The model writes a
 reasoning preamble even at thinking effort 0, so many tasks hit `max_tokens`.
-Budgets now cover the preamble plus the answer. They were sized from the 735
-completed items of the stock/stock2/hi2-v1 runs (`p99` of completion tokens for
-items that stopped before their old budget; censored tasks marked *):
+Budgets now cover the preamble plus the answer. They were resized after the
+v2 run (stock, stock2 and hi2v2, 245 items each) using the `p99` completion
+length of items that stopped before their v2 budget:
 
-| task | budget | evidence |
+| task | budget | v2 evidence |
 | --- | ---: | --- |
-| agentic | 384 | p99 189; 6/180 truncated at 200 |
-| code (Py/C/TS) | 1024 | p99 506; 83/120 truncated at 512 |
-| translation | 384 | p99 156; 7/84 truncated at 160 |
-| qa_numeric | 512 | * 0/84 stopped at 32 |
-| qa_word | 512 | * 0/42 stopped at 24 |
-| single/multi needle | 1024 | * 0/72 stopped at 48 |
-| summarize-then-answer | 1024 | * only 4/9 stopped at 320 |
-| math | 1024 | p99 464; 14/144 truncated at 512 |
+| agentic | 768 | p99 360; 1/60 truncated at 384 in every label |
+| code (Py/C/TS) | 2048 | p99 811; 5/32 stock, 6/32 hi2 truncated at 1024 |
+| translation | 384 | p99 156; no truncation |
+| qa_numeric / qa_word | 512 | p99 225; no truncation |
+| single/multi needle | 2048 | p99 1011 at the old 1024 cap; no truncation but 13 tokens of headroom |
+| summarize-then-answer | 2048 | parent of the same long-context budget |
+| math | 1536 | p99 720; 1/48 stock truncated at 1024 |
 
-The rule is `min(1024, ceil(2 * p99 / 128) * 128)`; censored short-answer QA
-gets 512, censored long-context tasks get the 1024 cap. A later
-`max_tokens=1024` probe can tighten this, but do not lower a budget below a
-proven p99 without checking the truncation gate.
+The rule is `ceil(2 * p99 / 128) * 128`, except that code gets 2048: the five
+truncated items were still reasoning (the largest complete answer was 958
+tokens) and the failure reproduced on both stock runs. Do not lower a budget
+below a proven p99 without checking the truncation gate.
 
 `finish_reason == "length"` is now its own record status, `truncated`: it is
 excluded from accuracy and from `wrong`, retried on resume, and reported per
@@ -149,6 +148,49 @@ stock server or rerun it). Its per-category deltas and flips are the
 determinism floor of this stack; a quantized delta inside that floor is not
 evidence of a change.
 
+## Agentic probe: reference-to-an-earlier-call
+
+The main plan has five hotel items.  The v2 run exposed a possible
+quantization-induced mode flip there: stock made the expected `book_hotel` call
+in 4/5 (stock2 identical, floor 0), while hi2 reasoned to the correct arguments
+and then emitted a plain `<|content_text|>` answer.  Five items cannot support a
+claim, so `--set agentic-probe` adds a **separate** set without touching the 245
+plan:
+
+* 80 tool-call items: eight families (`book_hotel`, `rent_car`,
+  `schedule_meeting`, `order_food`, `transfer_money`, `create_invoice`,
+  `search_flights`, `send_email`) times ten value variants.  Each has 1–3
+  earlier calls and asks the model to reuse a value (date, nights, amount,
+  route, participants, ...) from one of them.
+* 20 plain-chat controls: the same kind of prior call, then a question that
+  expects **no tool call**.  The control is `ok` only when the completion has
+  no invoke marker or parsed call and contains the asked value, which catches
+  the opposite error (inventing an action).
+
+The probe uses the same `agentic` scorer and records its own
+`set: agentic-probe` in the plan and run meta; a main-vs-probe comparison is
+rejected as mismatched.  Its plan hash is
+`284e42e5cf0cf481db396bac1ce39e1007d6cb69ccf1b4eaadefbbb14c5bf9a4`
+and its prompt-set hash is
+`f3b38f39a8566c9c62e7d2fee0cd162be11660b91f99958a6ba073a1884ae7d2`.
+At 100 items and the report's 10% discordance assumption the **MDD is 9.0
+percentage points**; the observed hotel discordance (4/5 stock-right → hi2-wrong)
+is 80 points, but that is a signal to test, not an estimate.  The eight families
+have ten items each, so their per-family MDD is undefined: pool the category.
+
+```bash
+$EVAL plan --set agentic-probe
+$EVAL dry-run --set agentic-probe   # 100 items, controls included, nothing measured
+$EVAL run --set agentic-probe --url http://127.0.0.1:18731 --label probe-stock  --out runs/probe-stock.jsonl  --workers 4
+$EVAL run --set agentic-probe --url http://127.0.0.1:18732 --label probe-hi2    --out runs/probe-hi2.jsonl    --workers 4
+$EVAL run --set agentic-probe --url http://127.0.0.1:18731 --label probe-stock2 --out runs/probe-stock2.jsonl --workers 4
+$EVAL compare --ref runs/probe-stock.jsonl --cand runs/probe-hi2.jsonl \
+    --floor runs/probe-stock2.jsonl --out runs/cmp-probe.json --md runs/cmp-probe.md
+```
+
+The probe prompts are short (maximum about 1.4k estimated tokens).  Expected
+runtime at `--workers 4` is roughly 10–20 minutes per label **[INFERENCE]**.
+
 ## Running on the GPU box
 
 The client and every scorer are CPU-only. Do not export GPU visibility for them:
@@ -194,7 +236,7 @@ files (`eval-stock.jsonl`, `eval-hi2v1.jsonl`, ...) used the old stripping and
 budgets; they are historical and `compare` rejects them on the decoding meta.
 
 Plan identity: `plan_sha256` is
-`48c05915e7c0c6ad56d81cefc70ce712dde07f2def674efd73826d35ee652eb7`;
+`2ff92e64b0d639e9e3a467539e190965ee80492c13a15b6d7248ea09f0f5babc`;
 `prompt_set_sha256` is
 `bcafe0f05bec3262e312b3c110d6900ab9a0f95b936838aaa91d018cfd9274c8`, exactly the
 old plan hash. The 245 ids, prompts and expected values are unchanged; the new
@@ -207,10 +249,11 @@ labels. Concurrency `--workers 4` is the intended ceiling: the served model is
 small-context, and more parallel long prompts only queue.
 
 Expected runtime **[INFERENCE]**: about 20–50 minutes per label at `--workers 4`
-with the new budgets (the previous HI2 run took 12 minutes; code, math and the
-27 long items can now decode up to 1024 tokens instead of 48–512). Three labels
-plus comparison fit inside 2–3 hours; watch the `truncated` counts in the log and
-the gate in the summary. Runs are resumable, so a lease end only costs the unfinished items.
+with the new budgets (the previous HI2 run took 12 minutes; code can now decode
+up to 2048, math 1536, agentic 768 and the 27 long items 2048 tokens). Three
+labels plus comparison fit inside 2–3 hours; watch the `truncated` counts in the
+log and the gate in the summary. Runs are resumable, so a lease end only costs
+the unfinished items.
 `usage.prompt_tokens` in the JSONL is the real token count; use it to sanity
 check the estimate.
 
@@ -238,4 +281,6 @@ gate quality; set acceptance separately.
 See `tools/inkling_eval/data/SOURCES.md`: GSM8K (MIT), MBPP (CC-BY-4.0),
 HumanEval (MIT), authored C/TypeScript/math/multilingual tasks (Apache-2.0) and
 this repository's markdown as the frozen long-context haystack (Apache-2.0).
+The 100 agentic-probe items are generated deterministically from the constants
+in `agentic_probe.py`; they use no external data and are Apache-2.0.
 Vendored data is about 640 kB; no network is used at evaluation time.

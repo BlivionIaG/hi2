@@ -263,3 +263,32 @@ def test_fenced_code_ignores_inline_prose_mentions_and_truncated_blocks():
         "A cut-off second attempt:\n```python\ndef add(a, b):\n    \"\"\"unterminated"
     )
     assert "return a + b" in scoring.extract_code(text, "add", "python")
+
+
+def test_plain_chat_control_rejects_a_tool_call_and_a_missing_answer():
+    tool = _tool("book_hotel", {"city": {"type": "string"}}, ["city"])
+    item = {
+        "expected": {
+            "name": None,
+            "args": None,
+            "tools": [tool],
+            "control": True,
+            "must_include": ["2026-12-03", "2"],
+        }
+    }
+    good = (
+        "<|message_model|><|content_text|>"
+        "The reservation used check-in 2026-12-03 for 2 nights."
+        "<|end_message|>"
+    )
+    result = scoring.score_agentic(item, good)
+    assert result["ok"] is True and result["detail"]["control"] is True
+    called = good + (
+        '<|message_model|>book_hotel<|content_invoke_tool_json|>'
+        '{"name":"book_hotel","args":{"city":"Osaka"}}<|end_message|>'
+    )
+    result = scoring.score_agentic(item, called)
+    assert result["ok"] is False and result["detail"]["attempted_tool_call"] is True
+    missing = "<|message_model|><|content_text|>The reservation is confirmed.<|end_message|>"
+    result = scoring.score_agentic(item, missing)
+    assert result["ok"] is False and result["detail"]["missing"] == ["2026-12-03", "2"]

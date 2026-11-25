@@ -571,6 +571,28 @@ def score_agentic(item: dict, completion: str) -> dict:
     expected = item["expected"]
     tools = {tool["function"]["name"]: tool for tool in expected["tools"]}
     calls = parse_tool_calls(completion)
+    if expected.get("control"):
+        # A plain-chat control is correct only when the reply answers directly:
+        # an invoke marker (even malformed) or any parsed call is the opposite error.
+        body = answer_text(completion)
+        attempted = any(
+            marker in (completion or "")
+            for marker in ("<|content_invoke_tool_json|>", "<tool_call>")
+        ) or any(call["format"] != "none" for call in calls)
+        missing = [
+            token
+            for token in expected.get("must_include") or []
+            if token.casefold() not in body.casefold()
+        ]
+        return {
+            "ok": not attempted and not missing and bool(body.strip()),
+            "detail": {
+                "control": True,
+                "attempted_tool_call": attempted,
+                "missing": missing,
+                "answer": body[:200],
+            },
+        }
     graded = None
     for call in calls:
         if call["name"] == expected["name"] and call["args"] is not None:

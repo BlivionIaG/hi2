@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.inkling_eval import cli, compare, mock_server, runner, tasks
+from tools.inkling_eval import cli, compare, mock_server, runner, scoring, tasks
 from tools.inkling_eval.client import Client
 
 
@@ -23,6 +23,45 @@ def test_plan_is_deterministic_and_covers_all_five_categories():
     assert max(item["approx_prompt_tokens"] for item in first["items"]) < 32768
     # The 2026-11-25 budget change must not touch the 245 ids or prompts.
     assert first["meta"]["prompt_set_sha256"] == "bcafe0f05bec3262e312b3c110d6900ab9a0f95b936838aaa91d018cfd9274c8"
+
+
+def test_agentic_probe_has_its_own_plan_and_keeps_controls_tool_free():
+    probe = tasks.build_plan(set_name="agentic-probe", max_model_len=32768)
+    again = tasks.build_plan(set_name="agentic-probe", max_model_len=32768)
+    main = tasks.build_plan(max_model_len=32768)
+    assert probe["meta"]["plan_sha256"] == again["meta"]["plan_sha256"]
+    assert probe["meta"]["plan_sha256"] != main["meta"]["plan_sha256"]
+    assert probe["meta"]["set"] == "agentic-probe"
+    assert probe["meta"]["categories"] == ["agentic"]
+    assert probe["meta"]["probe"]["items"] == len(probe["items"]) == 100
+    assert probe["meta"]["probe"]["tool_call_items"] == 80
+    assert probe["meta"]["probe"]["control_items"] == 20
+    assert probe["meta"]["probe"]["mdd_pp"] == 9.0
+    assert not ({item["id"] for item in probe["items"]} & {item["id"] for item in main["items"]})
+    controls = [item for item in probe["items"] if item["subcategory"] == "control"]
+    calls = [item for item in probe["items"] if item["subcategory"] != "control"]
+    assert len(controls) == 20 and len(calls) == 80
+    assert all(item["expected"].get("control") for item in controls)
+    assert all(item["expected"]["name"] is None for item in controls)
+    assert {item["expected"]["name"] for item in calls} == {
+        "book_hotel", "rent_car", "schedule_meeting", "order_food",
+        "transfer_money", "create_invoice", "search_flights", "send_email",
+    }
+    assert all(
+        "<|content_invoke_tool_json|>" not in item["gold"]
+        for item in controls
+    )
+    for item in probe["items"]:
+        assert item["max_tokens"] == 768
+        assert (scoring.score(item, item["gold"])["ok"] is True), item["id"]
+
+
+def test_v2_truncations_raised_the_main_plan_budgets():
+    assert tasks.budget_for("agentic", "hotel") == 768
+    assert tasks.budget_for("code", "python_humaneval") == 2048
+    assert tasks.budget_for("code", "c") == 2048
+    assert tasks.budget_for("long_context", "single_needle") == 2048
+    assert tasks.budget_for("math", "gsm8k") == 1536
 
 
 def test_mdd_is_defined_only_when_the_item_count_can_support_it():
@@ -42,7 +81,7 @@ def test_short_context_skips_the_lengths_it_cannot_serve():
     assert skipped == {16384, 32768}
 
 
-def _write_run(path: Path, label: str, oks: dict[str, bool], *, seed: int = 0):
+def _write_run(path: Path, label: str, oks: dict[str, bool], *, seed: int = 0, set_name: str = "main"):
     records = []
     for item_id, ok in oks.items():
         records.append(
@@ -60,6 +99,7 @@ def _write_run(path: Path, label: str, oks: dict[str, bool], *, seed: int = 0):
         "label": label,
         "url": "http://127.0.0.1:1",
         "plan_sha256": "plan",
+        "set": set_name,
         "seed": seed,
         "reasoning_effort": 0.0,
         "template": "template",
@@ -138,6 +178,7 @@ def test_runner_resumes_and_redoes_a_changed_prompt(tmp_path):
         assert first["errors"] == 0 and first["missing"] == 0
         meta = json.loads((tmp_path / "run.jsonl.meta.json").read_text())
         assert meta["decoding"]["skip_special_tokens"] is False
+        assert meta["set"] == "main"
         second = runner.run_plan(plan, client, out, label="canned", workers=2, progress_every=100)
         assert second["requested"] == 0 and second["skipped_complete"] == len(plan["items"])
         lines = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
@@ -164,6 +205,27 @@ def test_cli_plan_and_limit(tmp_path, capsys):
     assert cli.main(["plan", "--limit", "1"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert sum(entry["items"] for entry in payload["meta"]["counts"].values()) == payload["items"] == 5
+
+
+def test_cli_compare_rejects_a_main_vs_probe_pair(tmp_path):
+    ref = tmp_path / "ref.jsonl"
+    cand = tmp_path / "cand.jsonl"
+    _write_run(ref, "stock", {"probe-00": True})
+    _write_run(cand, "hi2", {"probe-00": True}, set_name="agentic-probe")
+    report = compare.compare(ref, cand)
+    assert report["status"] == "mismatched"
+    assert report["checks"]["set"]["same"] is False
+
+
+def test_cli_dry_run_agentic_probe_scores_controls(tmp_path, capsys):
+    out_dir = tmp_path / "probe"
+    assert cli.main(["dry-run", "--set", "agentic-probe", "--out-dir", str(out_dir)]) == 0
+    output = capsys.readouterr().out
+    assert "dry-run OK" in output and '"agentic": 100' in output
+    records = runner.load_records(out_dir / "dry-run.jsonl")
+    assert len(records) == 100
+    assert sum(1 for record in records.values() if record["subcategory"] == "control") == 20
+    assert all((record.get("score") or {}).get("ok") for record in records.values())
 
 
 def test_cli_dry_run_covers_every_category(tmp_path, capsys):

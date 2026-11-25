@@ -49,6 +49,7 @@ def _plan(args, max_model_len):
         categories=args.categories,
         limit=args.limit,
         reasoning_effort=args.reasoning_effort,
+        set_name=args.set,
     )
 
 
@@ -182,7 +183,7 @@ def cmd_dry_run(args) -> int:
         server.server_close()
         thread.join(timeout=5)
     counts = {name: entry["items"] for name, entry in plan["meta"]["counts"].items()}
-    for name in tasks.CATEGORIES:
+    for name in plan["meta"]["categories"]:
         if name not in counts:
             problems.append(f"category {name} is empty")
     if problems:
@@ -216,6 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def common(p, *, needs_plan=True):
         if needs_plan:
+            p.add_argument("--set", choices=("main", "agentic-probe"), default="main")
             p.add_argument("--categories", type=_categories, default=list(tasks.CATEGORIES))
             p.add_argument("--contexts", type=_contexts, default=[8192, 16384, 32768])
             p.add_argument("--seed", type=int, default=0)

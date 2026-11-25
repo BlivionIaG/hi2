@@ -30,24 +30,22 @@ FILL = 0.9
 RESERVE = 300
 CATEGORIES = ("agentic", "code", "multilingual", "long_context", "math")
 # Completion budgets cover the model's plain-text reasoning preamble plus the
-# final answer.  Measured on 2026-11-25 over stock, stock2 and hi2-v1 (735
-# completions): p99 completion tokens of items that stopped before their old
-# budget were agentic 189/384, code 506/512, translation 156/160, math 464/512;
-# qa_numeric (0/84 stopped at 32), qa_word (0/42 at 24) and both needle tasks
-# (0/72 at 48) never stopped, and summarize was 4/9 at 320, so those p99 are
-# censored.  Rule: min(1024, ceil(2 * p99 / 128) * 128); censored short-answer QA
-# gets 512 and censored long-context/summarize tasks get the 1024 cap.  A later
-# max_tokens=1024 probe can tighten this; do not lower a budget below a proven
-# p99 without checking the truncation gate.
+# final answer.  The v2 run (stock, stock2 and hi2v2; 2026-11-25) truncated
+# agentic at 384, code at 1024 and math at 1024, and produced a 1011-token
+# long-context completion.  Observed p99 of items that stopped before their v2
+# budget: agentic 360/384, code 811/1024, long_context 1011/1024, math 720/1024,
+# multilingual 225.  Rule: ceil(2 * p99 / 128) * 128.  Code gets 2048 because
+# the five truncated items were still reasoning (the largest complete answer was
+# 958 tokens) and the failure reproduced on both stock runs.
 MAX_TOKENS = 1024
 BUDGETS = {
-    ("agentic", "*"): 384,
-    ("code", "*"): 1024,
+    ("agentic", "*"): 768,
+    ("code", "*"): 2048,
     ("multilingual", "translation"): 384,
     ("multilingual", "qa_numeric"): 512,
     ("multilingual", "qa_word"): 512,
-    ("long_context", "*"): 1024,
-    ("math", "*"): 1024,
+    ("long_context", "*"): 2048,
+    ("math", "*"): 1536,
 }
 
 
@@ -810,38 +808,20 @@ def _math_items(reasoning_effort: float) -> list[dict]:
 # --------------------------------------------------------------------------- plan
 
 
-def build_plan(
+def finalize_plan(
+    items: list[dict],
     *,
     seed: int = 0,
-    contexts=(8192, 16384, 32768),
+    wanted=CATEGORIES,
+    usable=(),
+    skipped_contexts=(),
     max_model_len: int | None = None,
-    categories=CATEGORIES,
-    limit: int | None = None,
     reasoning_effort: float = 0.0,
+    limit: int | None = None,
+    set_name: str = "main",
+    extra_meta: dict | None = None,
 ) -> dict:
-    """The full item list, deterministically ordered and hashed."""
-    wanted = [category for category in CATEGORIES if category in set(categories)]
-    usable = []
-    skipped_contexts = []
-    for length in contexts:
-        if (
-            max_model_len is not None
-            and int(FILL * (length - RESERVE)) + RESERVE + 128 > max_model_len
-        ):
-            skipped_contexts.append({"length": length, "reason": f"max_model_len={max_model_len}"})
-        else:
-            usable.append(length)
-    items: list[dict] = []
-    if "agentic" in wanted:
-        items.extend(_agentic_items(reasoning_effort))
-    if "code" in wanted:
-        items.extend(_code_items(reasoning_effort))
-    if "multilingual" in wanted:
-        items.extend(_multilingual_items(reasoning_effort))
-    if "long_context" in wanted:
-        items.extend(_long_context_items(usable, seed, reasoning_effort))
-    if "math" in wanted:
-        items.extend(_math_items(reasoning_effort))
+    """Hash, validate and count a plan; main and probe plans share this rule."""
     for item in items:
         item["prompt_sha256"] = sha256_text(item["prompt"])
         item["approx_prompt_tokens"] = estimate_tokens(item["prompt"])
@@ -882,21 +862,72 @@ def build_plan(
         by_category[item["category"]]["subcategories"][sub] = (
             by_category[item["category"]]["subcategories"].get(sub, 0) + 1
         )
-    return {
-        "items": items,
-        "meta": {
-            "schema": 1,
-            "seed": seed,
-            "categories": wanted,
-            "contexts": usable,
-            "skipped_contexts": skipped_contexts,
-            "max_model_len": max_model_len,
-            "reasoning_effort": reasoning_effort,
-            "template": TEMPLATE_ID,
-            "plan_sha256": plan_sha,
-            "prompt_set_sha256": prompt_set_sha,
-            "haystack_sha256": haystack_sha256() if "long_context" in wanted else None,
-            "counts": by_category,
-            "limit": limit,
-        },
+    meta = {
+        "schema": 1,
+        "seed": seed,
+        "categories": list(wanted),
+        "contexts": list(usable),
+        "skipped_contexts": list(skipped_contexts),
+        "max_model_len": max_model_len,
+        "reasoning_effort": reasoning_effort,
+        "template": TEMPLATE_ID,
+        "set": set_name,
+        "plan_sha256": plan_sha,
+        "prompt_set_sha256": prompt_set_sha,
+        "haystack_sha256": haystack_sha256() if "long_context" in wanted else None,
+        "counts": by_category,
+        "limit": limit,
     }
+    if extra_meta:
+        meta.update(extra_meta)
+    return {"items": items, "meta": meta}
+
+
+def build_plan(
+    *,
+    seed: int = 0,
+    contexts=(8192, 16384, 32768),
+    max_model_len: int | None = None,
+    categories=CATEGORIES,
+    limit: int | None = None,
+    reasoning_effort: float = 0.0,
+    set_name: str = "main",
+) -> dict:
+    """The full item list, deterministically ordered and hashed."""
+    if set_name != "main":
+        from tools.inkling_eval import agentic_probe
+
+        return agentic_probe.build_plan(reasoning_effort=reasoning_effort, max_model_len=max_model_len)
+    wanted = [category for category in CATEGORIES if category in set(categories)]
+    usable = []
+    skipped_contexts = []
+    for length in contexts:
+        if (
+            max_model_len is not None
+            and int(FILL * (length - RESERVE)) + RESERVE + 128 > max_model_len
+        ):
+            skipped_contexts.append({"length": length, "reason": f"max_model_len={max_model_len}"})
+        else:
+            usable.append(length)
+    items: list[dict] = []
+    if "agentic" in wanted:
+        items.extend(_agentic_items(reasoning_effort))
+    if "code" in wanted:
+        items.extend(_code_items(reasoning_effort))
+    if "multilingual" in wanted:
+        items.extend(_multilingual_items(reasoning_effort))
+    if "long_context" in wanted:
+        items.extend(_long_context_items(usable, seed, reasoning_effort))
+    if "math" in wanted:
+        items.extend(_math_items(reasoning_effort))
+    return finalize_plan(
+        items,
+        seed=seed,
+        wanted=wanted,
+        usable=usable,
+        skipped_contexts=skipped_contexts,
+        max_model_len=max_model_len,
+        reasoning_effort=reasoning_effort,
+        limit=limit,
+        set_name="main",
+    )
