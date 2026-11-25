@@ -58,6 +58,61 @@ say() {
   log "SAY: $*"
 }
 
+argv_preflight() {
+  local log="$OUT/logs/argv_preflight.log"
+  local rc=0
+  : > "$log"
+  (
+    cd "$TREE" || exit 1
+    export PYPATH_EXTRA
+    "$PY" -m hi2 quantize "$SRC" "$NEW" \
+      --workdir "$WORK" --cache-dir "$CACHE" \
+      --devices cuda:0,cuda:1 --compute-dtype float16 --moe-layout stacked \
+      --include "$INCLUDE" --exclude "$EXCLUDE" --target-bpw 3.5 \
+      --calib "$CALIB_TEXT" --calib-samples "$CALIB_SAMPLES" --seq-len "$CALIB_SEQ_LEN" \
+      --sens-seqs 8 --sens-len 512 --sensitivity none --no-qad --dry-run
+  ) >> "$log" 2>&1 || rc=$?
+  if [[ "$rc" -eq 3 ]] && grep -q "accelerator is unavailable" "$log"; then
+    log "quantize argv accepted by argparse (dry-run rc=3: no accelerator)"
+    rc=0
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    log "quantize argv preflight failed rc=$rc; see $log"
+    return 1
+  fi
+  "$PY" "$TREE/experiments/inkling_kl_eval.py" \
+    --src "$SRC" --dst "$OLD" --ids "$OUT/preflight/window_8192.npy" --windows 1 \
+    --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
+    --batch-windows 1 --position-buckets "$POSITION_BUCKETS" \
+    --out "$OUT/preflight/eval_8192.json" --help >> "$log" 2>&1 || {
+      log "preflight eval argv failed; see $log"; return 1; }
+  "$PY" "$TREE/experiments/inkling_kl_eval.py" \
+    --src "$SRC" --dst "$OLD" --ids "$OUT/eval_ids" --windows 0 --split heldout \
+    --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
+    --batch-windows "$BATCH_WINDOWS" --position-buckets "$POSITION_BUCKETS" \
+    --out "$OUT/eval/old_heldout.json" --help >> "$log" 2>&1 || {
+      log "old heldout eval argv failed; see $log"; return 1; }
+  "$PY" "$TREE/experiments/inkling_kl_eval.py" \
+    --src "$SRC" --dst "$NEW" --ids "$OUT/eval_ids" --windows 0 --split heldout \
+    --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
+    --batch-windows "$BATCH_WINDOWS" --position-buckets "$POSITION_BUCKETS" \
+    --out "$OUT/eval/new_heldout.json" --help >> "$log" 2>&1 || {
+      log "new heldout eval argv failed; see $log"; return 1; }
+  "$PY" "$TREE/experiments/inkling_kl_eval.py" \
+    --src "$SRC" --dst "$OLD" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" \
+    --windows "$OOD_WINDOWS" --devices cuda:0 cuda:1 --compute-dtype float32 \
+    --groups none --batch-windows 1 --position-buckets "$POSITION_BUCKETS" \
+    --out "$OUT/eval/old_ood.json" --help >> "$log" 2>&1 || {
+      log "old OOD eval argv failed; see $log"; return 1; }
+  "$PY" "$TREE/experiments/inkling_kl_eval.py" \
+    --src "$SRC" --dst "$NEW" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" \
+    --windows "$OOD_WINDOWS" --devices cuda:0 cuda:1 --compute-dtype float32 \
+    --groups none --batch-windows 1 --position-buckets "$POSITION_BUCKETS" \
+    --out "$OUT/eval/new_ood.json" --help >> "$log" 2>&1 || {
+      log "new OOD eval argv failed; see $log"; return 1; }
+  log "all GPU command argvs accepted (quantize dry-run + five eval --help)"
+}
+
 lease_ok() {
   [[ -n "${HOLDER_PID:-}" && -e "$LEASE/$OWNER.a2" ]] || return 1
   awk -v o="$OWNER" -v p="$HOLDER_PID" 'NF >= 2 && $1 == o && $2 == p { found = 1 } END { exit !found }' "$LEASE/$OWNER.a2" 2>/dev/null
@@ -146,6 +201,11 @@ while [[ ! -e "$OUT/GO" ]]; do
   sleep 30
 done
 log "GO present"
+
+if ! argv_preflight; then
+  REASON=argv-preflight-failed
+  exit 1
+fi
 
 if [[ -n "$(other_a2)" ]]; then
   log "another a2 holder exists; waiting for handover"
@@ -354,7 +414,7 @@ else
   run_gpu quantize_v2 /usr/bin/time -v "$GPU_SH" -m hi2 quantize \
     "$SRC" "$NEW" \
     --workdir "$WORK" --cache-dir "$CACHE" \
-    --devices cuda:0 cuda:1 --compute-dtype float16 --moe-layout stacked \
+    --devices cuda:0,cuda:1 --compute-dtype float16 --moe-layout stacked \
     --include "$INCLUDE" --exclude "$EXCLUDE" --target-bpw 3.5 \
     --calib "$CALIB_TEXT" --calib-samples "$CALIB_SAMPLES" --seq-len "$CALIB_SEQ_LEN" \
     --sens-seqs 8 --sens-len 512 --sensitivity none --no-qad || {
