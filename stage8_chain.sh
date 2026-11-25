@@ -226,7 +226,9 @@ eval_try() {
     --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
     --batch-windows 1 --position-buckets --out "$out"
 }
-if [[ "$SKIP_PREFLIGHT" == "1" ]]; then
+if [[ -s "$DEC" ]]; then
+  log "reusing preflight decision: $DEC"
+elif [[ "$SKIP_PREFLIGHT" == "1" ]]; then
   [[ -s "$DEC" ]] || cat > "$DEC" <<'EOF'
 {"stats_max":null,"eval_max":32768,"batch_windows":1,"assumed":true,"skipped":true}
 EOF
@@ -303,28 +305,44 @@ fi
 # ---- paired evaluation ------------------------------------------------------
 if [[ "$SKIP_EVAL" != "1" ]]; then
   mkdir -p "$OUT/eval"
-  run_gpu eval_old_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-    --dst "$OLD" --ids "$V2" --windows 0 --split heldout \
-    --seq-len "$EVAL_SEQ" --devices cuda:0 cuda:1 --compute-dtype float32 \
-    --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets \
-    --out "$OUT/eval/old_heldout.json" || { REASON=eval-old-failed; exit 1; }
-  run_gpu eval_new_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-    --dst "$NEW" --ids "$V2" --windows 0 --split heldout \
-    --seq-len "$EVAL_SEQ" --devices cuda:0 cuda:1 --compute-dtype float32 \
-    --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets \
-    --out "$OUT/eval/new_heldout.json" || { REASON=eval-new-failed; exit 1; }
+  if [[ -s "$OUT/eval/old_heldout.json" && "$FORCE" != "1" ]]; then
+    log "reusing eval/old_heldout.json"
+  else
+    run_gpu eval_old_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
+      --dst "$OLD" --ids "$V2" --windows 0 --split heldout \
+      --seq-len "$EVAL_SEQ" --devices cuda:0 cuda:1 --compute-dtype float32 \
+      --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets \
+      --out "$OUT/eval/old_heldout.json" || { REASON=eval-old-failed; exit 1; }
+  fi
+  if [[ -s "$OUT/eval/new_heldout.json" && "$FORCE" != "1" ]]; then
+    log "reusing eval/new_heldout.json"
+  else
+    run_gpu eval_new_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
+      --dst "$NEW" --ids "$V2" --windows 0 --split heldout \
+      --seq-len "$EVAL_SEQ" --devices cuda:0 cuda:1 --compute-dtype float32 \
+      --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets \
+      --out "$OUT/eval/new_heldout.json" || { REASON=eval-new-failed; exit 1; }
+  fi
 fi
 if [[ "$SKIP_OOD" != "1" ]]; then
-  run_gpu eval_old_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-    --dst "$OLD" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
-    --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
-    --batch-windows 1 --position-buckets --out "$OUT/eval/old_ood.json" || {
-      REASON=eval-old-ood-failed; exit 1; }
-  run_gpu eval_new_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-    --dst "$NEW" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
-    --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
-    --batch-windows 1 --position-buckets --out "$OUT/eval/new_ood.json" || {
-      REASON=eval-new-ood-failed; exit 1; }
+  if [[ -s "$OUT/eval/old_ood.json" && "$FORCE" != "1" ]]; then
+    log "reusing eval/old_ood.json"
+  else
+    run_gpu eval_old_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
+      --dst "$OLD" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
+      --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
+      --batch-windows 1 --position-buckets --out "$OUT/eval/old_ood.json" || {
+        REASON=eval-old-ood-failed; exit 1; }
+  fi
+  if [[ -s "$OUT/eval/new_ood.json" && "$FORCE" != "1" ]]; then
+    log "reusing eval/new_ood.json"
+  else
+    run_gpu eval_new_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
+      --dst "$NEW" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
+      --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
+      --batch-windows 1 --position-buckets --out "$OUT/eval/new_ood.json" || {
+        REASON=eval-new-ood-failed; exit 1; }
+  fi
 fi
 
 # ---- summary -----------------------------------------------------------------
