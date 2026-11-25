@@ -109,6 +109,14 @@ def _probe_agentic_control(module) -> None:
     assert module.score_agentic(item, missing)["ok"] is False
 
 
+def _probe_vision_chart(module) -> None:
+    item = {"expected": {"answer": "30", "tolerance": 2}}
+    assert module.score_vision_chart(item, "30")["ok"] is True
+    assert module.score_vision_chart(item, "32")["ok"] is True
+    assert module.score_vision_chart(item, "35")["ok"] is False
+    assert module.score_vision_chart(item, "no value")["ok"] is False
+
+
 def _probe_math(module) -> None:
     item = {"expected": {"answer": "18"}}
     assert module.score_math(item, "The answer is 19.")["ok"] is False
@@ -227,6 +235,20 @@ MUTANTS = [
         '            "ok": not attempted and not missing and bool(body.strip())',
         '            "ok": not attempted and bool(body.strip())',
         _probe_agentic_control,
+    ),
+    (
+        "vision_chart_ignores_tolerance",
+        "scoring.py",
+        "    ok = got is not None and abs(got - want) <= tolerance",
+        "    ok = got is not None",
+        _probe_vision_chart,
+    ),
+    (
+        "vision_chart_accepts_any_distance",
+        "scoring.py",
+        '    tolerance = Decimal(str(expected.get("tolerance", 0)))',
+        '    tolerance = Decimal("100")',
+        _probe_vision_chart,
     ),
     (
         "math_accepts_any_number",

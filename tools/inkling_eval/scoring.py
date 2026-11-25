@@ -488,6 +488,25 @@ def score_qa_numeric(item: dict, completion: str) -> dict:
     }
 
 
+def score_vision_chart(item: dict, completion: str) -> dict:
+    """A chart-read value with a stated absolute tolerance (no judge)."""
+    expected = item["expected"]
+    want = Decimal(canonical_number(expected["answer"]))
+    got_text = last_number(completion)
+    got = Decimal(canonical_number(got_text)) if got_text is not None else None
+    tolerance = Decimal(str(expected.get("tolerance", 0)))
+    ok = got is not None and abs(got - want) <= tolerance
+    return {
+        "ok": ok,
+        "detail": {
+            "answer": str(got) if got is not None else None,
+            "expected": str(want),
+            "tolerance": str(tolerance),
+            "label": expected.get("label"),
+        },
+    }
+
+
 def score_qa_word(item: dict, completion: str) -> dict:
     variants = {normalize_word(v) for v in item["expected"]["answers"]}
     segment = final_segment(completion)
@@ -659,6 +678,7 @@ SCORERS = {
     "math": score_math,
     "qa_numeric": score_qa_numeric,
     "qa_word": score_qa_word,
+    "vision_chart": score_vision_chart,
     "chrf": score_chrf,
     "needle": score_needle,
     "summarize": score_summarize,

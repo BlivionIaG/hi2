@@ -43,6 +43,19 @@ To refresh it deliberately, rebuild exactly that concatenation (this repository'
 `<!-- relative/path -->` and separated by a blank line), write it here, then
 update this table and rerun `plan`; both labels must use the same snapshot.
 
+## Synthetic vision set
+
+`tools/inkling_eval/vision_data.py` generates the 88-item vision set and its 80
+PNG images at plan-build time: 24 OCR codes/numbers, 20 bar/line charts, 20
+shape/colour counts, 16 table reads and 8 text-only controls. It embeds its own
+5x7 bitmap font, uses no Pillow or downloaded font, and writes indexed PNGs with
+stored DEFLATE so the bytes and plan hash are independent of the host zlib.
+There is no external source, photograph or private data; the generated material
+is Apache-2.0. Each image is 480x240 (72 vision cells) and about 115 kB; the
+eight text controls carry no image. The mock server validates that every image part
+is a real base64 PNG data URL, and the dry-run sends the full set through the
+chat endpoint stub.
+
 ## Sources considered and not used
 
 * `facebook/flores` (CC-BY-SA-4.0): the Hub dataset is gated, and the box is not

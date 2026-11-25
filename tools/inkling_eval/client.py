@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the hi2 project
-"""Minimal OpenAI-compatible client: greedy text completions and model metadata.
+"""Minimal OpenAI-compatible client: greedy text/chat and model metadata.
 
-The harness renders the Inkling prompt itself (``chat_template.py``) and sends
-it to ``/v1/completions``, so both endpoints receive byte-identical prompts and
-no server-side template version can change the comparison.  Only the standard
-library is needed.
+The main harness renders the Inkling prompt itself (``chat_template.py``) and
+sends it to ``/v1/completions``, so both endpoints receive byte-identical
+prompts and no server-side template version can change the comparison.  The
+vision set sends messages (including base64 ``image_url`` parts) to
+``/v1/chat/completions``; that endpoint must render the template and attach the
+image to the prompt.  Only the standard library is needed.
 """
 
 import json
@@ -96,6 +98,54 @@ class Client:
         choice = (payload.get("choices") or [{}])[0]
         return {
             "text": choice.get("text") or "",
+            "finish_reason": choice.get("finish_reason"),
+            "usage": payload.get("usage") or {},
+            "model": payload.get("model") or self.model,
+        }
+
+    def chat(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        *,
+        reasoning_effort: str = "none",
+    ) -> dict:
+        """One greedy multimodal chat completion.
+
+        The Inkling chat template inserts the thinking-effort system turn from
+        ``reasoning_effort``; ``"none"`` maps to numeric 0.0 in the server's
+        Inkling renderer.  ``skip_special_tokens=false`` keeps the answer
+        channel so the same scorers can separate a reasoning preamble.
+        """
+        body = {
+            "model": self.model_name(),
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "top_p": 1,
+            "n": 1,
+            "seed": self.seed,
+            "stop": self.stop,
+            "skip_special_tokens": False,
+            "reasoning_effort": reasoning_effort,
+            "stream": False,
+        }
+        payload = self._request("/v1/chat/completions", body)
+        choice = (payload.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        content = message.get("content") or ""
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text") or "" if isinstance(part, dict) else str(part)
+                for part in content
+            )
+        reasoning = message.get("reasoning_content") or ""
+        if reasoning and "<|content_thinking|>" not in content:
+            content = (
+                f"<|content_thinking|>{reasoning}<|end_message|>" + content
+            )
+        return {
+            "text": content,
             "finish_reason": choice.get("finish_reason"),
             "usage": payload.get("usage") or {},
             "model": payload.get("model") or self.model,

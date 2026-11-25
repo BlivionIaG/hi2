@@ -217,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def common(p, *, needs_plan=True):
         if needs_plan:
-            p.add_argument("--set", choices=("main", "agentic-probe"), default="main")
+            p.add_argument("--set", choices=("main", "agentic-probe", "vision"), default="main")
             p.add_argument("--categories", type=_categories, default=list(tasks.CATEGORIES))
             p.add_argument("--contexts", type=_contexts, default=[8192, 16384, 32768])
             p.add_argument("--seed", type=int, default=0)

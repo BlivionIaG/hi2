@@ -292,3 +292,20 @@ def test_plain_chat_control_rejects_a_tool_call_and_a_missing_answer():
     missing = "<|message_model|><|content_text|>The reservation is confirmed.<|end_message|>"
     result = scoring.score_agentic(item, missing)
     assert result["ok"] is False and result["detail"]["missing"] == ["2026-12-03", "2"]
+
+
+def test_vision_chart_value_uses_the_stated_tolerance():
+    item = {"expected": {"answer": "30", "tolerance": 2}}
+    assert scoring.score_vision_chart(item, "30")["ok"] is True
+    assert scoring.score_vision_chart(item, "32")["ok"] is True
+    assert scoring.score_vision_chart(item, "33")["ok"] is False
+    assert scoring.score_vision_chart(item, "no value")["ok"] is False
+
+
+def test_vision_ocr_and_table_answers_are_checked_exactly():
+    ocr = {"expected": {"answers": ["AB1234"]}}
+    assert scoring.score_qa_word(ocr, "The code is AB1234.")["ok"] is True
+    assert scoring.score_qa_word(ocr, "The code is AB1235.")["ok"] is False
+    table = {"expected": {"answers": ["2026-12-03"]}}
+    assert scoring.score_qa_word(table, "2026-12-03")["ok"] is True
+    assert scoring.score_qa_word(table, "2027-12-03")["ok"] is False

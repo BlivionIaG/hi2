@@ -33,6 +33,8 @@ META_KEYS = (
     "url",
     "plan_sha256",
     "set",
+    "transport",
+    "thinking_effort",
     "seed",
     "reasoning_effort",
     "template",
@@ -157,6 +159,8 @@ def run_plan(
         "model": client.model_name(),
         "plan_sha256": plan["meta"]["plan_sha256"],
         "set": plan["meta"]["set"],
+        "transport": plan["meta"].get("transport", "/v1/completions"),
+        "thinking_effort": plan["meta"].get("thinking_effort"),
         "seed": plan["meta"]["seed"],
         "reasoning_effort": plan["meta"]["reasoning_effort"],
         "template": plan["meta"]["template"],
@@ -172,7 +176,6 @@ def run_plan(
             "seed": plan["meta"]["seed"],
             "skip_special_tokens": False,
         },
-        "transport": "/v1/completions",
         "started_at": _now(),
         "pid": os.getpid(),
     }
@@ -207,12 +210,20 @@ def run_plan(
             "label": label,
             "prompt_sha256": item["prompt_sha256"],
             "prompt": item["prompt"],
+            "transport": item.get("transport", plan["meta"].get("transport", "/v1/completions")),
             "max_tokens": item["max_tokens"],
             "approx_prompt_tokens": item["approx_prompt_tokens"],
             "timestamp": _now(),
         }
         try:
-            response = client.complete(item["prompt"], item["max_tokens"])
+            if item.get("transport") == "chat":
+                response = client.chat(
+                    item["messages"],
+                    item["max_tokens"],
+                    reasoning_effort=plan["meta"].get("thinking_effort") or "none",
+                )
+            else:
+                response = client.complete(item["prompt"], item["max_tokens"])
             truncated = response.get("finish_reason") == "length"
             record.update(
                 {

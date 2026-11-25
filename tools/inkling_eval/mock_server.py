@@ -8,6 +8,7 @@ deliberately wrong answer, which makes a prompt mismatch visible as a failed
 item instead of a false pass.
 """
 
+import base64
 import hashlib
 import json
 import threading
@@ -19,6 +20,34 @@ UNKNOWN_ANSWER = "I don't know."
 
 def prompt_key(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
+def canonical_messages(messages: list[dict]) -> str:
+    return json.dumps(messages, sort_keys=True, separators=(",", ":"))
+
+
+def _image_parts(messages: list[dict]) -> int:
+    """Count image parts and reject a malformed or non-PNG data URL."""
+    count = 0
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "image_url":
+                continue
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else image
+            if not isinstance(url, str) or not url.startswith("data:image/png;base64,"):
+                raise ValueError("image_url must be a base64 PNG data URL")
+            try:
+                payload = base64.b64decode(url.split(",", 1)[1], validate=True)
+            except (ValueError, IndexError) as error:
+                raise ValueError("image_url is not valid base64") from error
+            if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("image_url data is not a PNG")
+            count += 1
+    return count
 
 
 def write_answers(items, path: Path) -> int:
@@ -53,6 +82,8 @@ class _Handler(BaseHTTPRequestHandler):
     model: str = "canned-inkling"
     max_model_len: int = 32768
     finish_reason: str = "stop"
+    chat_requests: int = 0
+    image_requests: int = 0
 
     def log_message(self, *args):  # quiet
         pass
@@ -85,7 +116,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": {"message": f"no route {self.path}"}})
 
     def do_POST(self):
-        if self.path != "/v1/completions":
+        if self.path not in ("/v1/completions", "/v1/chat/completions"):
             self._json(404, {"error": {"message": f"no route {self.path}"}})
             return
         length = int(self.headers.get("Content-Length") or 0)
@@ -93,6 +124,50 @@ class _Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
             self._json(400, {"error": {"message": "invalid JSON"}})
+            return
+        if self.path == "/v1/chat/completions":
+            messages = body.get("messages")
+            if not isinstance(messages, list):
+                self._json(400, {"error": {"message": "messages must be a list"}})
+                return
+            try:
+                images = _image_parts(messages)
+            except ValueError as error:
+                self._json(400, {"error": {"message": str(error)}})
+                return
+            prompt = canonical_messages(messages)
+            completion = self.answers.get(prompt_key(prompt), UNKNOWN_ANSWER)
+            type(self).chat_requests += 1
+            type(self).image_requests += images
+            self._json(
+                200,
+                {
+                    "id": "chatcmpl-canned",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": self.model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": completion},
+                            "finish_reason": self.finish_reason,
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": max(1, sum(
+                            len(part.get("text") or "") if isinstance(part, dict) else len(part)
+                            for message in messages
+                            for part in (
+                                message.get("content")
+                                if isinstance(message.get("content"), list)
+                                else [message.get("content") or ""]
+                            )
+                        ) // 4),
+                        "completion_tokens": max(1, len(completion) // 4),
+                        "total_tokens": max(1, len(prompt) // 4) + max(1, len(completion) // 4),
+                    },
+                },
+            )
             return
         prompt = body.get("prompt")
         if not isinstance(prompt, str):

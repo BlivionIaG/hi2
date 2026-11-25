@@ -2,13 +2,15 @@
 # SPDX-FileCopyrightText: Copyright contributors to the hi2 project
 """Plan, resumable runner, paired comparison, CLI and the full canned dry-run."""
 
+import base64
 import json
+import struct
 from pathlib import Path
 
 import pytest
 
 from tools.inkling_eval import cli, compare, mock_server, runner, scoring, tasks
-from tools.inkling_eval.client import Client
+from tools.inkling_eval.client import Client, TransportError
 
 
 def test_plan_is_deterministic_and_covers_all_five_categories():
@@ -54,6 +56,52 @@ def test_agentic_probe_has_its_own_plan_and_keeps_controls_tool_free():
     for item in probe["items"]:
         assert item["max_tokens"] == 768
         assert (scoring.score(item, item["gold"])["ok"] is True), item["id"]
+
+
+def test_vision_plan_is_separate_synthetic_and_image_aware():
+    vision = tasks.build_plan(set_name="vision", max_model_len=32768)
+    again = tasks.build_plan(set_name="vision", max_model_len=32768)
+    main = tasks.build_plan(max_model_len=32768)
+    probe = tasks.build_plan(set_name="agentic-probe", max_model_len=32768)
+    assert vision["meta"]["plan_sha256"] == again["meta"]["plan_sha256"]
+    assert vision["meta"]["plan_sha256"] not in {
+        main["meta"]["plan_sha256"], probe["meta"]["plan_sha256"]
+    }
+    assert vision["meta"]["set"] == "vision"
+    assert vision["meta"]["categories"] == ["vision"]
+    assert vision["meta"]["transport"] == "/v1/chat/completions"
+    assert vision["meta"]["thinking_effort"] == "none"
+    assert vision["meta"]["vision"]["items"] == len(vision["items"]) == 88
+    assert vision["meta"]["vision"]["image_items"] == 80
+    assert vision["meta"]["vision"]["text_controls"] == 8
+    assert vision["meta"]["vision"]["mdd_pp"] == 9.5
+    assert len({item["id"] for item in vision["items"]}) == 88
+    assert not ({item["id"] for item in vision["items"]} & {item["id"] for item in main["items"]})
+    images = [item for item in vision["items"] if item["image_parts"]]
+    controls = [item for item in vision["items"] if not item["image_parts"]]
+    assert len(images) == 80 and len(controls) == 8
+    assert {item["meta"]["family"] for item in vision["items"]} == {
+        "ocr", "charts", "count", "table", "control"
+    }
+    assert len({item["image_sha256"] for item in images}) == 80
+    for item in vision["items"]:
+        assert item["transport"] == "chat"
+        assert item["max_tokens"] == 768
+        assert item["prompt"] == json.dumps(
+            item["messages"], sort_keys=True, separators=(",", ":")
+        )
+        assert scoring.score(item, item["gold"])["ok"] is True, item["id"]
+    for item in controls:
+        assert "image_url" not in item["prompt"]
+    for item in images:
+        parts = item["messages"][-1]["content"]
+        image = [part for part in parts if part["type"] == "image_url"][0]
+        url = image["image_url"]["url"]
+        assert url.startswith("data:image/png;base64,")
+        data = base64.b64decode(url.split(",", 1)[1])
+        assert data.startswith(b"\x89PNG\r\n\x1a\n")
+        width, height = struct.unpack(">II", data[16:24])
+        assert (width, height) == (480, 240)
 
 
 def test_v2_truncations_raised_the_main_plan_budgets():
@@ -215,6 +263,70 @@ def test_cli_compare_rejects_a_main_vs_probe_pair(tmp_path):
     report = compare.compare(ref, cand)
     assert report["status"] == "mismatched"
     assert report["checks"]["set"]["same"] is False
+
+
+def test_cli_dry_run_vision_uses_chat_and_scores_images(tmp_path, capsys):
+    out_dir = tmp_path / "vision"
+    assert cli.main(["dry-run", "--set", "vision", "--out-dir", str(out_dir)]) == 0
+    output = capsys.readouterr().out
+    assert "dry-run OK" in output and '"vision": 88' in output
+    records = runner.load_records(out_dir / "dry-run.jsonl")
+    meta = json.loads((out_dir / "dry-run.jsonl.meta.json").read_text())
+    assert meta["set"] == "vision"
+    assert meta["transport"] == "/v1/chat/completions"
+    assert meta["thinking_effort"] == "none"
+    assert len(records) == 88
+    assert sum(1 for record in records.values() if record["transport"] == "chat") == 88
+    assert sum(1 for record in records.values() if "data:image/png;base64," in record["prompt"]) == 80
+    assert all((record.get("score") or {}).get("ok") for record in records.values())
+
+
+def test_chat_client_checks_png_images_and_the_mock_is_image_aware(tmp_path):
+    plan = tasks.build_plan(set_name="vision", max_model_len=32768)
+    answers = {mock_server.prompt_key(item["prompt"]): item["gold"] for item in plan["items"]}
+    server, thread, url = mock_server.serve(answers)
+    client = Client(url, "canned", timeout=30, retries=0)
+    try:
+        item = next(item for item in plan["items"] if item["image_parts"])
+        reply = client.chat(item["messages"], 64)
+        assert reply["text"] == item["gold"]
+        assert type(server.RequestHandlerClass).__name__ == "type"
+        assert server.RequestHandlerClass.image_requests == 1
+        bad = [
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+            ]}
+        ]
+        with pytest.raises(TransportError):
+            client.chat(bad, 8)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_chat_transport_uses_the_same_truncation_gate(tmp_path):
+    full = tasks.build_plan(set_name="vision", max_model_len=32768)
+    item = full["items"][0]
+    meta = dict(full["meta"])
+    meta["counts"] = {"vision": {"items": 1, "subcategories": {item["subcategory"]: 1}}}
+    plan = {"items": [item], "meta": meta}
+    answers = {mock_server.prompt_key(item["prompt"]): item["gold"]}
+    server, thread, url = mock_server.serve(answers, finish_reason="length")
+    client = Client(url, "canned", timeout=30, retries=0)
+    try:
+        out = tmp_path / "vision-truncated.jsonl"
+        summary = runner.run_plan(plan, client, out, label="canned", workers=1)
+        record = runner.load_records(out)[item["id"]]
+        assert record["status"] == "truncated"
+        assert record["transport"] == "chat"
+        assert summary["truncated"] == 1
+        assert summary["reliable"] is False
+        assert summary["truncation"]["failed"] == ["vision"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_cli_dry_run_agentic_probe_scores_controls(tmp_path, capsys):

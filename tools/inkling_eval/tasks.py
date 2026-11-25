@@ -824,7 +824,8 @@ def finalize_plan(
     """Hash, validate and count a plan; main and probe plans share this rule."""
     for item in items:
         item["prompt_sha256"] = sha256_text(item["prompt"])
-        item["approx_prompt_tokens"] = estimate_tokens(item["prompt"])
+        if item.get("approx_prompt_tokens") is None:
+            item["approx_prompt_tokens"] = estimate_tokens(item["prompt"])
     ids = [item["id"] for item in items]
     duplicate = sorted({item_id for item_id in ids if ids.count(item_id) > 1})
     if duplicate:
@@ -894,10 +895,18 @@ def build_plan(
     set_name: str = "main",
 ) -> dict:
     """The full item list, deterministically ordered and hashed."""
-    if set_name != "main":
+    if set_name == "agentic-probe":
         from tools.inkling_eval import agentic_probe
 
         return agentic_probe.build_plan(reasoning_effort=reasoning_effort, max_model_len=max_model_len)
+    if set_name == "vision":
+        from tools.inkling_eval import vision_data
+
+        return vision_data.build_plan(
+            seed=seed, reasoning_effort=reasoning_effort, max_model_len=max_model_len
+        )
+    if set_name != "main":
+        raise ValueError(f"unknown plan set: {set_name}")
     wanted = [category for category in CATEGORIES if category in set(categories)]
     usable = []
     skipped_contexts = []
