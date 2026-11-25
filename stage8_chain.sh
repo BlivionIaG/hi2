@@ -270,12 +270,13 @@ log "preflight decision: $DEC; eval_seq=$EVAL_SEQ"
 if [[ -f "$NEW/hi2_run.json" && "$FORCE" != "1" ]]; then
   log "quantize already complete: $NEW/hi2_run.json"
 else
-  run_gpu quantize_v2 "$GPU_SH" -m hi2 quantize \
-    --src "$SRC" --dst "$NEW" --workdir "$WORK" --cache-dir "$CACHE" \
+  run_gpu quantize_v2 /usr/bin/time -v "$GPU_SH" -m hi2 quantize \
+    "$SRC" "$NEW" \
+    --workdir "$WORK" --cache-dir "$CACHE" \
     --devices cuda:0 cuda:1 --compute-dtype float16 --moe-layout stacked \
     --include "$INCLUDE" --exclude "$EXCLUDE" --target-bpw 3.5 \
-    --calib-text "$CALIB_TEXT" --calib-samples "$CALIB_SAMPLES" --seq-len "$CALIB_SEQ_LEN" \
-    --sens-seqs 8 --sens-len 512 --sensitivity none --qad none || {
+    --calib "$CALIB_TEXT" --calib-samples "$CALIB_SAMPLES" --seq-len "$CALIB_SEQ_LEN" \
+    --sens-seqs 8 --sens-len 512 --sensitivity none --no-qad || {
       REASON=quantize-v2-failed; exit 1; }
 fi
 [[ -f "$NEW/hi2_run.json" ]] || { REASON=quantize-v2-no-run-json; exit 1; }
