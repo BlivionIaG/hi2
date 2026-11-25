@@ -25,7 +25,7 @@ CALIB_TEXT=${CALIB_TEXT:-$PREPARED/calib_v2_balanced.txt}
 CALIB_META=${CALIB_META:-$PREPARED/calib_v2_balanced.json}
 CALIB_SAMPLES=${CALIB_SAMPLES:-256}
 CALIB_SEQ_LEN=${CALIB_SEQ_LEN:-2048}
-SUB=${SUB:-32}
+SUB=${SUB:-120}
 OOD_WINDOWS=${OOD_WINDOWS:-8}
 POSITION_BUCKETS=${POSITION_BUCKETS:-0-2048,2048-8192,8192-16384,16384-32768}
 FORCE=${FORCE:-0}
@@ -119,44 +119,39 @@ run_gpu() {
   return "$rc"
 }
 
-# ---- pre-registered gate ----------------------------------------------------
+# ---- eval budget and pre-registered gate ------------------------------------
+# 25 min / 32 windows = 0.78125 min/window = 1.5625 h at 120 windows.
+if ! [[ "$SUB" =~ ^[0-9]+$ ]]; then
+  log "SUB must be an integer, got $SUB"
+  exit 2
+fi
+EST_MODEL=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", n * (25.0 / 32.0) / 60.0 }')
+EST_BOTH=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", 2.0 * n * (25.0 / 32.0) / 60.0 }')
+if awk -v e="$EST_MODEL" 'BEGIN { exit !(e > 2.0) }'; then
+  log "eval budget: $SUB windows is ~$EST_MODEL h/model (>2 h); using 96 windows"
+  SUB=96
+  EST_MODEL=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", n * (25.0 / 32.0) / 60.0 }')
+  EST_BOTH=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", 2.0 * n * (25.0 / 32.0) / 60.0 }')
+fi
+log "eval budget: $SUB windows ~= ${EST_MODEL} h/model, ${EST_BOTH} h both (25 min / 32 windows)"
+
+GATE_SRC=${GATE_SRC:-$TREE/stage8_GATE_${SUB}.md}
+[[ -s "$GATE_SRC" ]] || { log "missing committed pre-registration $GATE_SRC"; REASON=gate-source-missing; exit 2; }
+GATE_N=$(sed -nE 's/^subset n=([0-9]+).*/\1/p' "$GATE_SRC" | head -1)
+[[ "$GATE_N" == "$SUB" ]] || {
+  log "pre-registered n=$GATE_N does not match SUB=$SUB; update and commit the gate first"
+  REASON=gate-subset-mismatch
+  exit 2
+}
 GATE=$OUT/GATE.md
 if [[ ! -e "$GATE" ]]; then
-  cat > "$GATE" <<'EOF'
-# Stage 8 gate, pre-registered 2026-11-25 by stage8_chain.sh, before any new result.
-Inputs: same stages 1-4 allocation (target-bpw 3.5, same include/exclude/candidates/
-  refine/rotation), new calibration text = 256 windows, 2048 tokens each, drawn
-  round-robin from all 27 stage-4 v2 no-copyleft calibration files; QAD none.
-  Old = stage4/runs/bpw3.5 (its calibration text was heldout_long_context__en__32768,
-  first 256 x 2048), 13.67 GiB. New = stage8/runs/bpw3.5-v2, 3.5 bpw, only the
-  calibration text changed. Size gate: the new output directory is within +-1%
-  of 13.67 GiB.
-Held-out: stage-4 v2 no-copyleft has 27 files/820 windows (2K, 8K, 16K, 32K).
-  Native stats preflight is skipped (calibration is 2048 tokens). Only one float32
-  eval try at 8192 and one at 16384; 32K is not preflighted and is excluded. If the
-  16384 try fails, 16K is excluded too; the 8192 try must pass. A materialized
-  subset with the first 32 windows in sorted file order over the remaining lengths
-  is evaluated, so every remaining category (agentic, code, general_chat,
-  long_context, math_reasoning, multilingual) is gated. Float32 evaluation of the
-  old and new student, same window indices.
-Metric: delta = new KL - old KL per held-out window.
-  pooled improves only if mean(delta) < -1.0 * sem(delta),
-    sem = sd(delta, ddof=1) / sqrt(n).
-  category gate: for each remaining held-out category over all its selected windows,
-    mean(delta) <= 1.0 * sem(delta).
-    The category sem is the paired sem of the windows in that category.
-  A category worsens when delta > sem. Any worsening category keeps the old PTQ.
-  The gate uses the numbers as found; never recomputed after seeing results.
-OOD: stage-4 calib_v2/ood_docs__en__2048_ids.npy, first 8 windows, report only
-  (no gate).
-Decision: adopt the new PTQ only if it improves beyond sem pooled and no category
-  worsens; otherwise keep the old PTQ. Written to $OUT/summary.json (adopt), and
-  $OUT/PRODUCTION (old or new path). Never changes `hi2` defaults.
-Gate constants are fixed: Pooled sem multiplier = 1.0; category sem multiplier = 1.0;
-  OOD included in gate = no; OOD report only.
-EOF
+  cp "$GATE_SRC" "$GATE"
+elif ! cmp -s "$GATE_SRC" "$GATE"; then
+  log "existing $GATE differs from committed $GATE_SRC"
+  REASON=gate-mismatch
+  exit 2
 fi
-log "gate: $GATE"
+log "gate: $GATE (n=$GATE_N)"
 
 # ---- calibration text -------------------------------------------------------
 if [[ "$SKIP_CALIB_TEXT" != "1" && ! -s "$CALIB_TEXT" ]]; then
@@ -326,7 +321,7 @@ PY
 EVAL_IDS=$OUT/eval_ids
 if [[ "$EXCLUDE_ABOVE" -lt 32768 ]]; then
   "$PY" "$TREE/experiments/inkling_eval_subset.py" \
-    --src "$V2" --dst "$EVAL_IDS" --max-length "$EXCLUDE_ABOVE" --windows "$SUB"
+    --src "$V2" --dst "$EVAL_IDS" --max-length "$EXCLUDE_ABOVE" --windows "$SUB" --balanced
 else
   EVAL_IDS=$V2
 fi
