@@ -80,16 +80,33 @@ def _quantize(src, root: Path, name: str, bpw: float, include: str = EXPERTS) ->
     return rc.dst
 
 
+class _LazyStudents(dict):
+    """The three students are quantized on first use: a test that scores one does not pay for
+    the other two (the tiny CPU encode is the slow part of this file)."""
+
+    _SPEC = {
+        "coarse": (2.6, EXPERTS),
+        "fine": (6.0, EXPERTS),
+        "attention": (3.5, f"({EXPERTS}|{ATTENTION})"),
+    }
+
+    def __init__(self, tiny, root):
+        super().__init__()
+        self._tiny = tiny
+        self._root = root
+
+    def __getitem__(self, name):
+        if not dict.__contains__(self, name):
+            bpw, include = self._SPEC[name]
+            dict.__setitem__(
+                self, name, _quantize(self._tiny, self._root, name, bpw, include)
+            )
+        return dict.__getitem__(self, name)
+
+
 @pytest.fixture(scope="module")
 def students(tiny, tmp_path_factory):
-    root = tmp_path_factory.mktemp("kl_students")
-    return {
-        "coarse": _quantize(tiny, root, "coarse", 2.6),
-        "fine": _quantize(tiny, root, "fine", 6.0),
-        "attention": _quantize(
-            tiny, root, "attention", 3.5, f"({EXPERTS}|{ATTENTION})"
-        ),
-    }
+    return _LazyStudents(tiny, tmp_path_factory.mktemp("kl_students"))
 
 
 @pytest.fixture(scope="module")
@@ -919,3 +936,174 @@ def test_the_int8_options_that_cannot_work_together_are_refused(
         kl.main([*argv, "--stock-student"])
     with pytest.raises(SystemExit, match="needs --groups none"):
         kl.main([*argv, "--int8-class", "attn"])  # the groups default is auto
+
+
+# ------------------------------------- the v2 sets: variable lengths and position buckets
+
+
+def test_position_bucket_specs_must_be_contiguous(kl):
+    assert kl.parse_position_buckets("") == []
+    assert kl.parse_position_buckets("0-2048,2048-8192,8192-16384,16384-") == [
+        (0, 2048),
+        (2048, 8192),
+        (8192, 16384),
+        (16384, None),
+    ]
+    with pytest.raises(SystemExit):
+        kl.parse_position_buckets("1024-2048")  # does not start at 0
+    with pytest.raises(SystemExit):
+        kl.parse_position_buckets("0-2048,4096-")  # a gap
+    with pytest.raises(SystemExit):
+        kl.parse_position_buckets("0-0")  # no position
+
+
+def test_the_kl_of_a_position_bucket_pools_its_positions_and_windows(kl):
+    teacher = nn.Linear(2, 3, bias=False)
+    student = nn.Linear(2, 3, bias=False)
+    with torch.no_grad():
+        teacher.weight.zero_()
+        # rows are the outputs: [1, 0] -> zeros, [0, 1] -> [0, 0, 1]
+        student.weight.copy_(torch.tensor([[0.0, 0.0], [0.0, 0.0], [0.0, 1.0]]))
+    ht = torch.zeros(2, 6, 2)
+    hs = torch.zeros(2, 6, 2)
+    hs[:, :2, 0] = 1.0  # positions 0,1: the student's zero row, as the teacher
+    hs[:, 2:, 1] = 1.0  # positions 2..5: the student's shifted row
+    out = kl.kl_position_buckets(
+        teacher,
+        hs,
+        ht,
+        kl.parse_position_buckets("0-2,2-4,4-"),
+        chunk=3,
+        lm_student=student,
+    )
+    lt = torch.log_softmax(torch.zeros(3), -1)
+    ls = torch.log_softmax(torch.tensor([0.0, 0.0, 1.0]), -1)
+    expected = float((lt.exp() * (lt - ls)).sum())
+    assert out["0-2"]["positions"] == 4  # 2 windows x 2 positions
+    assert out["0-2"]["kl_mean"] == 0.0
+    assert out["0-2"]["top1_agreement"] == 1.0
+    for bucket in ("2-4", "4+"):
+        assert out[bucket]["positions"] == 4
+        assert out[bucket]["kl_mean"] == pytest.approx(expected)
+        assert out[bucket]["top1_agreement"] == 0.0
+    # a bucket with no position in these windows says so instead of inventing a mean
+    empty = kl.kl_position_buckets(
+        teacher,
+        hs[:, :2],
+        ht[:, :2],
+        kl.parse_position_buckets("0-2,2-4,4-"),
+        chunk=2,
+        lm_student=student,
+    )
+    assert empty["2-4"]["positions"] == 0 and empty["2-4"]["kl_mean"] is None
+    assert empty["4+"]["positions"] == 0 and empty["4+"]["top1_agreement"] is None
+
+
+def test_a_directory_of_v2_sets_is_read_from_the_manifest(kl, tmp_path):
+    root = tmp_path / "calib_v2"
+    root.mkdir()
+    ids = np.arange(24, dtype=np.int32).reshape(3, 8)
+    held = root / "heldout_code__python__8_ids.npy"
+    cal = root / "calib_math_reasoning__en__8_ids.npy"
+    np.save(held, ids)
+    np.save(cal, ids)
+    manifest = {
+        "schema": "hi2.inkling-calib-v2/1",
+        "ok": True,
+        "gates": {},
+        "files": {
+            held.name: {
+                "bytes": held.stat().st_size,
+                "sha256": kl.sha256_file(held),
+                "category": "code",
+                "language": "python",
+            },
+            cal.name: {
+                "bytes": cal.stat().st_size,
+                "sha256": kl.sha256_file(cal),
+                "category": "math_reasoning",
+                "language": "en",
+            },
+        },
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    entries = kl.load_eval_set(root, "heldout")
+    assert [k for k, _, _ in entries] == ["code__python__8"]
+    key, arr, meta = entries[0]
+    assert arr.shape == (3, 8) and arr.dtype == ids.dtype
+    assert meta == {
+        "category": "code",
+        "language": "python",
+        "length": 8,
+        "file": held.name,
+    }
+    assert kl.load_eval_set(root, "calib")[0][0] == "math_reasoning__en__8"
+    # a set whose build recorded a failed gate is refused
+    manifest["ok"] = False
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(SystemExit, match="failed gate"):
+        kl.load_eval_set(root, "heldout")
+    manifest["ok"] = True
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    # a directory that is not a v2 set is refused
+    with pytest.raises(SystemExit, match="manifest"):
+        kl.load_eval_set(tmp_path, "heldout")
+    # a file that does not match its manifest is refused before it is scored
+    np.save(held, ids + 1)
+    with pytest.raises(SystemExit, match="sha256"):
+        kl.load_eval_set(root, "heldout")
+
+
+def test_a_directory_scores_every_set_at_its_own_length(
+    kl, tiny, students, tmp_path
+):
+    root = tmp_path / "sets"
+    root.mkdir()
+    rng = np.random.default_rng(7)
+    files = {}
+    for name, length, cat, lang in (
+        ("heldout_mixed__en__8_ids.npy", 8, "general_chat", "en"),
+        ("heldout_mixed__zh__4_ids.npy", 4, "general_chat", "zh"),
+    ):
+        arr = rng.integers(0, 500, (2, length)).astype(np.int32)
+        path = root / name
+        np.save(path, arr)
+        files[name] = {
+            "bytes": path.stat().st_size,
+            "sha256": kl.sha256_file(path),
+            "category": cat,
+            "language": lang,
+        }
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {"schema": "hi2.inkling-calib-v2/1", "ok": True, "gates": {}, "files": files}
+        )
+    )
+    out = tmp_path / "kl_sets.json"
+    code = kl.main(
+        [
+            "--src", str(tiny),
+            "--dst", str(students["fine"]),
+            "--ids", str(root),
+            "--devices", "cpu",
+            "--compute-dtype", "float32",
+            "--batch-windows", "1",
+            "--position-buckets", "0-2,2-",
+            "--groups", "none",
+            "--out", str(out),
+        ]
+    )
+    assert code == 0
+    r = json.loads(out.read_text())
+    assert r["windows"] == 4 and r["seq_len"] == [4, 8]
+    assert set(r["eval_set"]["sets"]) == {"mixed__en__8", "mixed__zh__4"}
+    assert r["eval_set"]["sets"]["mixed__zh__4"]["length"] == 4
+    assert r["eval_set"]["sets"]["mixed__en__8"]["windows"] == 2
+    assert set(r["eval_set"]["category"]) == {"general_chat"}
+    assert r["eval_set"]["category"]["general_chat"]["windows"] == 4
+    assert set(r["eval_set"]["language"]) == {"en", "zh"}
+    assert r["eval_set"]["language"]["zh"]["windows"] == 2
+    # 4 windows: 8 positions in 0-2, 2x6 + 2x2 = 16 positions in 2+
+    assert r["eval_set"]["position_buckets"]["0-2"]["positions"] == 8
+    assert r["eval_set"]["position_buckets"]["2+"]["positions"] == 16
+    assert r["student"]["windows"] == 4
