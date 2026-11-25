@@ -1186,8 +1186,18 @@ def fake_quants(layer, names, inits, comps, qc, wstager):
     }
     fb = None
     if qc.init != "ptq":
+        # The fallback must export the PTQ tensor byte for byte. Re-encoding the
+        # compensated weights (or even the original weights) can move codes at a
+        # rounding tie, so start it from the decoded PTQ tensor itself, in the stored
+        # basis the encoder rounds.
         fb = {
-            name: FakeQuantLinear(weight(name), inits[name], comps[name], "ptq")
+            name: FakeQuantLinear(
+                dequantize(inits[name]).float(),
+                inits[name],
+                None,
+                "weights",
+                "abs",
+            )
             for name in names
         }
     return fq, fb

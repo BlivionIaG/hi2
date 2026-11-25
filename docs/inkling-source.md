@@ -1279,10 +1279,24 @@ output is not the LM head's input) and `--sequential`; `--qad-layers none` keeps
   and its resume, the PTQ-init request unit and the steps=0 control against a PTQ run; 22 mutants of the module and
   its groundwork are killed (QL3-QL21, QG1/QG2/QG4), plus `experiments/qad_looped_mutants.py` for the PTQ start,
   accumulation, clipping and the saved gradient trace.
-* **Not yet measured on the GPU:** one 3.5 bpw run over layers 0-5 (`--qad-layers 0-5 --qad-final-kl 0`) and its
-  held-out group KL is the next step; the time [INFERENCE] follows `estimate_seconds`: 3.6 s per 4 x 2048-token
-  step at 1.019 G expert weights, 300 steps x 6 layers -> about 2 h on one card, plus the capture and the final
-  encode. The final-KL phase separately measured 166-183 s per step with the layer program at 18.5 GiB/card.
+* **Measured on the GPU (2026-11-25, exploratory; `bpw3.5-lq0-5-new`, layers 0-5, 150 steps, 4
+  expert groups, `--qad-final-kl 0`).** 6 layers in 44.6 min, 317-355 s per layer (four groups of 96
+  experts); peak 16.33-16.46 GiB per card, resident set 114-117 GiB per layer, 125 GiB at the end,
+  teacher states 15.8 GiB. **Every one of the 24 groups (4 x 6 layers) kept PTQ**, and the held-out
+  layer nMSE got worse by 12.2-15.3 %; no trained state beat the fallback at any logged evaluation.
+  The first export still changed all 12 expert containers (2,304 member tensors): 48 % of the packed
+  code words in every group (47.8-48.7 %), because `kept ptq` handed `train_layer` a
+  `FakeQuantLinear` over the GPTQ-compensated weights and re-encoded it instead of returning the
+  `--qad-init-from` tensor. The returned codes are now the init-from `HI2Tensor` itself (test
+  `test_a_ptq_fallback_is_the_ptq_tensor_not_a_re_encoding`); the steps=0 control and the PTQ output
+  were bit-identical all along. The old output's measured KL 0.0916 (windows 24-31, float16) against
+  the PTQ output's 0.0996 was therefore the re-encode, not the training; with the exact fallback the
+  output would equal PTQ, so the one-layer test shows **no QAD gain** and the full 24-layer run is not
+  justified.
+* **Cost of all 24 layers [INFERENCE].** At 7.4 min per single-call layer, 18 single-call layers
+  (0-5, 18-23) are about 2.2 h; a loop layer's three passes carry three times the samples, about
+  22 min, so 12 loop layers are another 4.4 h: about 6.6 h plus the capture and encode, before the
+  final-KL phase (166-183 s per step, ~9-10 h for 200 steps).
 
 ## One bf16 class in INT8 (exploratory, eval only)
 

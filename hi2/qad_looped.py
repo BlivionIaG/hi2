@@ -425,6 +425,26 @@ def _merge_infos(infos: list[dict]) -> dict:
     out["step_trace"] = [
         row for i in infos for row in i.get("step_trace", [])
     ]
+    out["group_records"] = [
+        {
+            "group": i.get("group", gi),
+            "size": i.get("group_size"),
+            "val_before": i["val_before"],
+            "val_after": i["val_after"],
+            "val_final": i["val_final"],
+            "kept": i["kept"],
+            "steps": i["steps"],
+            "allotted": i["allotted"],
+            "seconds": i["seconds"],
+        }
+        for gi, i in enumerate(infos)
+    ]
+    # The first group is scored before any group trains (all PTQ); the last group's
+    # val_after has every group at its final decode. The per-group records above are
+    # not comparable with each other: each scores one group against the then-current
+    # decode of the others.
+    out["layer_val_before"] = first["val_before"]
+    out["layer_val_after"] = last["val_after"]
     out.update(
         val_after=last["val_after"],
         val_final=last["val_final"],
@@ -533,6 +553,21 @@ def _train_groups(
                 "groups": 1,
                 "group_sizes": [len(linears)],
                 "kept_per_group": ["ptq"],
+                "group_records": [
+                    {
+                        "group": 0,
+                        "size": len(linears),
+                        "val_before": 0.0,
+                        "val_after": 0.0,
+                        "val_final": 0.0,
+                        "kept": "ptq",
+                        "steps": 0,
+                        "allotted": 0,
+                        "seconds": 0.0,
+                    }
+                ],
+                "layer_val_before": 0.0,
+                "layer_val_after": 0.0,
                 "trace": [(0, None, 0.0)],
                 "step_trace": [],
             },
@@ -582,8 +617,13 @@ def _train_groups(
                     layer.get_submodule(n).weight.data = orig[n]
             norms = info.pop("norms", {})
             info["group_size"] = len(names)
+            info["group"] = gi
             for nm, m in fq.items():
-                tensors[linears[nm]] = m.export(wstager)
+                # A PTQ fallback is the init-from HI2Tensor, not a re-encode of its
+                # compensated weights: export() would move codes at rounding ties.
+                tensors[linears[nm]] = (
+                    inits[nm] if info["kept"] == "ptq" else m.export(wstager)
+                )
                 current[nm] = dequantize(tensors[linears[nm]]).to(orig[nm].dtype)
             for pn, val in norms.items():
                 prm = layer.get_parameter(pn)
@@ -757,11 +797,13 @@ def qad_looped(
                     artifact=str(art),
                     gpu_peak_gib=info.get("gpu_peak_gib"),
                 )
-            gain = 1 - info["val_after"] / max(info["val_before"], 1e-30)
+            layer_before = info.get("layer_val_before", info.get("val_before", 0.0))
+            layer_after = info.get("layer_val_after", info.get("val_after", 0.0))
             log(
                 f"QAD layer {li}/{n_layers - 1}: {len(linears)} linears, "
-                f"{info['passes']} call(s)/layer, held-out nMSE {info['val_before']:.4e} "
-                f"-> {info['val_after']:.4e} ({-100 * gain:+.1f}%), "
+                f"{info['passes']} call(s)/layer, layer held-out nMSE "
+                f"{layer_before:.4e} -> {layer_after:.4e} "
+                f"({-100 * (1 - layer_after / max(layer_before, 1e-30)):+.1f}%), "
                 f"{info['steps']}/{info['allotted']} steps over {info['groups']} group(s), "
                 f"{info['seconds']:.0f} s, rss {_rss_gib()} GiB"
             )

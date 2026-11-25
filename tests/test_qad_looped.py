@@ -336,6 +336,17 @@ def _expert_tensors(dst):
     return out
 
 
+def _expert_raw(dst):
+    from hi2.stack import Hi2Checkpoint
+
+    ck = Hi2Checkpoint(dst)
+    return {
+        base: ck.get(base)
+        for base in sorted(ck.logical())
+        if ".mlp.experts." in base and ".layers." in base
+    }
+
+
 def test_steps_zero_qad_experts_are_bit_identical_to_ptq(src, ids, tmp_path):
     """The steps=0 control: with the PTQ initialisation and its fallback, a QAD run at
     0 optimizer steps must write exactly the PTQ-only checkpoint for its layers. It
@@ -382,7 +393,99 @@ def test_steps_zero_qad_experts_are_bit_identical_to_ptq(src, ids, tmp_path):
     assert all(report[i]["steps"] == 0 for i in range(3))
 
 
+def test_a_kept_ptq_group_exports_the_init_from_bytes(src, ids, tmp_path):
+    """A group whose held-out loss never beats PTQ falls back to PTQ (`kept: ptq`).
+    Training must still export the init-from HI2Tensor byte for byte: the fallback
+    FakeQuantLinear holds the compensated weights and re-encoding them moves codes."""
+    from hi2.format import FIELDS
+    from hi2.qad import make_config
+
+    ptq_rc = _rc(src, tmp_path / "ptq", calib_ids=ids, calib_samples=N_SEQ, seq_len=T)
+    run(ptq_rc, log=lambda *_: None)
+    qc = make_config(
+        "fast",
+        {
+            "steps": 1,
+            "samples": 6,
+            "val": 2,
+            "batch": 2,
+            "layers": "0-2",
+            "expert_groups": 1,
+            "init_from": str(ptq_rc.dst),
+            "lr_w": 0.0,
+            "lr_p": 0.0,
+        },
+    )
+    qad_rc = _rc(
+        src,
+        tmp_path / "qad-ptq-fallback",
+        calib_ids=ids,
+        calib_samples=N_SEQ,
+        seq_len=T,
+        qad=qc,
+    )
+    run(qad_rc, log=lambda *_: None)
+    report = json.loads((qad_rc.workdir / "qad_report.json").read_text())
+    assert report and all(r["kept"] == "ptq" for r in report), report
+    for r in report:
+        recs = r["group_records"]
+        assert recs and len(recs) == len(r["kept_per_group"])
+        assert [g["kept"] for g in recs] == r["kept_per_group"]
+        assert r["layer_val_before"] == recs[0]["val_before"]
+        assert r["layer_val_after"] == recs[-1]["val_after"]
+    a, b = _expert_raw(ptq_rc.dst), _expert_raw(qad_rc.dst)
+    assert a.keys() == b.keys() and a
+    for name in a:
+        for field in (*FIELDS, "col_scale"):
+            x, y = getattr(a[name], field), getattr(b[name], field)
+            assert (x is None) == (y is None), (name, field)
+            if x is not None:
+                assert torch.equal(x, y), (name, field)
+
+
 # ---------------------------------------------------------------- the CLI
+
+
+def test_a_ptq_fallback_is_the_ptq_tensor_not_a_re_encoding():
+    """The PTQ fallback must export the init-from tensor byte for byte even when the
+    compensated weights would re-encode differently. Regression: the fallback was a
+    FakeQuantLinear over the compensated weights and moved 48 % of the packed code
+    words on Inkling-2-Mini while still reporting ``kept ptq``."""
+    from hi2.format import FIELDS, assemble
+    from hi2.qad import fake_quants, make_config
+
+    g = torch.Generator().manual_seed(3)
+    r, k = 8, 16
+    t0 = assemble(
+        [
+            (
+                torch.arange(r),
+                torch.randint(0, 16, (r, k), generator=g, dtype=torch.uint8),
+                torch.randint(0, 256, (r, 1, 2), generator=g, dtype=torch.uint8),
+                torch.tensor([[0.0, 1.0, 1.0]]).repeat(r, 1).half(),
+            )
+        ],
+        row_nbits=torch.full((r,), 4),
+        row_block=torch.full((r,), k),
+        had=torch.zeros(1),
+        k=k,
+    )
+    layer = nn.Module()
+    layer.lin = nn.Linear(k, r, bias=False)
+
+    class Stager:
+        to_host = staticmethod(lambda t: t)
+
+    qc = make_config("fast", {"init": "weights"})
+    _, fb = fake_quants(
+        layer, {"lin": "lin"}, {"lin": t0}, {"lin": torch.zeros(r, k)}, qc, Stager()
+    )
+    out = fb["lin"].export()
+    for field in (*FIELDS, "col_scale"):
+        x, y = getattr(t0, field), getattr(out, field)
+        assert (x is None) == (y is None), field
+        if x is not None:
+            assert torch.equal(x, y), field
 
 
 def test_the_cli_carries_the_looped_qad_options():
