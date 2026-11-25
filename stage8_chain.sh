@@ -119,39 +119,15 @@ run_gpu() {
   return "$rc"
 }
 
-# ---- eval budget and pre-registered gate ------------------------------------
-# 25 min / 32 windows = 0.78125 min/window = 1.5625 h at 120 windows.
+# ---- eval budget -------------------------------------------------------------
+# 25 min / 32 windows = 0.78125 min/window = 1.3125 h at 101, 1.5625 h at 120.
 if ! [[ "$SUB" =~ ^[0-9]+$ ]]; then
   log "SUB must be an integer, got $SUB"
   exit 2
 fi
-EST_MODEL=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", n * (25.0 / 32.0) / 60.0 }')
-EST_BOTH=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", 2.0 * n * (25.0 / 32.0) / 60.0 }')
-if awk -v e="$EST_MODEL" 'BEGIN { exit !(e > 2.0) }'; then
-  log "eval budget: $SUB windows is ~$EST_MODEL h/model (>2 h); using 96 windows"
-  SUB=96
-  EST_MODEL=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", n * (25.0 / 32.0) / 60.0 }')
-  EST_BOTH=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", 2.0 * n * (25.0 / 32.0) / 60.0 }')
-fi
-log "eval budget: $SUB windows ~= ${EST_MODEL} h/model, ${EST_BOTH} h both (25 min / 32 windows)"
-
-GATE_SRC=${GATE_SRC:-$TREE/stage8_GATE_${SUB}.md}
-[[ -s "$GATE_SRC" ]] || { log "missing committed pre-registration $GATE_SRC"; REASON=gate-source-missing; exit 2; }
-GATE_N=$(sed -nE 's/^subset n=([0-9]+).*/\1/p' "$GATE_SRC" | head -1)
-[[ "$GATE_N" == "$SUB" ]] || {
-  log "pre-registered n=$GATE_N does not match SUB=$SUB; update and commit the gate first"
-  REASON=gate-subset-mismatch
-  exit 2
-}
-GATE=$OUT/GATE.md
-if [[ ! -e "$GATE" ]]; then
-  cp "$GATE_SRC" "$GATE"
-elif ! cmp -s "$GATE_SRC" "$GATE"; then
-  log "existing $GATE differs from committed $GATE_SRC"
-  REASON=gate-mismatch
-  exit 2
-fi
-log "gate: $GATE (n=$GATE_N)"
+EST_101=$(awk 'BEGIN { printf "%.3f", 101 * (25.0 / 32.0) / 60.0 }')
+EST_120=$(awk 'BEGIN { printf "%.3f", 120 * (25.0 / 32.0) / 60.0 }')
+log "eval budget: 101 windows ~= ${EST_101} h/model (2.630 h both); 120-target ~= ${EST_120} h/model; long context is served-KL if 8K preflight fails"
 
 # ---- calibration text -------------------------------------------------------
 if [[ "$SKIP_CALIB_TEXT" != "1" && ! -s "$CALIB_TEXT" ]]; then
@@ -238,8 +214,8 @@ if [[ -s "$DEC" ]]; then
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d.get("exclude_32k") is True
-assert int(d.get("eval_max")) in (8192, 16384)
-assert int(d.get("exclude_above")) in (8192, 16384)
+assert int(d.get("eval_max")) in (2048, 8192, 16384)
+assert int(d.get("exclude_above")) in (2048, 8192, 16384)
 PY
   then
     valid=1
@@ -256,20 +232,26 @@ EOF
   log "preflight skipped by SKIP_PREFLIGHT=1; 32K excluded"
 else
   rm -f "$DEC"
-  eval_try 8192 || { REASON=preflight-eval-8192-failed; exit 1; }
-  if eval_try 16384; then
-    EVAL_MAX=16384
-    EVAL_16K=1
-    log "eval preflight 16384 passed"
+  EVAL_8K=0
+  EVAL_16K=0
+  if eval_try 8192; then
+    EVAL_8K=1
+    if eval_try 16384; then
+      EVAL_MAX=16384
+      EVAL_16K=1
+      log "eval preflight 16384 passed"
+    else
+      EVAL_MAX=8192
+      log "eval preflight 16384 failed once; 16K and 32K will be excluded"
+    fi
   else
-    EVAL_MAX=8192
-    EVAL_16K=0
-    log "eval preflight 16384 failed once; 16K and 32K will be excluded"
+    EVAL_MAX=2048
+    log "eval preflight 8192 failed once; ALL long windows (8K/16K/32K) will be excluded; no retry"
   fi
   "$PY" - "$DEC" "$PRE/eval_8192.json" "$PRE/eval_16384.json" \
-    "$EVAL_MAX" "$EVAL_16K" <<'PY'
+    "$EVAL_MAX" "$EVAL_8K" "$EVAL_16K" <<'PY'
 import json, os, sys
-path, p8, p16, ev, ok16 = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+path, p8, p16, ev, ok8, ok16 = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
 def block(p):
     if not os.path.exists(p):
         return {"ok": False}
@@ -285,6 +267,15 @@ def block(p):
         "max_peak_gib": max(vals) if vals else None,
     }
 b8, b16 = block(p8), block(p16)
+b8["attempted"] = True
+b16["attempted"] = bool(ok8)
+if not ok8:
+    b16["skipped"] = "8192-failed"
+not_pre = [32768]
+if ev == 8192:
+    not_pre = [16384, 32768]
+elif ev == 2048:
+    not_pre = [8192, 16384, 32768]
 headroom = (
     24.0 - b16["max_peak_gib"]
     if ok16 and b16.get("max_peak_gib") is not None
@@ -294,11 +285,14 @@ out = {
     "stats_max": None,
     "eval_8192": b8,
     "eval_16384": b16,
+    "eval_8k_ok": bool(ok8),
     "eval_16k_ok": bool(ok16),
     "eval_max": ev,
     "exclude_32k": True,
     "exclude_above": ev,
-    "not_preflighted": [32768],
+    "not_preflighted": not_pre,
+    "long_context_in_float32": bool(ev >= 8192),
+    "long_context_gate": "float32" if ev >= 8192 else "served-kl",
     "headroom_gib_16k": headroom,
     "assumed": False,
     "skipped": False,
@@ -318,6 +312,32 @@ import json, sys
 print(int(json.load(open(sys.argv[1]))["exclude_above"]))
 PY
 )
+if [[ "$EVAL_MAX" -le 2048 ]]; then
+  SUB=101
+  log "8192 preflight excluded every long window: staying with the 101-window gate"
+fi
+EST_MODEL=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", n * (25.0 / 32.0) / 60.0 }')
+EST_BOTH=$(awk -v n="$SUB" 'BEGIN { printf "%.3f", 2.0 * n * (25.0 / 32.0) / 60.0 }')
+log "eval budget selected: $SUB windows ~= ${EST_MODEL} h/model, ${EST_BOTH} h both"
+
+GATE_SRC=${GATE_SRC:-$TREE/stage8_GATE_${SUB}.md}
+[[ -s "$GATE_SRC" ]] || { log "missing committed pre-registration $GATE_SRC"; REASON=gate-source-missing; exit 2; }
+GATE_N=$(sed -nE 's/^subset n=([0-9]+).*/\1/p' "$GATE_SRC" | head -1)
+[[ "$GATE_N" == "$SUB" ]] || {
+  log "pre-registered n=$GATE_N does not match SUB=$SUB; update and commit the gate first"
+  REASON=gate-subset-mismatch
+  exit 2
+}
+GATE=$OUT/GATE.md
+if [[ ! -e "$GATE" ]]; then
+  cp "$GATE_SRC" "$GATE"
+elif ! cmp -s "$GATE_SRC" "$GATE"; then
+  log "existing $GATE differs from committed $GATE_SRC"
+  REASON=gate-mismatch
+  exit 2
+fi
+log "gate: $GATE (n=$GATE_N)"
+
 EVAL_IDS=$OUT/eval_ids
 if [[ "$EXCLUDE_ABOVE" -lt 32768 ]]; then
   "$PY" "$TREE/experiments/inkling_eval_subset.py" \

@@ -132,12 +132,22 @@ def select_balanced(
                 n = int(files[name]["windows"])
                 used.setdefault(name, []).extend(spaced_rows(n, min(per_lang, n)))
 
+    # Long context: prefer 16K when it is in the allowed set, otherwise 8K.
+    long_names = by_cat.get("long_context", [])
+    if not long_names:
+        # No long window survives max_length: redistribute its quota over the
+        # remaining three categories instead of filling in file-sort order.
+        quotas = dict(quotas)
+        rest = total - quotas["code"] - quotas["multilingual"]
+        base, rem = divmod(rest, 3)
+        for i, cat in enumerate(("agentic", "math_reasoning", "general_chat")):
+            quotas[cat] = base + (1 if i < rem else 0)
+        quotas["long_context"] = 0
+
     # One file per agentic/math/general category.
     for cat in ("agentic", "math_reasoning", "general_chat"):
         _take_files(by_cat.get(cat, []), quotas[cat], files, used)
 
-    # Long context: prefer 16K when it is in the allowed set, otherwise 8K.
-    long_names = by_cat.get("long_context", [])
     by_len: dict[int, list[str]] = {}
     for name in long_names:
         by_len.setdefault(int(files[name]["length"]), []).append(name)
