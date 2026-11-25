@@ -73,30 +73,52 @@ class BuildTok:
         return {"input_ids": rng.integers(0, 250, n).tolist()}
 
 
+DEFAULT_DOCS = {
+    "agentic": 300,
+    "multilingual": 40,
+    "long_context": 40,
+    "math_reasoning": 40,
+    "general_chat": 40,
+}
+CODE_DOCS = {"python": 40, "shell": 80, "sql": 80, "javascript": 80, "typescript": 80}
+
+
 def _stage(out: Path, docs: dict[str, int] | None = None) -> None:
-    """A staged directory with ``docs`` records per category (40 by default)."""
+    """A staged directory: 300 agentic documents (60 held-out windows), 80 documents of
+    every small code language, and 40 of the rest. A key like ``code__shell`` overrides
+    the code language's count."""
     docs = docs or {}
     src = out / "src"
     src.mkdir(parents=True)
     rng = random.Random(0)
-    for cat in CATS:
-        lines = []
-        for i in range(docs.get(cat, 40)):
-            body = "".join(rng.choice(string.ascii_letters) for _ in range(200))
-            text = f"LONG:{i}:{body}" if cat == "long_context" else f"{cat}:{i}:{body}"
-            lang = "zh" if cat == "multilingual" and i % 2 else "en"
-            lines.append(
-                json.dumps(
-                    {
-                        "text": text,
-                        "category": cat,
-                        "language": lang,
-                        "source": f"test/{cat}",
-                        "license": "test",
-                    }
-                )
-            )
-        (src / f"{cat}.jsonl").write_text("\n".join(lines) + "\n")
+
+    def line(cat: str, lang: str, i: int) -> str:
+        body = "".join(rng.choice(string.ascii_letters) for _ in range(200))
+        text = f"LONG:{i}:{body}" if cat == "long_context" else f"{cat}:{i}:{body}"
+        return json.dumps(
+            {
+                "text": text,
+                "category": cat,
+                "language": lang,
+                "source": f"test/{cat}/{lang}",
+                "license": "apache-2.0",
+            }
+        )
+
+    for cat in ("agentic", "math_reasoning", "general_chat", "long_context"):
+        n = docs.get(cat, DEFAULT_DOCS[cat])
+        (src / f"{cat}.jsonl").write_text(
+            "\n".join(line(cat, "en", i) for i in range(n)) + "\n"
+        )
+    n = docs.get("multilingual", DEFAULT_DOCS["multilingual"])
+    (src / "multilingual.jsonl").write_text(
+        "\n".join(line("multilingual", "zh" if i % 2 else "en", i) for i in range(n)) + "\n"
+    )
+    lines = []
+    for lang, default in CODE_DOCS.items():
+        n = docs.get(f"code__{lang}", default)
+        lines.extend(line("code", lang, i) for i in range(n))
+    (src / "code.jsonl").write_text("\n".join(lines) + "\n")
     (src / "staging.json").write_text(
         json.dumps({"seed": 0, "sources": {c: {} for c in CATS}})
     )
@@ -126,14 +148,14 @@ def test_a_short_window_is_a_run_of_documents_and_names_them(b):
             "category": "general_chat",
             "language": "en",
             "source": "s1",
-            "license": "l1",
+            "license": "apache-2.0",
         },
         {
             "text": "b" * 120,
             "category": "general_chat",
             "language": "en",
             "source": "s2",
-            "license": "l2",
+            "license": "mit",
         },
     ]
     tok = CharTok()
@@ -150,7 +172,12 @@ def test_a_short_window_is_a_run_of_documents_and_names_them(b):
         b.sha256_text(recs[0]["text"]),
         b.sha256_text(recs[1]["text"]),
     ]
-    assert row["sources"] == ["s1", "s2"] and row["licenses"] == ["l1", "l2"]
+    assert row["document_records"] == [
+        {"id": b.sha256_text(recs[0]["text"]), "source": "s1", "license": "apache-2.0"},
+        {"id": b.sha256_text(recs[1]["text"]), "source": "s2", "license": "mit"},
+    ]
+    assert row["sources"] == ["s1", "s2"] and row["licenses"] == ["apache-2.0", "mit"]
+    assert row["license_classes"] == ["permissive"]
 
 
 def test_a_long_window_is_one_contiguous_slice_of_one_document(b):
@@ -160,14 +187,14 @@ def test_a_long_window_is_one_contiguous_slice_of_one_document(b):
             "category": "long_context",
             "language": "en",
             "source": "s1",
-            "license": "l1",
+            "license": "apache-2.0",
         },
         {
             "text": "b" * 300,
             "category": "long_context",
             "language": "en",
             "source": "s2",
-            "license": "l2",
+            "license": "mit",
         },
     ]
     tok = CharTok()
@@ -245,6 +272,11 @@ def test_the_manifest_holds_every_gate_and_the_provenance(b, built):
     for cat in CATS:
         assert m["gates"][f"heldout_windows:{cat}"]["ok"]
         assert m["gates"][f"calib_windows:{cat}"]["ok"]
+    assert m["gates"]["heldout_windows:agentic_floor"]["ok"]
+    assert m["gates"]["calib_windows:agentic_floor"]["ok"]
+    for lang in ("shell", "sql", "typescript"):
+        assert m["gates"][f"heldout_windows:code__{lang}__2048"]["ok"]
+        assert m["gates"][f"calib_windows:code__{lang}__2048"]["ok"]
     for length in LONG:
         assert m["gates"][f"heldout_windows:long_context__en__{length}"]["ok"]
     for split, rows in m["meta"].items():
@@ -254,9 +286,14 @@ def test_the_manifest_holds_every_gate_and_the_provenance(b, built):
             for row in per_window:
                 assert key == f"{row['category']}__{row['language']}__{row['length']}"
                 assert row["documents"] and row["sources"] and row["licenses"]
+                assert len(row["document_records"]) == len(row["documents"])
+                for doc in row["document_records"]:
+                    assert doc["id"] in row["documents"]
+                    assert doc["source"] and doc["license"]
+                assert set(row["license_classes"]) == {"permissive"}
     for info in m["files"].values():
         assert info["category"] in CATS
-        assert info["language"] in ("en", "zh", "python")
+        assert info["language"] in ("en", "zh", "python", "shell", "sql", "javascript", "typescript", "rust")
 
 
 def test_verify_refuses_a_tampered_window_file(b, built, tmp_path):
@@ -302,3 +339,174 @@ def test_a_small_category_cannot_pass_on_other_categories_windows(b, tmp_path):
     assert m["gates"]["heldout_windows:math_reasoning"]["ok"] is False
     assert m["gates"]["calib_windows:math_reasoning"]["ok"] is False
     assert m["gates"]["heldout_windows:agentic"]["ok"] is True
+
+
+def test_a_long_document_does_not_exceed_the_window_cap(b):
+    recs = [
+        {
+            "text": "x" * 20_000,
+            "category": "general_chat",
+            "language": "en",
+            "source": "s",
+            "license": "apache-2.0",
+        }
+    ]
+    out, _ = b._windowize(recs, CharTok(), {"general_chat": (60,)})
+    assert len(out["general_chat__en__60"]) == 32, len(out["general_chat__en__60"])
+
+
+def test_dedupe_uses_dedupe_text_when_present(b):
+    shared = "system prompt " * 400
+    recs = [
+        {
+            "text": shared + f"task {i}",
+            "dedupe_text": f"task body {i} " * 20,
+            "category": "agentic",
+            "language": "en",
+            "source": "agentic_bench/x",
+            "license": "apache-2.0",
+        }
+        for i in range(3)
+    ]
+    kept, report = b._dedupe(recs)
+    assert len(kept) == 3, report
+    assert report["near_dropped"] == 0, report
+
+
+def test_sql_public_records_read_the_cached_file(b, tmp_path):
+    cache = tmp_path / "hub"
+    cache.mkdir()
+    rows = [
+        {
+            "question": f"question {i}",
+            "context": "CREATE TABLE t" + " " * 20 + f" (id INT, name TEXT) /* {i} */",
+            "answer": "SELECT id FROM t",
+        }
+        for i in range(500)
+    ]
+    (cache / "sql_create_context_v4.json").write_text(json.dumps(rows))
+    recs = b._sql_public_records(0, cache, log=lambda *a: None, docs=2)
+    assert len(recs) == 2, len(recs)
+    for r in recs:
+        assert r["language"] == "sql"
+        assert r["source"] == "b-mc2/sql-create-context"
+        assert r["license"] == "cc-by-4.0"
+        assert len(r["text"]) >= 16_000
+
+
+def test_ood_falls_back_to_local_docs(b, built, tmp_path, monkeypatch):
+    import datasets
+
+    def offline(*a, **k):
+        raise ConnectionError("OfflineModeIsEnabled")
+
+    monkeypatch.setattr(datasets, "load_dataset", offline)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for i in range(16):
+        (docs / f"{i}.md").write_text("# heading\n" + "text " * 1200)
+    out, _ = built
+    m = b.ood(out, BuildTok(), docs_roots=(docs,), log=lambda *a: None)
+    assert m["splits"]["ood"]["docs__en__2048"]["windows"] == 16
+    assert m["ood"]["licenses"] == ["apache-2.0"]
+    for row in m["meta"]["ood"]["docs__en__2048"]:
+        assert row["document_records"]
+
+
+def test_the_split_balances_small_and_large_documents(b):
+    sizes = [10_000] * 14 + [10] * 16
+    recs = [
+        {
+            "text": "x" * n,
+            "category": "code",
+            "language": "sql",
+            "source": "t",
+            "license": "apache-2.0",
+        }
+        for n in sizes
+    ]
+    cal, held = b._split(recs, 0)
+    held_chars = sum(len(r["text"]) for r in held)
+    cal_chars = sum(len(r["text"]) for r in cal)
+    assert len(held) == 16 and len(cal) == 14
+    assert min(held_chars, cal_chars) >= 0.5 * max(held_chars, cal_chars)
+    assert sum(len(r["text"]) >= 5_000 for r in held) >= 5
+    assert sum(len(r["text"]) >= 5_000 for r in cal) >= 5
+
+
+def test_a_unicode_line_separator_does_not_split_a_record(b, tmp_path):
+    path = tmp_path / "u2028.jsonl"
+    path.write_text(json.dumps({"text": "a\u2028b\u2029c"}, ensure_ascii=False) + "\n")
+    assert b._read_jsonl(path) == [{"text": "a\u2028b\u2029c"}]
+
+
+def test_an_unknown_licence_is_refused(b):
+    with pytest.raises(SystemExit, match="unknown licence"):
+        b.validate_licenses(
+            [{"text": "x", "category": "code", "language": "python", "source": "s", "license": "proprietary"}]
+        )
+
+
+def test_the_agentic_floor_is_sixty(b, tmp_path):
+    old = b.LONG_LENGTHS
+    b.LONG_LENGTHS = LONG
+    try:
+        out = tmp_path / "agentic_59"
+        _stage(out, {"agentic": 250})
+        m = b.build(out, BuildTok(), seed=0)
+    finally:
+        b.LONG_LENGTHS = old
+    assert m["ok"] is False
+    assert m["gates"]["heldout_windows:agentic_floor"]["ok"] is False
+    assert "50 >= 60" in m["gates"]["heldout_windows:agentic_floor"]["detail"]
+
+
+def test_the_small_code_floor_is_sixteen(b, tmp_path):
+    old = b.LONG_LENGTHS
+    b.LONG_LENGTHS = LONG
+    try:
+        out = tmp_path / "shell_12"
+        _stage(out, {"code__shell": 20})
+        m = b.build(out, BuildTok(), seed=0)
+    finally:
+        b.LONG_LENGTHS = old
+    assert m["ok"] is False
+    assert m["gates"]["heldout_windows:code__shell__2048"]["ok"] is False
+    assert m["gates"]["calib_windows:code__shell__2048"]["ok"] is False
+
+
+def test_exclude_license_drops_gpl2(b, tmp_path):
+    old = b.LONG_LENGTHS
+    b.LONG_LENGTHS = LONG
+    try:
+        out = tmp_path / "gpl2"
+        _stage(out)
+        code = out / "src/code.jsonl"
+        lines = code.read_text().splitlines()
+        rng = random.Random(2)
+        for i in range(160):
+            body = "".join(rng.choice(string.ascii_letters) for _ in range(200))
+            gpl = i % 2 == 0
+            lines.append(
+                json.dumps(
+                    {
+                        "text": f"rust:{i}:{body}",
+                        "category": "code",
+                        "language": "rust",
+                        "source": "linux" if gpl else "crate",
+                        "license": "gpl-2.0" if gpl else "mit",
+                    }
+                )
+            )
+        code.write_text("\n".join(lines) + "\n")
+        m = b.build(out, BuildTok(), seed=0, exclude_license=("gpl2",))
+    finally:
+        b.LONG_LENGTHS = old
+    assert m["ok"] is True
+    assert m["excluded_license_classes"] == ["gpl2"]
+    assert m["excluded_records"] == 80
+    for split_rows in m["meta"].values():
+        for per_window in split_rows.values():
+            for row in per_window:
+                assert "gpl2" not in row["license_classes"]
+    assert b.verify(out, BuildTok(), production=True) == []
