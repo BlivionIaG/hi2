@@ -207,6 +207,7 @@ def _md(result: dict) -> str:
     for name, r in [
         ("pooled", result["pooled"]),
         *[(f"cat:{k}", v) for k, v in result["categories"].items()],
+        *[(f"lang:{k}", v) for k, v in result["languages"].items()],
     ]:
         sem = "n/a" if r["sem"] is None else f"{r['sem']:.4f}"
         lines.append(

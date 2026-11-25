@@ -235,10 +235,12 @@ EOF
   log "preflight skipped by SKIP_PREFLIGHT=1"
 else
   STATS_MAX=""
-  if stats_try 65536; then STATS_MAX=65536
-  elif stats_try 32768; then STATS_MAX=32768
-  elif stats_try 31744; then STATS_MAX=31744
-  elif stats_try 30720; then STATS_MAX=30720
+  if stats_try 65536; then
+    STATS_MAX=65536
+  else
+    for ((L=32768; L>=2048; L-=1024)); do
+      if stats_try "$L"; then STATS_MAX=$L; break; fi
+    done
   fi
   [[ -n "$STATS_MAX" ]] || { REASON=preflight-stats-all-failed; exit 1; }
   log "stats max $STATS_MAX"
@@ -349,7 +351,6 @@ fi
 # ---- summary -----------------------------------------------------------------
 SUMMARY_ARGS=(--old-heldout "$OUT/eval/old_heldout.json"
   --new-heldout "$OUT/eval/new_heldout.json"
-  --old-ptq "$OUT/eval/old_heldout.json" --new-ptq "$OUT/eval/new_heldout.json"
   --old-ood "$OUT/eval/old_ood.json" --new-ood "$OUT/eval/new_ood.json"
   --windows "$SUB" --out-json "$OUT/summary.json" --out-md "$OUT/summary.md"
   --run-json "$NEW/hi2_run.json" --calib-meta "$CALIB_META")
