@@ -427,7 +427,9 @@ def test_a_kept_ptq_group_exports_the_init_from_bytes(src, ids, tmp_path):
     run(qad_rc, log=lambda *_: None)
     report = json.loads((qad_rc.workdir / "qad_report.json").read_text())
     assert report and all(r["kept"] == "ptq" for r in report), report
-    for r in report:
+    trained = [r for r in report if r["steps"] > 0]
+    assert len(trained) == 3
+    for r in trained:
         recs = r["group_records"]
         assert recs and len(recs) == len(r["kept_per_group"])
         assert [g["kept"] for g in recs] == r["kept_per_group"]

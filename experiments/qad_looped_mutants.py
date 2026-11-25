@@ -62,6 +62,25 @@ def mutants():
             '"step_trace": [],',
             f"{unit}::test_gradient_clipping_changes_the_update_and_is_traced",
         ),
+        (
+            "M6 the PTQ fallback re-encodes the compensated weights",
+            q,
+            """        fb = {
+            name: FakeQuantLinear(
+                dequantize(inits[name]).float(),
+                inits[name],
+                None,
+                "weights",
+                "abs",
+            )
+            for name in names
+        }""",
+            """        fb = {
+            name: FakeQuantLinear(weight(name), inits[name], comps[name], "ptq")
+            for name in names
+        }""",
+            f"{TEST}::test_a_ptq_fallback_is_the_ptq_tensor_not_a_re_encoding",
+        ),
     ]
 
 

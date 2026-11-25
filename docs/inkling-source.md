@@ -1276,8 +1276,8 @@ output is not the LM head's input) and `--sequential`; `--qad-layers none` keeps
 * **Tests.** `tests/test_qad_looped.py` (CPU, the fork's tiny looped checkpoint): the exact unique-state count, the
   dedupe identity, the memory guard, the head cache, the later passes' messages and block states against a reference
   `run_program`, the group split, the pass groups, a full `hi2 quantize` (layers 0-2, loop layer 2 with two passes)
-  and its resume, the PTQ-init request unit and the steps=0 control against a PTQ run; 22 mutants of the module and
-  its groundwork are killed (QL3-QL21, QG1/QG2/QG4), plus `experiments/qad_looped_mutants.py` for the PTQ start,
+  and its resume, the PTQ-init request unit and the steps=0 control against a PTQ run; 23 mutants of the module and
+  its groundwork are killed (QL3-QL21, QG1/QG2/QG4, M6 for the exact PTQ fallback), plus `experiments/qad_looped_mutants.py` for the PTQ start,
   accumulation, clipping and the saved gradient trace.
 * **Measured on the GPU (2026-11-25, exploratory; `bpw3.5-lq0-5-new`, layers 0-5, 150 steps, 4
   expert groups, `--qad-final-kl 0`).** 6 layers in 44.6 min, 317-355 s per layer (four groups of 96
