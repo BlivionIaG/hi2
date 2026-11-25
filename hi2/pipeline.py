@@ -100,9 +100,15 @@ def read_calibration_text(path) -> str:
     parts = []
     for p in calib_paths(path):
         if p.suffix == ".jsonl":
+            # JSONL records end at LF, not at every character str.splitlines()
+            # considers a line boundary: a U+0085 or U+2028 inside a JSON string is
+            # legal and appeared in the stage-4 v2 code source, where splitlines()
+            # split a valid record and the QAD sampling failed on its first fragment.
             parts.append(
                 "\n\n".join(
-                    json.loads(ln)["text"] for ln in p.read_text().splitlines() if ln
+                    json.loads(ln)["text"]
+                    for ln in p.read_text().split("\n")
+                    if ln.strip()
                 )
             )
         else:

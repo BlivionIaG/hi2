@@ -9,6 +9,7 @@ import json
 import pytest
 
 from hi2.calib import build_mix, parse_source, read_documents
+from hi2.pipeline import read_calibration_text
 
 
 @pytest.fixture
@@ -44,6 +45,20 @@ def test_reads_text_jsonl_and_chat_sources(sources):
     assert chat.startswith("user: gamma 0\nassistant: zzz")
     assert parse_source("data/x.jsonl:2.5") == (parse_source("data/x.jsonl")[0], 2.5)
     assert parse_source("data/x.jsonl")[1] == 1.0
+
+
+def test_jsonl_reader_splits_only_on_line_feed(tmp_path):
+    """A JSON string may contain U+0085/U+2028; str.splitlines() would split the record
+    and json.loads would fail on the first fragment. The stage-4 v2 code source has a
+    U+0085 in one record, which QAD's calibration sampling hit after allocation."""
+    text = "code\x85with\u2028separators"
+    path = tmp_path / "separators.jsonl"
+    path.write_text(
+        json.dumps({"text": text}, ensure_ascii=False) + "\n"
+        + json.dumps({"text": "second"}) + "\n",
+        encoding="utf-8",
+    )
+    assert read_calibration_text(path) == text + "\n\nsecond"
 
 
 def test_shares_follow_the_weights_through_the_whole_file(sources):
