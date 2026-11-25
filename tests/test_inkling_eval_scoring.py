@@ -201,3 +201,65 @@ def test_gold_completions_score_ok_for_every_scorer():
         assert result["ok"], (item["id"], result["detail"])
         seen.add(item["scorer"])
     assert {"agentic", "code", "chrf", "qa_numeric", "qa_word", "needle", "summarize", "math"} <= seen
+
+
+def test_answer_text_uses_the_last_text_channel_not_the_thinking_preamble():
+    text = (
+        "<|message_model|><|content_thinking|>The user asks ... nine times eight is 72."
+        " Final should be 72.<|end_message|><|content_text|>72<|end_message|>"
+        "<|content_model_end_sampling|>"
+    )
+    assert scoring.answer_text(text) == "72"
+    assert scoring.last_number(text) == "72"
+    item = {"expected": {"answer": "72", "lang": "en"}}
+    assert scoring.score_qa_numeric(item, text)["ok"]
+
+
+def test_answer_text_uses_the_last_of_multiple_text_channel_blocks():
+    text = (
+        "<|content_text|>reasoning with 99<|end_message|><|message_model|>"
+        "<|content_text|>Paris<|end_message|>"
+    )
+    assert scoring.answer_text(text) == "Paris"
+    assert scoring.final_segment(text) == "Paris"
+
+
+def test_final_segment_takes_the_committed_answer_after_a_plain_preamble():
+    assert scoring.final_segment('Good. Final should be "Paris".Paris') == "Paris"
+    assert scoring.final_segment("reasoning\n\nThe answer is 18") == "The answer is 18"
+
+
+def test_qa_word_uses_the_final_segment_not_the_preamble():
+    item = {"expected": {"answers": ["blue"], "lang": "en"}}
+    completion = "The user asks what colour the sky is. Sky is blue.\n\nBlue."
+    assert scoring.final_segment(completion) == "Blue."
+    assert scoring.score_qa_word(item, completion)["ok"] is True
+
+
+def test_chrf_scores_the_answer_channel_and_ignores_a_thinking_translation():
+    item = {
+        "expected": {
+            "reference": "Der Zug fährt um sieben Uhr morgens ab.",
+            "lang": "de",
+            "min_chrf": 0.2,
+        }
+    }
+    good = (
+        "<|content_thinking|>Need translate.<|end_message|>"
+        "<|content_text|>Der Zug fährt um sieben Uhr morgens ab.<|end_message|>"
+    )
+    wrong = (
+        "<|content_thinking|>Der Zug fährt um sieben Uhr morgens ab.<|end_message|>"
+        "<|content_text|>I do not know.<|end_message|>"
+    )
+    assert scoring.score_chrf(item, good)["ok"] is True
+    assert scoring.score_chrf(item, wrong)["ok"] is False
+
+
+def test_fenced_code_ignores_inline_prose_mentions_and_truncated_blocks():
+    text = (
+        "Need exactly one ```python code block and nothing else."
+        "```python\ndef add(a, b):\n    return a + b\n```\n"
+        "A cut-off second attempt:\n```python\ndef add(a, b):\n    \"\"\"unterminated"
+    )
+    assert "return a + b" in scoring.extract_code(text, "add", "python")

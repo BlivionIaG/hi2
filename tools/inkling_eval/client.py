@@ -87,6 +87,10 @@ class Client:
             "n": 1,
             "seed": self.seed,
             "stop": self.stop,
+            # Keep <|content_thinking|>/<|content_text|>/<|end_message|> so the
+            # scorer can separate the reasoning preamble from the committed
+            # answer. vLLM defaults this to true and strips the boundary.
+            "skip_special_tokens": False,
         }
         payload = self._request("/v1/completions", body)
         choice = (payload.get("choices") or [{}])[0]

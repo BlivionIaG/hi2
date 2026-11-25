@@ -7,7 +7,7 @@ from tools.inkling_eval import mutants
 
 def test_every_scorer_mutant_is_killed():
     results = mutants.run_mutants(verbose=False)
-    assert len(results) >= 5
+    assert len(results) >= 10
     survivors = [result["name"] for result in results if not result["killed"]]
     assert not survivors, f"surviving mutants: {survivors}"
     assert all(result["by"] for result in results)

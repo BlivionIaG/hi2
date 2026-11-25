@@ -22,44 +22,95 @@ from tools.inkling_eval import sandbox
 # --------------------------------------------------------------------------- text
 
 
+TEXT_CHANNEL = re.compile(
+    r"<\|content_text\|>(.*?)(?=<\|end_message\|>|<\|message_model\|>"
+    r"|<\|content_model_end_sampling\|>|\Z)",
+    re.S,
+)
+_SPECIAL = re.compile(r"<\|[a-z_0-9]+\|>")
+
+
 def remove_thinking(text: str) -> str:
-    """Drop an Inkling thinking block, keeping the rest of the completion."""
+    """Drop Inkling thinking channels, including a truncated unterminated one."""
     text = re.sub(
-        r"<\|content_thinking\|>.*?<\|end_message\|>", " ", text, flags=re.S
+        r"<\|content_thinking\|>.*?(?:<\|end_message\|>|\Z)", " ", text, flags=re.S
     )
     if "</think>" in text:
-        text = text.rsplit("</think>", 1)[-1]
+        text = text.rsplit("", 1)[-1]
     return text
 
 
-def answer_text(text: str) -> str:
-    """The visible answer: no role markers, thinking, or message terminators."""
-    text = remove_thinking(text)
+def _clean(text: str) -> str:
     for token in (
         "<|content_model_end_sampling|>",
         "<|end_message|>",
         "<|message_model|>",
         "<|message_user|>",
         "<|message_system|>",
+        "<|content_thinking|>",
         "<|content_text|>",
     ):
         text = text.replace(token, "\n")
-    text = re.sub(r"<\|[a-z_0-9]+\|>", " ", text)
-    return text.strip()
+    return _SPECIAL.sub(" ", text).strip()
 
 
-def fenced_blocks(text: str) -> list[tuple[str, str]]:
-    """``(language, code)`` for each fenced block, including an unterminated last one."""
+def answer_text(text: str) -> str:
+    """The last Inkling ``<|content_text|>`` channel, else the cleaned fallback.
+
+    vLLM strips special tokens by default, which concatenates the reasoning
+    channel and the answer (``... should be "Paris".Paris``).  The client now
+    requests ``skip_special_tokens=false``; this function keeps the committed
+    text channel and drops thinking.  Old runs without markers still fall back
+    to the cleaned whole completion.
+    """
+    text = text or ""
+    blocks = TEXT_CHANNEL.findall(text)
+    if blocks:
+        return _clean(blocks[-1])
+    return _clean(remove_thinking(text))
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?。！？؟।])\s*")
+_TRIM = " \t\r\n\"'`*_[](){}<>«»“”"
+
+
+def final_segment(text: str) -> str:
+    """The last sentence of the last non-empty answer line.
+
+    This is the committed answer after the model's plain-text preamble, whether
+    the preamble and answer share a content channel or the preamble sits in the
+    thinking channel.  A fenced/code answer still goes through ``extract_code``.
+    """
+    body = answer_text(text)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    line = lines[-1] if lines else ""
+    parts = [part.strip() for part in _SENTENCE_END.split(line) if part.strip()]
+    segment = parts[-1] if parts else line
+    return segment.strip(_TRIM).strip()
+
+
+_FENCE = re.compile(r"```([A-Za-z0-9_+.-]*)[ \t]*\n(.*?)(```|\Z)", re.S)
+
+
+def _fenced(text: str) -> list[tuple[str, str, bool]]:
     blocks = []
-    for match in re.finditer(r"```([A-Za-z0-9_+.-]*)[ \t]*\n?(.*?)(?:```|\Z)", text, re.S):
+    for match in _FENCE.finditer(text):
         language = match.group(1).lower()
-        code = match.group(2)
         if language in ("typescript", "tsx"):
             language = "ts"
         elif language in ("javascript", "js"):
             language = "js"
-        blocks.append((language, code))
+        blocks.append((language, match.group(2), match.group(3) == "```"))
     return blocks
+
+
+def fenced_blocks(text: str) -> list[tuple[str, str]]:
+    """``(language, code)`` for each fenced block with a newline after the fence.
+
+    Requiring the newline keeps a prose mention such as ``one ```python code
+    block`` from swallowing the real block that follows.
+    """
+    return [(language, code) for language, code, _ in _fenced(text)]
 
 
 CODE_HINTS = {
@@ -70,15 +121,39 @@ CODE_HINTS = {
 
 
 def extract_code(text: str, entry: str, language: str) -> str:
-    """The block that defines ``entry``; else the largest matching block; else the text."""
+    """The last complete block defining ``entry``, else the largest complete block.
+
+    A truncated completion can end in an unterminated block; a complete earlier
+    block is better evidence than the cut-off one.  If every block is
+    unterminated, keep the largest.
+    """
     text = remove_thinking(text).replace("<|content_model_end_sampling|>", "")
     hints = CODE_HINTS[language]
-    blocks = [(lang, code) for lang, code in fenced_blocks(text) if lang in hints]
-    for _, code in blocks:
-        if re.search(rf"\b(?:def|function|int|float|double|char|void|struct)\b[^\n]*\b{re.escape(entry)}\b", code):
-            return code.strip()
+    blocks = [
+        (code, closed)
+        for lang, code, closed in _fenced(text)
+        if lang in hints
+    ]
+
+    def defines(code: str) -> bool:
+        return bool(
+            re.search(
+                rf"\b(?:def|function|int|float|double|char|void|struct)\b[^\n]*\b{re.escape(entry)}\b",
+                code,
+            )
+        )
+
+    complete = [code for code, closed in blocks if closed and defines(code)]
+    if complete:
+        return complete[-1].strip()
+    partial = [code for code, closed in blocks if defines(code)]
+    if partial:
+        return partial[-1].strip()
+    complete = [code for code, closed in blocks if closed]
+    if complete:
+        return max(complete, key=len).strip()
     if blocks:
-        return max(blocks, key=lambda pair: len(pair[1]))[1].strip()
+        return max(blocks, key=lambda pair: len(pair[0]))[0].strip()
     return text.strip()
 
 
@@ -415,17 +490,24 @@ def score_qa_numeric(item: dict, completion: str) -> dict:
 
 def score_qa_word(item: dict, completion: str) -> dict:
     variants = {normalize_word(v) for v in item["expected"]["answers"]}
-    got = normalize_word(answer_text(completion))
-    first = " ".join(got.split()[:3])
+    segment = final_segment(completion)
+    words = normalize_word(segment).split()
+    tails = {" ".join(words[index:]) for index in range(max(0, len(words) - 3), len(words))}
+    got = " ".join(words)
     return {
-        "ok": bool(got) and (got in variants or first in variants),
-        "detail": {"answer": got[:120], "expected": sorted(variants), "lang": item["expected"].get("lang")},
+        "ok": bool(words) and bool((tails | {got}) & variants),
+        "detail": {
+            "answer": got[:120],
+            "segment": segment[:160],
+            "expected": sorted(variants),
+            "lang": item["expected"].get("lang"),
+        },
     }
 
 
 def score_chrf(item: dict, completion: str) -> dict:
     expected = item["expected"]
-    body = answer_text(completion)
+    body = final_segment(completion)
     score = chrf(body, expected["reference"])
     signal = language_signal(body, expected["lang"])
     return {
@@ -459,8 +541,7 @@ def score_needle(item: dict, completion: str) -> dict:
 
 def score_summarize(item: dict, completion: str) -> dict:
     expected = item["expected"]
-    body = remove_thinking(completion)
-    body = re.sub(r"<\|[a-z_0-9]+\|>", " ", body).strip()
+    body = answer_text(completion)
     marker = None
     for match in re.finditer(r"(?is)\banswer\s*:\s*(.+)$", body):
         marker = match

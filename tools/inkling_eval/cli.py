@@ -102,7 +102,7 @@ def cmd_run(args) -> int:
         force=args.force,
         progress_every=args.progress_every,
     )
-    return 0 if summary["missing"] == 0 and summary["errors"] == 0 else 1
+    return 0 if summary["reliable"] else 1
 
 
 def _dry_run_assertions(plan: dict, summary: dict, out: Path) -> list[str]:

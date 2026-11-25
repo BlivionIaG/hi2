@@ -108,6 +108,55 @@ def _probe_required(module) -> None:
     assert any("unit" in error for error in errors), errors
 
 
+def _probe_channel(module) -> None:
+    text = (
+        "<|content_thinking|>preamble saying 99<|end_message|>"
+        "<|content_text|>72<|end_message|>"
+    )
+    assert module.answer_text(text) == "72", module.answer_text(text)
+
+
+def _probe_last_channel(module) -> None:
+    text = (
+        "<|content_text|>reasoning with 99<|end_message|><|message_model|>"
+        "<|content_text|>Paris<|end_message|>"
+    )
+    assert module.answer_text(text) == "Paris", module.answer_text(text)
+
+
+def _probe_final_segment(module) -> None:
+    assert module.final_segment('Final should be "Paris".Paris') == "Paris"
+
+
+def _probe_fence(module) -> None:
+    text = (
+        "Need exactly one ```python code block and nothing else."
+        "```python\ndef add(a, b):\n    return a + b\n```"
+    )
+    code = module.extract_code(text, "add", "python")
+    assert "return a + b" in code, code
+
+
+def _probe_truncation_gate(module) -> None:
+    records = {
+        f"agentic-{index}": {
+            "category": "agentic",
+            "status": "truncated" if index < 2 else "complete",
+        }
+        for index in range(20)
+    }
+    summary = module.truncation_summary(records, {"agentic": {"items": 20}})
+    assert summary["failed"] == ["agentic"], summary
+
+
+def _probe_truncation_by_finish_reason(module) -> None:
+    records = {
+        "agentic-0": {"category": "agentic", "status": "complete", "finish_reason": "length"}
+    }
+    summary = module.truncation_summary(records, {"agentic": {"items": 1}})
+    assert summary["by_category"]["agentic"]["truncated"] == 1, summary
+
+
 def _probe_python(module) -> None:
     good = module.run_python("def add(a, b):\n    return a + b\n", "assert add(1, 2) == 3\nprint('OK')")
     bad = module.run_python("def add(a, b):\n    return a - b\n", "assert add(1, 2) == 3\nprint('OK')")
@@ -152,6 +201,48 @@ MUTANTS = [
         _probe_required,
     ),
     (
+        "thinking_preamble_kept",
+        "scoring.py",
+        "    if blocks:\n        return _clean(blocks[-1])",
+        "    if blocks:\n        return _clean(text)",
+        _probe_channel,
+    ),
+    (
+        "first_text_channel",
+        "scoring.py",
+        "    if blocks:\n        return _clean(blocks[-1])",
+        "    if blocks:\n        return _clean(blocks[0])",
+        _probe_last_channel,
+    ),
+    (
+        "final_segment_whole_line",
+        "scoring.py",
+        "    segment = parts[-1] if parts else line",
+        "    segment = line",
+        _probe_final_segment,
+    ),
+    (
+        "fence_accepts_inline_mention",
+        "scoring.py",
+        'r"```([A-Za-z0-9_+.-]*)[ \\t]*\\n(.*?)(```|\\Z)"',
+        'r"```([A-Za-z0-9_+.-]*)[ \\t]*\\n?(.*?)(```|\\Z)"',
+        _probe_fence,
+    ),
+    (
+        "truncation_gate_disabled",
+        "runner.py",
+        "        gate_failed = rate > TRUNCATION_GATE",
+        "        gate_failed = False",
+        _probe_truncation_gate,
+    ),
+    (
+        "truncation_counts_only_status",
+        "runner.py",
+        '            if record.get("status") == "truncated" or record.get("finish_reason") == "length":',
+        '            if record.get("status") == "truncated":',
+        _probe_truncation_by_finish_reason,
+    ),
+    (
         "python_failure_passes",
         "sandbox.py",
         '    result["language"] = "python"\n'
@@ -169,8 +260,11 @@ MUTANTS = [
 
 
 def run_mutants(verbose: bool = True) -> list[dict]:
-    original_scoring = _load("mutant_original_scoring", HERE / "scoring.py")
-    original_sandbox = _load("mutant_original_sandbox", HERE / "sandbox.py")
+    originals = {
+        "scoring.py": _load("mutant_original_scoring", HERE / "scoring.py"),
+        "sandbox.py": _load("mutant_original_sandbox", HERE / "sandbox.py"),
+        "runner.py": _load("mutant_original_runner", HERE / "runner.py"),
+    }
     results = []
     scratch = Path.home() / ".cache" / "inkling-eval"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -178,7 +272,7 @@ def run_mutants(verbose: bool = True) -> list[dict]:
         root = Path(tmp)
         for name, source_file, old, new, probe in MUTANTS:
             try:
-                probe(original_scoring if source_file == "scoring.py" else original_sandbox)
+                probe(originals[source_file])
             except Exception as error:  # noqa: BLE001
                 raise SystemExit(f"{name}: the probe does not hold on the original: {error}")
             module = _mutated(name, source_file, old, new, root)

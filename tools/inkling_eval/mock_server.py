@@ -52,6 +52,7 @@ class _Handler(BaseHTTPRequestHandler):
     answers: dict[str, str] = {}
     model: str = "canned-inkling"
     max_model_len: int = 32768
+    finish_reason: str = "stop"
 
     def log_message(self, *args):  # quiet
         pass
@@ -106,7 +107,12 @@ class _Handler(BaseHTTPRequestHandler):
                 "created": 0,
                 "model": self.model,
                 "choices": [
-                    {"index": 0, "text": completion, "finish_reason": "stop", "logprobs": None}
+                    {
+                        "index": 0,
+                        "text": completion,
+                        "finish_reason": self.finish_reason,
+                        "logprobs": None,
+                    }
                 ],
                 "usage": {
                     "prompt_tokens": max(1, len(prompt) // 4),
@@ -117,12 +123,29 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
 
-def serve(answers: dict[str, str], *, model: str = "canned-inkling", max_model_len: int = 32768, host: str = "127.0.0.1", port: int = 0):
-    """Start the server on a thread; returns ``(server, thread, url)``."""
+def serve(
+    answers: dict[str, str],
+    *,
+    model: str = "canned-inkling",
+    max_model_len: int = 32768,
+    finish_reason: str = "stop",
+    host: str = "127.0.0.1",
+    port: int = 0,
+):
+    """Start the server on a thread; returns ``(server, thread, url)``.
+
+    ``finish_reason="length"`` turns every canned reply into a truncation, which
+    the runner must count separately from a wrong answer.
+    """
     handler = type(
         "CannedHandler",
         (_Handler,),
-        {"answers": dict(answers), "model": model, "max_model_len": max_model_len},
+        {
+            "answers": dict(answers),
+            "model": model,
+            "max_model_len": max_model_len,
+            "finish_reason": finish_reason,
+        },
     )
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True

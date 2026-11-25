@@ -26,6 +26,47 @@ server needs `max_model_len >= 32768` for them.
 The harness probes `/v1/models`; a length that does not fit is skipped and
 recorded in the run meta, never silently scored.
 
+### Answer channels, budgets and truncation
+
+The live run on 2026-11-25 exposed two measurement bugs. First, vLLM's
+`/v1/completions` defaults `skip_special_tokens=true`, which stripped
+`<|content_thinking|>`, `<|content_text|>` and `<|end_message|>`; the reasoning
+preamble was then concatenated with the answer (`... should be "Paris".Paris`).
+The client now sends `skip_special_tokens=false` and records it in the meta.
+`answer_text` keeps the **last** `<|content_text|>` channel and drops thinking;
+`final_segment` takes the last sentence of that channel's last non-empty line.
+A completion without markers (older runs or a server that strips anyway) falls
+back to the cleaned whole text, so extraction is still defined.
+
+Second, the budgets assumed the model answered immediately. The model writes a
+reasoning preamble even at thinking effort 0, so many tasks hit `max_tokens`.
+Budgets now cover the preamble plus the answer. They were sized from the 735
+completed items of the stock/stock2/hi2-v1 runs (`p99` of completion tokens for
+items that stopped before their old budget; censored tasks marked *):
+
+| task | budget | evidence |
+| --- | ---: | --- |
+| agentic | 384 | p99 189; 6/180 truncated at 200 |
+| code (Py/C/TS) | 1024 | p99 506; 83/120 truncated at 512 |
+| translation | 384 | p99 156; 7/84 truncated at 160 |
+| qa_numeric | 512 | * 0/84 stopped at 32 |
+| qa_word | 512 | * 0/42 stopped at 24 |
+| single/multi needle | 1024 | * 0/72 stopped at 48 |
+| summarize-then-answer | 1024 | * only 4/9 stopped at 320 |
+| math | 1024 | p99 464; 14/144 truncated at 512 |
+
+The rule is `min(1024, ceil(2 * p99 / 128) * 128)`; censored short-answer QA
+gets 512, censored long-context tasks get the 1024 cap. A later
+`max_tokens=1024` probe can tighten this, but do not lower a budget below a
+proven p99 without checking the truncation gate.
+
+`finish_reason == "length"` is now its own record status, `truncated`: it is
+excluded from accuracy and from `wrong`, retried on resume, and reported per
+category. **More than 5% truncated items in any category makes a run
+unreliable**: `run` exits 1 even when every item returned, and `compare` sets
+`status: truncated`, prints the failed categories and refuses to present the
+deltas as interpretable. The pair set excludes truncated items.
+
 The three code languages are real executions: Python under `python -I -S`, C
 compiled with the system `cc`/`gcc`, TypeScript run by `node` (22.6+ native type
 stripping), `bun`, `deno`, `qjs`, or the Python `quickjs` module. The latter two
@@ -46,18 +87,22 @@ container as well. The scratch directory is `~/.cache/inkling-eval/tmp`
   to `/v1/completions`. Server-side template versions cannot change the prompt,
   and `tests/test_inkling_eval_template.py` checks the transcription against the
   real Jinja template byte for byte when one is available.
-* `temperature=0`, `top_p=1`, `n=1`, `seed=0`, `reasoning_effort=0.0` (thinking
-  off). Pass the same `--reasoning-effort` to both endpoints; it is recorded in
-  the meta and compared.
+* `temperature=0`, `top_p=1`, `n=1`, `seed=0`, `reasoning_effort=0.0`,
+  `skip_special_tokens=false`. Thinking effort 0 does not stop the model from
+  writing a reasoning preamble; the channel-aware extraction handles it. Pass
+  the same `--reasoning-effort` to both endpoints; it is recorded in the meta
+  and compared.
 * Every item is one JSONL line: rendered prompt, prompt SHA-256, completion,
   finish reason, usage, latency, score and score detail. A torn final line is
   repaired on the next run.
 * Rerunning the same command resumes: complete items with the same prompt hash
-  are skipped; missing, errored or changed items are redone. A different label,
-  URL, plan, seed, template or haystack refuses to resume (`--force` overrides).
-* Exit codes: `0` only when every requested item completed; `1` for an incomplete
-  run/comparison; `2` for invalid arguments or a resume mismatch. A wrong answer
-  is a completed measurement and still exits `0`.
+  are skipped; missing, errored, changed or truncated items are redone. A
+  different label, URL, plan, seed, template, haystack or decoding setting
+  refuses to resume (`--force` overrides).
+* Exit codes: `0` only when every requested item completed with no category over
+  the 5% truncation gate; `1` for an incomplete/unreliable run or comparison;
+  `2` for invalid arguments or a resume mismatch. A wrong answer is a completed
+  measurement and still exits `0`.
 
 The model's language-ID guard is a documented heuristic: script share for
 Russian, Chinese, Japanese, Korean, Arabic and Hindi; function-word hits or
@@ -67,11 +112,12 @@ characteristic diacritics for the eight Latin-script languages. It returns
 
 ## Report and minimum detectable difference
 
-`compare` pairs the items both runs completed and reports, per category and per
-task: accuracy of both, the delta, a paired percentile bootstrap 95% CI (10,000
-replicates over the discordant counts), the exact McNemar p, the flip counts and
-the minimum detectable difference (MDD) at 80% power and α = 0.05. It also
-recomputes the MDD from the observed discordance once a real run exists.
+`compare` pairs the non-truncated items both runs completed and reports, per
+category and per task: truncation counts, accuracy of both, the delta, a paired
+percentile bootstrap 95% CI (10,000 replicates over the discordant counts), the
+exact McNemar p, the flip counts and the minimum detectable difference (MDD) at
+80% power and α = 0.05. It also recomputes the MDD from the observed
+discordance once a real run exists.
 
 The item counts support these differences at 80% power and α = 0.05 with the
 report's default 10% discordance assumption (`mdd_assumed_0.10`); `mdd`
@@ -87,6 +133,12 @@ point grid used by `stats.mdd`:
 | long_context | 27 | 27.0 points |
 | math | 48 | 16.0 points |
 | all items pooled | 245 | 6.0 points |
+
+This table is the **best case, with zero truncated items and the full n**. A
+truncated item leaves the paired denominator, so the realized MDD is the
+report's `mdd` at the reduced n; a run that fails the truncation gate has no
+interpretable MDE at all. Re-check the MDD after a clean rerun, not from a
+truncated run.
 
 Per-task claims inside a category are weaker: the agentic scenarios and the
 multilingual languages have 5 and 5 items each, so a per-task claim needs several
@@ -126,18 +178,27 @@ or other package is needed at evaluation time.
 Two slots (stock on 18731, quantized on 18732), from the eval checkout:
 
 ```bash
-$EVAL run --url http://127.0.0.1:18731 --label stock       --out runs/eval-stock.jsonl  --workers 4
-$EVAL run --url http://127.0.0.1:18732 --label hi2-3.5bpw --out runs/eval-hi2.jsonl    --workers 4
-$EVAL run --url http://127.0.0.1:18731 --label stock2      --out runs/eval-stock2.jsonl --workers 4
-$EVAL compare --ref runs/eval-stock.jsonl --cand runs/eval-hi2.jsonl \
-    --floor runs/eval-stock2.jsonl \
-    --out runs/eval-compare.json --md runs/eval-compare.md
+$EVAL run --url http://127.0.0.1:18731 --label stock-v2   --out runs/eval-stock-v2.jsonl  --workers 4
+$EVAL run --url http://127.0.0.1:18732 --label hi2v2      --out runs/eval-hi2v2.jsonl     --workers 4
+$EVAL run --url http://127.0.0.1:18731 --label stock2-v2  --out runs/eval-stock2-v2.jsonl --workers 4
+$EVAL compare --ref runs/eval-stock-v2.jsonl --cand runs/eval-hi2v2.jsonl \
+    --floor runs/eval-stock2-v2.jsonl \
+    --out runs/cmp-hi2v2.json --md runs/cmp-hi2v2.md
 ```
 
 One slot at a time: run stock, stop the stock server, serve the quantized
-checkpoint on the same port and run with `--label hi2-3.5bpw --out
-runs/eval-hi2.jsonl`. Then restart stock for the floor run. Use a new `--out`
-per label; the harness refuses to mix configurations in one file.
+checkpoint on the same port and run with `--label hi2v2 --out
+runs/eval-hi2v2.jsonl`. Then restart stock for the floor run. Use a new `--out`
+per label; the harness refuses to mix configurations in one file. The 2026-11-25
+files (`eval-stock.jsonl`, `eval-hi2v1.jsonl`, ...) used the old stripping and
+budgets; they are historical and `compare` rejects them on the decoding meta.
+
+Plan identity: `plan_sha256` is
+`48c05915e7c0c6ad56d81cefc70ce712dde07f2def674efd73826d35ee652eb7`;
+`prompt_set_sha256` is
+`bcafe0f05bec3262e312b3c110d6900ab9a0f95b936838aaa91d018cfd9274c8`, exactly the
+old plan hash. The 245 ids, prompts and expected values are unchanged; the new
+plan hash differs only because `max_tokens` is now part of the item hash.
 
 Serve the model with at least 32,768 tokens of context
 (`vllm ... --max-model-len 32768`) so the 32k items fit; the harness skips and
@@ -145,10 +206,11 @@ records longer contexts it cannot reach. Keep `--reasoning-effort 0.0` on both
 labels. Concurrency `--workers 4` is the intended ceiling: the served model is
 small-context, and more parallel long prompts only queue.
 
-Expected runtime **[INFERENCE]**: about 15–40 minutes per label at `--workers 4`
-(218 short items dominate the count; the 27 long items dominate the time at
-8k–30k prompt tokens each). Three labels plus comparison fit comfortably inside
-2–3 hours. Runs are resumable, so a lease end only costs the unfinished items.
+Expected runtime **[INFERENCE]**: about 20–50 minutes per label at `--workers 4`
+with the new budgets (the previous HI2 run took 12 minutes; code, math and the
+27 long items can now decode up to 1024 tokens instead of 48–512). Three labels
+plus comparison fit inside 2–3 hours; watch the `truncated` counts in the log and
+the gate in the summary. Runs are resumable, so a lease end only costs the unfinished items.
 `usage.prompt_tokens` in the JSONL is the real token count; use it to sanity
 check the estimate.
 
@@ -159,12 +221,16 @@ meta comparable.
 ## Reading the report
 
 `compare` prints and writes a short table; the JSON has the same numbers plus
-per-task rows and the full checks. `status` is `complete` only when both runs
-completed their whole plan and the metadata matches. `pairing` reports items
-present in only one run. Undefined statistics are `null`, never `NaN`.
+per-task rows, the per-category truncation gate and the full checks. `status` is
+`complete` only when both runs accounted for every item (complete or truncated),
+no category exceeded 5% truncation and the metadata matches. `status: truncated` means the run is
+**unreliable**: the table still shows what was measured, but the warning says
+not to interpret it. `pairing` reports items present in only one run and the
+truncated totals. Undefined statistics are `null`, never `NaN`.
 
-A useful result has: `status: complete`, a floor run with small deltas, and a
-quantized delta whose paired CI excludes the floor. The report itself does not
+A useful result has: `status: complete` (so every item is accounted for and
+truncation is at most 5% in every category), a floor run with small deltas, and a quantized delta whose paired CI
+excludes the floor. The report itself does not
 gate quality; set acceptance separately.
 
 ## Data and licences

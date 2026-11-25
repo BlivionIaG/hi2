@@ -29,6 +29,30 @@ PIECE = re.compile(r"[A-Za-z]{1,6}|\d|[^\w\s]")  # about one Inkling token each
 FILL = 0.9
 RESERVE = 300
 CATEGORIES = ("agentic", "code", "multilingual", "long_context", "math")
+# Completion budgets cover the model's plain-text reasoning preamble plus the
+# final answer.  Measured on 2026-11-25 over stock, stock2 and hi2-v1 (735
+# completions): p99 completion tokens of items that stopped before their old
+# budget were agentic 189/384, code 506/512, translation 156/160, math 464/512;
+# qa_numeric (0/84 stopped at 32), qa_word (0/42 at 24) and both needle tasks
+# (0/72 at 48) never stopped, and summarize was 4/9 at 320, so those p99 are
+# censored.  Rule: min(1024, ceil(2 * p99 / 128) * 128); censored short-answer QA
+# gets 512 and censored long-context/summarize tasks get the 1024 cap.  A later
+# max_tokens=1024 probe can tighten this; do not lower a budget below a proven
+# p99 without checking the truncation gate.
+MAX_TOKENS = 1024
+BUDGETS = {
+    ("agentic", "*"): 384,
+    ("code", "*"): 1024,
+    ("multilingual", "translation"): 384,
+    ("multilingual", "qa_numeric"): 512,
+    ("multilingual", "qa_word"): 512,
+    ("long_context", "*"): 1024,
+    ("math", "*"): 1024,
+}
+
+
+def budget_for(category: str, subcategory: str) -> int:
+    return BUDGETS.get((category, subcategory), BUDGETS.get((category, "*"), MAX_TOKENS))
 TEMPLATE_ID = "inkling2-mini chat_template.jinja transcription v1"
 SYSTEM = {
     "role": "system",
@@ -407,7 +431,7 @@ def _agentic_items(reasoning_effort: float) -> list[dict]:
                 "category": "agentic",
                 "subcategory": scenario.__name__.lstrip("_"),
                 "scorer": "agentic",
-                "max_tokens": 200,
+                "max_tokens": budget_for("agentic", scenario.__name__.lstrip("_")),
                 "prompt": prompt,
                 "expected": {"name": expected["name"], "args": expected["args"], "tools": tools},
                 "gold": gold,
@@ -436,7 +460,7 @@ def _code_items(reasoning_effort: float) -> list[dict]:
                 "category": "code",
                 "subcategory": "python_humaneval",
                 "scorer": "code",
-                "max_tokens": 512,
+                "max_tokens": budget_for("code", "python_humaneval"),
                 "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                 "expected": {
                     "language": "python",
@@ -463,7 +487,7 @@ def _code_items(reasoning_effort: float) -> list[dict]:
                 "category": "code",
                 "subcategory": "python_mbpp",
                 "scorer": "code",
-                "max_tokens": 512,
+                "max_tokens": budget_for("code", "python_mbpp"),
                 "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                 "expected": {
                     "language": "python",
@@ -487,7 +511,7 @@ def _code_items(reasoning_effort: float) -> list[dict]:
                 "category": "code",
                 "subcategory": "c",
                 "scorer": "code",
-                "max_tokens": 512,
+                "max_tokens": budget_for("code", "c"),
                 "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                 "expected": {
                     "language": "c",
@@ -512,7 +536,7 @@ def _code_items(reasoning_effort: float) -> list[dict]:
                 "category": "code",
                 "subcategory": "typescript",
                 "scorer": "code",
-                "max_tokens": 512,
+                "max_tokens": budget_for("code", "typescript"),
                 "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                 "expected": {
                     "language": "typescript",
@@ -545,7 +569,7 @@ def _multilingual_items(reasoning_effort: float) -> list[dict]:
                     "category": "multilingual",
                     "subcategory": "translation",
                     "scorer": "chrf",
-                    "max_tokens": 160,
+                    "max_tokens": budget_for("multilingual", "translation"),
                     "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                     "expected": {"reference": reference, "lang": lang, "min_chrf": 0.2},
                     "gold": reference,
@@ -562,7 +586,7 @@ def _multilingual_items(reasoning_effort: float) -> list[dict]:
                         "category": "multilingual",
                         "subcategory": "qa_numeric",
                         "scorer": "qa_numeric",
-                        "max_tokens": 32,
+                        "max_tokens": budget_for("multilingual", "qa_numeric"),
                         "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                         "expected": {"answer": spec["answer"], "lang": lang},
                         "gold": spec["answer"],
@@ -577,7 +601,7 @@ def _multilingual_items(reasoning_effort: float) -> list[dict]:
                         "category": "multilingual",
                         "subcategory": "qa_word",
                         "scorer": "qa_word",
-                        "max_tokens": 24,
+                        "max_tokens": budget_for("multilingual", "qa_word"),
                         "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                         "expected": {"answers": answers, "lang": lang},
                         "gold": answers[0],
@@ -659,7 +683,7 @@ def _long_context_items(contexts, seed: int, reasoning_effort: float) -> list[di
                     "category": "long_context",
                     "subcategory": "single_needle",
                     "scorer": "needle",
-                    "max_tokens": 48,
+                    "max_tokens": budget_for("long_context", "single_needle"),
                     "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                     "expected": {"value": value, "distractors": []},
                     "gold": value,
@@ -696,7 +720,7 @@ def _long_context_items(contexts, seed: int, reasoning_effort: float) -> list[di
                     "category": "long_context",
                     "subcategory": "multi_needle",
                     "scorer": "needle",
-                    "max_tokens": 48,
+                    "max_tokens": budget_for("long_context", "multi_needle"),
                     "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                     "expected": {"value": asked_value, "distractors": distractors},
                     "gold": asked_value,
@@ -721,7 +745,7 @@ def _long_context_items(contexts, seed: int, reasoning_effort: float) -> list[di
                 "category": "long_context",
                 "subcategory": "summarize_then_answer",
                 "scorer": "summarize",
-                "max_tokens": 320,
+                "max_tokens": budget_for("long_context", "summarize_then_answer"),
                 "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                 "expected": {"answer": "Team Cedar", "summary_max_words": 60},
                 "gold": (
@@ -754,7 +778,7 @@ def _math_items(reasoning_effort: float) -> list[dict]:
                 "category": "math",
                 "subcategory": "gsm8k",
                 "scorer": "math",
-                "max_tokens": 512,
+                "max_tokens": budget_for("math", "gsm8k"),
                 "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                 "expected": {"answer": answer},
                 "gold": f"The answer is {answer}.",
@@ -773,7 +797,7 @@ def _math_items(reasoning_effort: float) -> list[dict]:
                 "category": "math",
                 "subcategory": "authored",
                 "scorer": "math",
-                "max_tokens": 512,
+                "max_tokens": budget_for("math", "authored"),
                 "prompt": chat_template.user_prompt(prompt, reasoning_effort=reasoning_effort),
                 "expected": {"answer": answer},
                 "gold": f"The answer is {answer}.",
@@ -833,9 +857,20 @@ def build_plan(
                 kept.append(item)
         items = kept
     items.sort(key=lambda item: item["id"])
-    plan_sha = sha256_text(
+    # The prompt-only hash proves a budget-only plan change did not alter the
+    # item set or any prompt: it is the plan hash used before budgets were added.
+    prompt_set_sha = sha256_text(
         json.dumps(
             [{"id": item["id"], "prompt": item["prompt_sha256"]} for item in items],
+            sort_keys=True,
+        )
+    )
+    plan_sha = sha256_text(
+        json.dumps(
+            [
+                {"id": item["id"], "prompt": item["prompt_sha256"], "max_tokens": item["max_tokens"]}
+                for item in items
+            ],
             sort_keys=True,
         )
     )
@@ -859,6 +894,7 @@ def build_plan(
             "reasoning_effort": reasoning_effort,
             "template": TEMPLATE_ID,
             "plan_sha256": plan_sha,
+            "prompt_set_sha256": prompt_set_sha,
             "haystack_sha256": haystack_sha256() if "long_context" in wanted else None,
             "counts": by_category,
             "limit": limit,

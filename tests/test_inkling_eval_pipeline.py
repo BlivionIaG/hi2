@@ -21,6 +21,8 @@ def test_plan_is_deterministic_and_covers_all_five_categories():
     contexts = {item["meta"]["length"] for item in first["items"] if item["category"] == "long_context"}
     assert contexts == {8192, 16384, 32768}
     assert max(item["approx_prompt_tokens"] for item in first["items"]) < 32768
+    # The 2026-11-25 budget change must not touch the 245 ids or prompts.
+    assert first["meta"]["prompt_set_sha256"] == "bcafe0f05bec3262e312b3c110d6900ab9a0f95b936838aaa91d018cfd9274c8"
 
 
 def test_mdd_is_defined_only_when_the_item_count_can_support_it():
@@ -134,6 +136,8 @@ def test_runner_resumes_and_redoes_a_changed_prompt(tmp_path):
         first = runner.run_plan(plan, client, out, label="canned", workers=2, progress_every=100)
         assert first["requested"] == len(plan["items"]) == first["complete"]
         assert first["errors"] == 0 and first["missing"] == 0
+        meta = json.loads((tmp_path / "run.jsonl.meta.json").read_text())
+        assert meta["decoding"]["skip_special_tokens"] is False
         second = runner.run_plan(plan, client, out, label="canned", workers=2, progress_every=100)
         assert second["requested"] == 0 and second["skipped_complete"] == len(plan["items"])
         lines = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
@@ -206,3 +210,131 @@ def test_missing_run_file_is_an_error_not_an_empty_run(tmp_path, capsys):
     )
     assert "run file not found" in capsys.readouterr().err
     assert not (tmp_path / "cmp.json").exists()
+
+
+def test_truncated_items_are_counted_separately_and_fail_the_gate(tmp_path):
+    plan = _limited_plan()
+    answers = {mock_server.prompt_key(item["prompt"]): item["gold"] for item in plan["items"]}
+    server, thread, url = mock_server.serve(answers, finish_reason="length")
+    try:
+        out = tmp_path / "trunc.jsonl"
+        client = Client(url, "canned", timeout=30, retries=0)
+        first = runner.run_plan(plan, client, out, label="trunc", workers=2, progress_every=100)
+        assert first["truncated"] == 5
+        assert first["complete"] == 0 and first["wrong"] == 0
+        assert first["reliable"] is False
+        assert set(first["truncation"]["failed"]) == set(tasks.CATEGORIES)
+        report = compare.compare(out, out)
+        assert report["status"] == "truncated"
+        assert report["truncation"]["unreliable"] is True
+        assert report["categories"]["agentic"]["n"] == 0
+        assert report["categories"]["agentic"]["truncated_ref"] == 1
+        assert "UNRELIABLE" in compare.markdown(report)
+        assert "do not interpret" in compare.markdown(report)
+        second = runner.run_plan(plan, client, out, label="trunc", workers=2, progress_every=100)
+        assert second["requested"] == 5
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_truncation_gate_is_strictly_above_five_percent():
+    records = {
+        f"agentic-{index}": {
+            "category": "agentic",
+            "status": "truncated" if index == 0 else "complete",
+        }
+        for index in range(20)
+    }
+    summary = runner.truncation_summary(records, {"agentic": {"items": 20}})
+    assert summary["by_category"]["agentic"]["rate"] == 0.05
+    assert summary["reliable"] is True
+    records["agentic-1"]["status"] = "truncated"
+    summary = runner.truncation_summary(records, {"agentic": {"items": 20}})
+    assert summary["failed"] == ["agentic"]
+    assert summary["reliable"] is False
+
+
+def test_legacy_length_records_are_excluded_even_with_complete_status(tmp_path):
+    ref = tmp_path / "legacy.jsonl"
+    oks = {f"math-{index:02d}": True for index in range(20)}
+    _write_run(ref, "legacy", oks)
+    lines = [json.loads(line) for line in ref.read_text().splitlines()]
+    lines[0]["finish_reason"] = "length"
+    ref.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    report = compare.compare(ref, ref)
+    assert report["status"] == "complete"
+    assert report["ref"]["truncated"] == 1
+    assert report["ref"]["complete"] == 19
+    assert report["pairing"]["paired"] == 19
+    assert report["truncation"]["ref"]["by_category"]["math"]["truncated"] == 1
+    lines[1]["finish_reason"] = "length"
+    ref.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    report = compare.compare(ref, ref)
+    assert report["status"] == "truncated"
+
+
+def test_cli_run_exit_follows_the_truncation_gate(tmp_path, monkeypatch):
+    class FakeClient:
+        finish_reason = "length"
+
+        def __init__(self, *args, **kwargs):
+            self.url = "http://fake"
+
+        def max_model_len(self):
+            return 32768
+
+        def model_name(self):
+            return "fake"
+
+        def complete(self, prompt, max_tokens):
+            return {"text": "x", "finish_reason": self.finish_reason, "usage": {}}
+
+    monkeypatch.setattr(cli, "Client", FakeClient)
+    assert (
+        cli.main(
+            [
+                "run",
+                "--url",
+                "http://fake",
+                "--label",
+                "truncated",
+                "--out",
+                str(tmp_path / "gate.jsonl"),
+                "--limit",
+                "1",
+            ]
+        )
+        == 1
+    )
+    FakeClient.finish_reason = "stop"
+    assert (
+        cli.main(
+            [
+                "run",
+                "--url",
+                "http://fake",
+                "--label",
+                "complete",
+                "--out",
+                str(tmp_path / "ok.jsonl"),
+                "--limit",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+
+def test_client_requests_special_tokens(monkeypatch):
+    client = Client("http://example.invalid", "m")
+    captured = {}
+
+    def fake_request(path, body=None):
+        captured.update(body or {})
+        return {"choices": [{"text": "x", "finish_reason": "stop"}], "usage": {}}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    client.complete("prompt", 16)
+    assert captured["skip_special_tokens"] is False
