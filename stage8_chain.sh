@@ -228,7 +228,7 @@ eval_try() {
   local out=$PRE/eval_$L.json
   rm -f "$out"
   run_gpu "preflight_eval_$L" "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-    --dst "$OLD" --ids "$PRE/window_$L.npy" --windows 1 \
+    --src "$SRC" --dst "$OLD" --ids "$PRE/window_$L.npy" --windows 1 \
     --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
     --batch-windows 1 --position-buckets "$POSITION_BUCKETS" --out "$out"
 }
@@ -371,7 +371,7 @@ if [[ "$SKIP_EVAL" != "1" ]]; then
     log "reusing eval/old_heldout.json"
   else
     run_gpu eval_old_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-      --dst "$OLD" --ids "$EVAL_IDS" --windows 0 --split heldout \
+      --src "$SRC" --dst "$OLD" --ids "$EVAL_IDS" --windows 0 --split heldout \
       --devices cuda:0 cuda:1 --compute-dtype float32 \
       --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets "$POSITION_BUCKETS" \
       --out "$OUT/eval/old_heldout.json" || { REASON=eval-old-failed; exit 1; }
@@ -380,7 +380,7 @@ if [[ "$SKIP_EVAL" != "1" ]]; then
     log "reusing eval/new_heldout.json"
   else
     run_gpu eval_new_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-      --dst "$NEW" --ids "$EVAL_IDS" --windows 0 --split heldout \
+      --src "$SRC" --dst "$NEW" --ids "$EVAL_IDS" --windows 0 --split heldout \
       --devices cuda:0 cuda:1 --compute-dtype float32 \
       --groups none --batch-windows "$BATCH_WINDOWS" --position-buckets "$POSITION_BUCKETS" \
       --out "$OUT/eval/new_heldout.json" || { REASON=eval-new-failed; exit 1; }
@@ -391,7 +391,7 @@ if [[ "$SKIP_OOD" != "1" ]]; then
     log "reusing eval/old_ood.json"
   else
     run_gpu eval_old_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-      --dst "$OLD" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
+      --src "$SRC" --dst "$OLD" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
       --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
       --batch-windows 1 --position-buckets "$POSITION_BUCKETS" --out "$OUT/eval/old_ood.json" || {
         REASON=eval-old-ood-failed; exit 1; }
@@ -400,7 +400,7 @@ if [[ "$SKIP_OOD" != "1" ]]; then
     log "reusing eval/new_ood.json"
   else
     run_gpu eval_new_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
-      --dst "$NEW" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
+      --src "$SRC" --dst "$NEW" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
       --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
       --batch-windows 1 --position-buckets "$POSITION_BUCKETS" --out "$OUT/eval/new_ood.json" || {
         REASON=eval-new-ood-failed; exit 1; }
