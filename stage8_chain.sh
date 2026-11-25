@@ -130,13 +130,15 @@ Inputs: same stages 1-4 allocation (target-bpw 3.5, same include/exclude/candida
   first 256 x 2048), 13.67 GiB. New = stage8/runs/bpw3.5-v2, 3.5 bpw, only the
   calibration text changed. Size gate: the new output directory is within +-1%
   of 13.67 GiB.
-Held-out: stage-4 v2 no-copyleft: 8 heldout sets, 48 windows, 32K tokens, one
-  held-out example per set. First 32 windows in file order are scored (SUB=32).
+Held-out: stage-4 v2 no-copyleft: 8 heldout sets, 48 windows (six per set),
+  32K tokens. Pooled KL uses the first 32 windows in sorted set order (SUB=32);
+  the category gate uses ALL 48 windows so every one of the 8 categories is gated.
   Float32 evaluation of the old and new student, same window indices.
 Metric: delta = new KL - old KL per held-out window.
   pooled improves only if mean(delta) < -1.0 * sem(delta),
     sem = sd(delta, ddof=1) / sqrt(n).
-  category gate: for each of the 8 held-out categories, mean(delta) <= 1.0 * sem(delta).
+  category gate: for each of the 8 held-out categories over all its windows,
+    mean(delta) <= 1.0 * sem(delta).
     The category sem is the paired sem of the windows in that category.
   A category worsens when delta > sem. Any worsening category keeps the old PTQ.
   The gate uses the numbers as found; never recomputed after seeing results.

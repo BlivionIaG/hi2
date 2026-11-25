@@ -152,9 +152,14 @@ def _pool_rows(rows: dict, field: str) -> dict:
 def compare(
     old_heldout: dict, new_heldout: dict, old_ood=None, new_ood=None, windows: int = 0
 ) -> dict:
-    held = _pair_rows(old_heldout, new_heldout, limit=windows)
-    categories = _pool_rows(held, "category")
-    languages = _pool_rows(held, "language")
+    all_held = _pair_rows(old_heldout, new_heldout, limit=0)
+    held = (
+        _pair_rows(old_heldout, new_heldout, limit=windows)
+        if windows and windows > 0
+        else all_held
+    )
+    categories = _pool_rows(all_held, "category")
+    languages = _pool_rows(all_held, "language")
     pooled = _stats(
         np.asarray(sum((r["_old"] for r in held.values()), [])),
         np.asarray(sum((r["_new"] for r in held.values()), [])),

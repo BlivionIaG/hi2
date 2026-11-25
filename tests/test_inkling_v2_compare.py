@@ -90,6 +90,8 @@ def test_compare_limit_keeps_the_first_windows_in_sorted_set_order():
     assert set(r["sets"]) == {"a", "b"}
     assert r["sets"]["a"]["windows"] == 2
     assert r["sets"]["b"]["windows"] == 1
+    assert r["categories"]["code"]["windows"] == 2
+    assert r["categories"]["math"]["windows"] == 2
 
 
 def test_update_run_json_adds_the_calibration_meta(tmp_path: Path):
