@@ -128,7 +128,7 @@ Inputs: same stages 1-4 allocation (target-bpw 3.5, same include/exclude/candida
   round-robin from all 27 stage-4 v2 no-copyleft calibration files; QAD none.
   Old = stage4/runs/bpw3.5 (its calibration text was heldout_long_context__en__32768,
   first 256 x 2048), 13.67 GiB. New = stage8/runs/bpw3.5-v2, 3.5 bpw, only the
-  calibration text changed. Size gate: the new output directory is within +-3%
+  calibration text changed. Size gate: the new output directory is within +-1%
   of 13.67 GiB.
 Held-out: stage-4 v2 no-copyleft: 8 heldout sets, 48 windows, 32K tokens, one
   held-out example per set. First 32 windows in file order are scored (SUB=32).
@@ -292,7 +292,7 @@ def size(p):
                if os.path.isfile(os.path.join(p, n)))
 a, b = size(old), size(new)
 r = {"old_bytes": a, "new_bytes": b, "old_gib": a / 2**30, "new_gib": b / 2**30,
-     "delta": b - a, "ratio": b / a, "gate_pm3pct": abs(b / a - 1.0) <= 0.03}
+     "delta": b - a, "ratio": b / a, "gate_pm3pct": abs(b / a - 1.0) <= 0.01}
 with open(path, "w") as f:
     json.dump(r, f, indent=2); f.write("\n")
 print(json.dumps(r, indent=2))
