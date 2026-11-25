@@ -102,3 +102,13 @@ def test_every_gpu_argv_parses_against_the_real_clis():
     for argv in evals:
         ns = eval_parser().parse_args(argv)
         assert ns.devices == ["cuda:0", "cuda:1"]
+
+
+def test_disk_guard_before_quantize_and_every_eval():
+    text = CHAIN.read_text()
+    assert "MIN_FREE_GB=${MIN_FREE_GB:-30}" in text
+    assert "df -Pk" in text
+    assert "disk free at" in text
+    assert "disk-free-low" in text
+    # Pre-lease/quantize, preflight eval, quantize, two held-out, two OOD.
+    assert text.count('check_free_gb "$OUT"') == 7

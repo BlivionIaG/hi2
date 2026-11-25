@@ -58,6 +58,25 @@ say() {
   log "SAY: $*"
 }
 
+MIN_FREE_GB=${MIN_FREE_GB:-30}
+check_free_gb() {
+  local path=${1:-$OUT}
+  local min=${2:-$MIN_FREE_GB}
+  local free
+  free=$(df -Pk "$path" 2>/dev/null | awk 'NR == 2 { printf "%.1f", $4 / 1048576 }')
+  if [[ -z "$free" ]]; then
+    log "ABORT: cannot read free space at $path; refusing GPU step"
+    REASON=disk-free-unknown
+    exit 1
+  fi
+  log "disk free at $path: ${free} GiB (need >= ${min} GiB)"
+  if awk -v f="$free" -v m="$min" 'BEGIN { exit !(f < m) }'; then
+    log "ABORT: disk free ${free} GiB < ${min} GiB at $path; refusing GPU step"
+    REASON=disk-free-low
+    exit 1
+  fi
+}
+
 argv_preflight() {
   local log="$OUT/logs/argv_preflight.log"
   local rc=0
@@ -206,6 +225,7 @@ if ! argv_preflight; then
   REASON=argv-preflight-failed
   exit 1
 fi
+check_free_gb "$OUT"
 
 if [[ -n "$(other_a2)" ]]; then
   log "another a2 holder exists; waiting for handover"
@@ -262,6 +282,7 @@ done
 eval_try() {
   local L=$1
   local out=$PRE/eval_$L.json
+  check_free_gb "$OUT"
   rm -f "$out"
   run_gpu "preflight_eval_$L" "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
     --src "$SRC" --dst "$OLD" --ids "$PRE/window_$L.npy" --windows 1 \
@@ -411,6 +432,7 @@ log "preflight decision: $DEC; eval_max=$EVAL_MAX; exclude_above=$EXCLUDE_ABOVE;
 if [[ -f "$NEW/hi2_run.json" && "$FORCE" != "1" ]]; then
   log "quantize already complete: $NEW/hi2_run.json"
 else
+  check_free_gb "$OUT"
   run_gpu quantize_v2 /usr/bin/time -v "$GPU_SH" -m hi2 quantize \
     "$SRC" "$NEW" \
     --workdir "$WORK" --cache-dir "$CACHE" \
@@ -450,6 +472,7 @@ if [[ "$SKIP_EVAL" != "1" ]]; then
   if [[ -s "$OUT/eval/old_heldout.json" && "$FORCE" != "1" ]]; then
     log "reusing eval/old_heldout.json"
   else
+    check_free_gb "$OUT"
     run_gpu eval_old_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
       --src "$SRC" --dst "$OLD" --ids "$EVAL_IDS" --windows 0 --split heldout \
       --devices cuda:0 cuda:1 --compute-dtype float32 \
@@ -459,6 +482,7 @@ if [[ "$SKIP_EVAL" != "1" ]]; then
   if [[ -s "$OUT/eval/new_heldout.json" && "$FORCE" != "1" ]]; then
     log "reusing eval/new_heldout.json"
   else
+    check_free_gb "$OUT"
     run_gpu eval_new_heldout "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
       --src "$SRC" --dst "$NEW" --ids "$EVAL_IDS" --windows 0 --split heldout \
       --devices cuda:0 cuda:1 --compute-dtype float32 \
@@ -470,6 +494,7 @@ if [[ "$SKIP_OOD" != "1" ]]; then
   if [[ -s "$OUT/eval/old_ood.json" && "$FORCE" != "1" ]]; then
     log "reusing eval/old_ood.json"
   else
+    check_free_gb "$OUT"
     run_gpu eval_old_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
       --src "$SRC" --dst "$OLD" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
       --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
@@ -479,6 +504,7 @@ if [[ "$SKIP_OOD" != "1" ]]; then
   if [[ -s "$OUT/eval/new_ood.json" && "$FORCE" != "1" ]]; then
     log "reusing eval/new_ood.json"
   else
+    check_free_gb "$OUT"
     run_gpu eval_new_ood "$GPU_SH" "$TREE/experiments/inkling_kl_eval.py" \
       --src "$SRC" --dst "$NEW" --ids "$V2_DEFAULT/ood_docs__en__2048_ids.npy" --windows "$OOD_WINDOWS" \
       --devices cuda:0 cuda:1 --compute-dtype float32 --groups none \
