@@ -127,8 +127,17 @@ run_arm() { # arm name target_bpw
     mkdir -p "$work"
     sayp "arm $arm start ($name, target-bpw $bpw): PTQ + QAD default, halves 0-11 / 12-23 + final 200"
     if ! qad_plan "$dst" "$work" 0-11 0 "$bpw" >"$OUT/plan-$arm.json" 2>"$OUT/plan-$arm.err"; then
-        sayp "arm $arm REFUSED: the recipe does not resolve on the CPU: $(tail -2 "$OUT/plan-$arm.err" | tr '\n' ' ' | cut -c1-200)"
-        return 1
+        if grep -qi "incompatible resume" "$OUT/plan-$arm.err"; then
+            local ts; ts=$(date -u +%H%M%S)
+            sayp "arm $arm stale resume state in $work; quarantined to .stale-$ts and re-planning"
+            mv "$work" "$work.stale-$ts" 2>/dev/null
+            [[ -d $dst ]] && mv "$dst" "$dst.stale-$ts" 2>/dev/null
+            qad_plan "$dst" "$work" 0-11 0 "$bpw" >"$OUT/plan-$arm.json" 2>"$OUT/plan-$arm.err" || {
+                sayp "arm $arm REFUSED after quarantine: $(tail -2 "$OUT/plan-$arm.err" | tr '\n' ' ' | cut -c1-200)"; return 1; }
+        else
+            sayp "arm $arm REFUSED: the recipe does not resolve on the CPU: $(tail -2 "$OUT/plan-$arm.err" | tr '\n' ' ' | cut -c1-200)"
+            return 1
+        fi
     fi
     sayp "arm $arm plan ok: $(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print({k:d.get(k) for k in ('target_bpw','steps','layers','final_kl') if k in d})" "$OUT/plan-$arm.json" 2>/dev/null || echo 'see plan json')"
     progress_watch "$work" "arm $arm" &
