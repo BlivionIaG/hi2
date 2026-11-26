@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Two-arm QAD run for the Inkling-2-Mini union checkpoint (docs/inkling-2-mini-production.md):
+# Two-arm QAD run for the Inkling-2-Mini union checkpoint (Main's decision 2026-11-26):
 #   arm A: QAD `default` + 200-step final KL on the union's 3.5 bpw allocation
 #   arm B: fresh PTQ at 3.0 bpw + the same QAD/default + final KL
 # Per-arm: layer-sharded QAD in two halves (0-11, 12-23) with per-layer artifacts
 # (qad/layerNNN.pt) and resume by rerun; the halfway fp32 corpus eval is the abort gate
 # against the union's PTQ instrument; the final phase runs from qad/head_inputs.pt and must
-# not be skipped (a skipped phase fails the arm, it is never accepted).
-# Launch: qad_launch.sh under setsid nohup. Lease HI2Inkling.a2 for the whole run
-# (lease_holder.sh), quiet file re-touched every 300 s, per-step gpu_guard2 boot
-# lock/thermal/page-fault. A CPU --dry-run plan check runs before any boot.
-# progress lines: $OUT/progress.md after the plan, layers 6/12/18/24, the final phase, eval.
+# not be skipped (the runner refuses a skipped final phase).
+# Lease: HI2Inkling.a2 held for the whole run (lease_holder.sh), quiet file re-touched every
+# 300 s, per-step gpu_guard2 boot lock/thermal/page-fault; caller adds the KFD/temps supervisor.
+# progress lines: $OUT/progress.md after layers 6/12/18/24, after the final phase, after eval.
 set -uo pipefail
 W=${W:-$HOME/w4a8_runs/inkling-hi2}
 RT=${RT:-$HOME/w4a8_runs/inkling-hi2-runtime}
@@ -64,14 +63,24 @@ mkdir -p "$QUIET_DIR"; : >"$QUIET_FILE"
 TOUCH_PID=$(python3 "$K/quiet_touch.py" --file "$QUIET_FILE" --interval 300 --count 0 >/dev/null 2>&1 & echo $!)
 say "quiet file declared and re-touched every 300 s: $QUIET_FILE"
 
-qad() { # arm dst work layers final
-    local arm=$1 dst=$2 work=$3 layers=$4 final=$5
+V=${V:-$HOME/Apps/vllm/venv-7.14.0_0.34.0-rebase-1e1cac5340}
+qad_argv() { # dst work layers final bpw -> QAD_ARGV
+    QAD_ARGV=( -m hi2 quantize "$HOME/hfcache/inkling2-mini" "$1"
+        --calib "$W/stage8/prepared/calib_union_50_50.txt" --calib-samples 256 --seq-len 2048
+        --target-bpw "$5" --sensitivity none --qad-preset default --qad-layers "$3" --qad-final-kl "$4"
+        --devices cuda:0,cuda:1 --cache-dir "$W/stage8/cache" --workdir "$2" )
+}
+qad() { # arm dst work layers final bpw
+    local arm=$1
+    qad_argv "$2" "$3" "$4" "$5" "$6"
     GUARD_BOOT_SECONDS=600 OMP_NUM_THREADS=12 TREE=$W/tree PYPATH_EXTRA=$HOME/w4a8_runs/pydeps/tfm-main \
-        "$W/gpu_guard2.sh" "0,1" "qad-$arm" -- "$W/gpu.sh" -m hi2 quantize \
-        "$HOME/hfcache/inkling2-mini" "$dst" \
-        --calib "$W/stage8/prepared/calib_union_50_50.txt" --calib-samples 256 --seq-len 2048 \
-        --target-bpw "$6" --qad-preset default --qad-layers "$layers" \
-        --qad-final-kl "$final" --devices cuda:0,1 --workdir "$work"
+        "$W/gpu_guard2.sh" "0,1" "qad-$arm" -- "$W/gpu.sh" "${QAD_ARGV[@]}"
+}
+qad_plan() { # dst work layers final bpw: resolve the recipe on the CPU before any boot
+    qad_argv "$@"
+    env -u HIP_VISIBLE_DEVICES -u ROCR_VISIBLE_DEVICES \
+        PYTHONPATH="$W/tree${PYPATH_EXTRA:+:$PYPATH_EXTRA}" \
+        "$V/bin/python" "${QAD_ARGV[@]}" --dry-run --json --devices cpu
 }
 progress_watch() { # workdir tag: write boundary lines at 6/12/18/24 layer artifacts
     local work=$1 tag=$2 n
@@ -117,6 +126,11 @@ run_arm() { # arm name target_bpw
     local dst=$W/stage8/runs/$name work=$W/stage8/work/$name
     mkdir -p "$work"
     sayp "arm $arm start ($name, target-bpw $bpw): PTQ + QAD default, halves 0-11 / 12-23 + final 200"
+    if ! qad_plan "$dst" "$work" 0-11 0 "$bpw" >"$OUT/plan-$arm.json" 2>"$OUT/plan-$arm.err"; then
+        sayp "arm $arm REFUSED: the recipe does not resolve on the CPU: $(tail -2 "$OUT/plan-$arm.err" | tr '\n' ' ' | cut -c1-200)"
+        return 1
+    fi
+    sayp "arm $arm plan ok: $(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print({k:d.get(k) for k in ('target_bpw','steps','layers','final_kl') if k in d})" "$OUT/plan-$arm.json" 2>/dev/null || echo 'see plan json')"
     progress_watch "$work" "arm $arm" &
     local wp=$!
     local t0=$(date +%s)
