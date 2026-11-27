@@ -525,14 +525,16 @@ def _parallel_step(w, wd, batch, xs, ys, workers, dtype=torch.float32):
 
     def work(k):
         dev, lay, kw = workers[k]
+        stager = PinnedWindow()
         wk = (
-            wd if k == 0 else {a: v.detach().to(dev, dtype=dtype) for a, v in w.items()}
+            wd
+            if k == 0
+            else {a: stager.to_device(v.detach(), dev, dtype=dtype) for a, v in w.items()}
         )
         if k:
             for v in wk.values():
                 v.requires_grad_(True)
         tot = 0.0
-        stager = PinnedWindow()
         with torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext():
             for i in batch[k::n]:
                 x = stager.to_device(xs[i], dev, dtype=dtype)
@@ -697,13 +699,13 @@ def train_layer(
         p.requires_grad_(False)
     for m in fq.values():
         module_to_device(m, dev)
+    stager = PinnedWindow()
     if calls is None:
-        kw = to_device(kwargs, dev)
-        reps = [(d, r, to_device(kwargs, d)) for d, r in reps]
+        kw = to_device(kwargs, dev, stager)
+        reps = [(d, r, to_device(kwargs, d, stager)) for d, r in reps]
     else:
         kw = partial(calls.kwargs, dev=dev, dtype=dt)
         reps = [(d, r, partial(calls.kwargs, dev=d, dtype=dt)) for d, r in reps]
-    stager = PinnedWindow()
     norm_params = {}
     if qc.train_norms:
         for n, p in layer.named_parameters():
@@ -728,7 +730,9 @@ def train_layer(
         if hd is not None:
             if pos is None:
                 pos = torch.randperm(n_tok, generator=kg)[:k_tok]
-            loss = loss + qc.kl_weight * head_kl(hd, out.float(), tgt, pos.to(dev))
+            loss = loss + qc.kl_weight * head_kl(
+                hd, out.float(), tgt, stager.to_device(pos, dev)
+            )
         return loss
 
     def weights(mods=None):
@@ -767,7 +771,7 @@ def train_layer(
     loss_fb = None
     if fallback is not None:
         for m in fallback.values():
-            m.to(dev)
+            module_to_device(m, dev)
         loss_fb = val_loss(fallback)
     best, best_state = loss0, snapshot() if qc.keep_best else None
     lat, prm = [], []

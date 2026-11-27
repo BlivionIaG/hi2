@@ -62,7 +62,7 @@ from .layerwise import (
     to_device,
 )
 from .looped import _Program, run_program, schedule
-from .pinned import PinnedWindow
+from .pinned import PinnedWindow, module_to_device
 from .qad import (
     QadConfig,
     QadResult,
@@ -315,7 +315,7 @@ class _Samples:
         }
         self.msg = {}
         for d in devices:
-            m = copy.deepcopy(prog.text.message_input).to(d).eval()
+            m = module_to_device(copy.deepcopy(prog.text.message_input), d).eval()
             for p in m.parameters():
                 p.requires_grad_(False)
             m.requires_grad_(False)
