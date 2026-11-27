@@ -79,6 +79,24 @@ Do not describe the release as final-KL'd or QAD'd until one of those arms has
 numbers on the shared instruments; and if one does, update the card, not just
 this file.
 
+## QAD runtime incident (2026-11-27)
+
+The first two QAD attempts on this model died on GPU page faults, not on the
+quantizer's math: `PERMISSION_FAULTS 0x3` with `UTCL2 client SDMA0`, 40-90 min
+into training, 10 faults per crash, peaks 78-79 °C. The mechanism is the one
+`hi2/pinned.py` documents (pageable host pages addressed by the copy engine; it
+killed three 27B runs before the pinned window existed). Inkling is the first
+looped model through QAD, and the shared trainer still had four bypasses plus
+the looped sampler's message module: the replica weights, the per-layer kwargs,
+the KL positions, the PTQ-fallback modules, and `message_input`. All five now
+stage through `PinnedWindow` (`3a72882`; 39 passed, 2 skipped). A resumed arm on
+a stale workdir is quarantined by the driver, not refused.
+
+Practical notes for the next run: point `--cache-dir` at `stage8/cache` (the
+statistics pass is 39.3 GiB and hits there, saving ~40 min), and know that
+`qad_looped.py:580` splits `qc.steps` across a layer's loop passes, so
+`total_steps: 75` in the log is a per-pass share of the layer's 300.
+
 ## Reproducing
 
 ```
